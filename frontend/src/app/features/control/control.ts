@@ -1,5 +1,8 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
+import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { AbstractControl, FormBuilder, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
+import { startWith } from 'rxjs';
 import { CuitPipe } from '../../core/cuit.pipe';
 import { carpetaDelPeriodo, isoADmy, mesAnterior, nombreDelMes, rangoDelMes } from '../../core/fechas';
 import { Ajustes, Cliente, PasoId, mensajeDeError } from '../../core/models';
@@ -7,23 +10,24 @@ import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { SesionService } from '../../core/services/sesion.service';
-import { Alerta } from '../../core/ui/alerta';
-import { ControlSegmentado, OpcionSegmentada } from '../../core/ui/control-segmentado';
-import { Encabezado } from '../../core/ui/encabezado';
-import { Plegable } from '../../core/ui/plegable';
+import { ToastService } from '../../core/ui/toast';
 
 type ModoPeriodo = 'mes' | 'rango';
 
+export const PASOS: { id: PasoId; titulo: string; detalle: string }[] = [
+  { id: 'arca', titulo: 'ARCA', detalle: 'Baja Mis Comprobantes (Excel)' },
+  { id: 'xubio', titulo: 'Xubio', detalle: 'Baja el Libro IVA' },
+  { id: 'auditoria', titulo: 'Auditoría', detalle: 'Cruza ARCA contra Xubio' },
+];
+
 /**
- * Lo que se recuerda del formulario en este navegador. Ni la contraseña ni la
- * carpeta: la carpeta siempre arranca en la del servidor (CARPETA_SALIDA), así
- * otro servidor u otra configuración nunca escriben en una carpeta vieja.
+ * Lo que se recuerda en este navegador. Ni la contraseña ni la carpeta: la
+ * carpeta arranca siempre en la del servidor (CARPETA_SALIDA).
  */
 interface Preferencias {
-  ventas: boolean;
-  compras: boolean;
+  operaciones: { ventas: boolean; compras: boolean };
   pasos: Record<PasoId, boolean>;
-  seleccion: string[];
+  clientes: string[];
 }
 
 const CLAVE_PREFS = 'control-fct.formulario';
@@ -36,150 +40,185 @@ function leerPreferencias(): Partial<Preferencias> {
   }
 }
 
-export interface PasoInfo {
-  id: PasoId;
-  numero: number;
-  titulo: string;
-  detalle: string;
-}
+// --- Validadores -------------------------------------------------------------------
 
-export const PASOS: PasoInfo[] = [
-  { id: 'arca', numero: 1, titulo: 'ARCA', detalle: 'Baja «Mis Comprobantes» (emitidos y/o recibidos) en Excel.' },
-  { id: 'xubio', numero: 2, titulo: 'Xubio', detalle: 'Baja el Libro IVA Ventas y/o Compras de la empresa.' },
-  { id: 'auditoria', numero: 3, titulo: 'Auditoría', detalle: 'Cruza ARCA contra Xubio y arma el Excel de control.' },
-];
+/** Al menos un control del grupo en true (operaciones, pasos). */
+const alMenosUno: ValidatorFn = (g: AbstractControl): ValidationErrors | null =>
+  Object.values(g.value ?? {}).some(Boolean) ? null : { ninguno: true };
+
+const listaNoVacia: ValidatorFn = (c: AbstractControl): ValidationErrors | null =>
+  Array.isArray(c.value) && c.value.length ? null : { required: true };
+
+/** En rango, «Hasta» no puede ser anterior a «Desde». Los ISO se comparan como texto. */
+const rangoOrdenado: ValidatorFn = (g: AbstractControl): ValidationErrors | null => {
+  const { modo, desde, hasta } = g.getRawValue() as { modo: ModoPeriodo; desde: string; hasta: string };
+  return modo === 'rango' && desde && hasta && hasta < desde ? { rangoInvertido: true } : null;
+};
 
 @Component({
   selector: 'app-nuevo-control',
-  imports: [RouterLink, CuitPipe, Alerta, ControlSegmentado, Encabezado, Plegable],
+  imports: [ReactiveFormsModule, RouterLink, CuitPipe],
   templateUrl: './control.html',
 })
 export class NuevoControl {
+  private readonly fb = inject(FormBuilder);
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
+  private readonly toast = inject(ToastService);
+  private readonly destroyRef = inject(DestroyRef);
   protected readonly clientes = inject(ClientesStore);
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly sesion = inject(SesionService);
-  protected readonly pasosInfo = PASOS;
 
+  protected readonly pasosInfo = PASOS;
+  protected readonly nombreDelMes = nombreDelMes;
   private readonly prefs = leerPreferencias();
 
-  // --- 1. Clientes -------------------------------------------------------------
-  protected readonly busqueda = signal('');
-  /** En el orden en que se van a procesar (el orden en que se eligieron). */
-  protected readonly seleccion = signal<string[]>(this.prefs.seleccion ?? []);
+  /** La credencial de Xubio recordada en el servidor: si coincide el usuario, la clave puede ir vacía. */
+  private readonly ajustes = signal<Ajustes | null>(null);
+
+  /** Xubio pide usuario y, salvo que el servidor la tenga guardada para ese usuario, la clave. */
+  private readonly xubioCompleto: ValidatorFn = (g: AbstractControl): ValidationErrors | null => {
+    const { usuario, clave } = g.getRawValue() as { usuario: string; clave: string };
+    const guardada = this.ajustes()?.xubio;
+    const hayClave = !!clave || (!!guardada?.tiene_clave && usuario.trim() === guardada.usuario);
+    return usuario.trim() && hayClave ? null : { credencial: true };
+  };
+
+  // --- Formulario --------------------------------------------------------------------
+
+  protected readonly form = this.fb.nonNullable.group({
+    /** Nombres en el orden en que se procesan. */
+    clientes: this.fb.nonNullable.control<string[]>(this.prefs.clientes ?? [], listaNoVacia),
+    periodo: this.fb.nonNullable.group(
+      {
+        modo: this.fb.nonNullable.control<ModoPeriodo>('mes'),
+        mes: [mesAnterior(), Validators.required],
+        desde: [{ value: '', disabled: true }, Validators.required],
+        hasta: [{ value: '', disabled: true }, Validators.required],
+      },
+      { validators: rangoOrdenado },
+    ),
+    operaciones: this.fb.nonNullable.group(
+      { ventas: this.prefs.operaciones?.ventas ?? true, compras: this.prefs.operaciones?.compras ?? false },
+      { validators: alMenosUno },
+    ),
+    pasos: this.fb.nonNullable.group(
+      { arca: true, xubio: true, auditoria: true, ...this.prefs.pasos },
+      { validators: alMenosUno },
+    ),
+    xubio: this.fb.nonNullable.group({ usuario: '', clave: '', recordar: false }, { validators: this.xubioCompleto }),
+    carpeta: ['', Validators.required],
+  });
+
+  /** Buscador de clientes: fuera del form, no viaja al backend. */
+  protected readonly busqueda = this.fb.nonNullable.control('');
+
+  // --- Estado derivado (signals sobre valueChanges) ----------------------------------
+
+  private readonly valor = toSignal(this.form.valueChanges.pipe(startWith(this.form.value)), { initialValue: this.form.value });
+  private readonly textoBusqueda = toSignal(this.busqueda.valueChanges, { initialValue: '' });
+
+  protected readonly modo = computed(() => this.valor().periodo?.modo ?? 'mes');
+  protected readonly usaXubio = computed(() => !!this.valor().pasos?.xubio);
+  protected readonly seleccion = computed(() => this.valor().clientes ?? []);
 
   protected readonly disponibles = computed(() => {
     const elegidos = new Set(this.seleccion());
-    const filtro = this.busqueda().trim().toLocaleLowerCase('es');
+    const filtro = this.textoBusqueda().trim().toLocaleLowerCase('es');
     const digitos = filtro.replace(/\D/g, '');
-    // Se busca por nombre o por CUIT (con o sin guiones).
     const coincide = (c: Cliente) =>
       !filtro || c.nombre.toLocaleLowerCase('es').includes(filtro) || (digitos.length >= 3 && c.arca.cuit_representado.includes(digitos));
     return this.clientes.lista().filter((c) => !elegidos.has(c.nombre) && coincide(c));
   });
+
   protected readonly elegidos = computed(() => {
     const porNombre = new Map(this.clientes.lista().map((c) => [c.nombre, c]));
     return this.seleccion().map((n) => porNombre.get(n)).filter((c): c is Cliente => !!c);
   });
 
-  // --- 2. Período ----------------------------------------------------------------
-  protected readonly modosPeriodo: OpcionSegmentada<ModoPeriodo>[] = [
-    { id: 'mes', etiqueta: 'Mes completo' },
-    { id: 'rango', etiqueta: 'Otro rango de fechas' },
-  ];
-  protected readonly modoPeriodo = signal<ModoPeriodo>('mes');
-  protected readonly mes = signal(mesAnterior());
-  protected readonly desdeIso = signal('');
-  protected readonly hastaIso = signal('');
-  protected readonly nombreDelMes = nombreDelMes;
-
+  /** El período en DD/MM/AAAA, o null si falta algo. */
   protected readonly periodo = computed(() => {
-    if (this.modoPeriodo() === 'mes') return rangoDelMes(this.mes());
-    const desde = isoADmy(this.desdeIso());
-    const hasta = isoADmy(this.hastaIso());
+    const p = this.valor().periodo;
+    if (!p) return null;
+    if (p.modo === 'mes') return rangoDelMes(p.mes ?? '');
+    const desde = isoADmy(p.desde ?? '');
+    const hasta = isoADmy(p.hasta ?? '');
     return desde && hasta ? { desde, hasta } : null;
   });
 
-  // --- 3. Qué controlar ------------------------------------------------------------
-  protected readonly ventas = signal(this.prefs.ventas ?? true);
-  protected readonly compras = signal(this.prefs.compras ?? false);
-  protected readonly pasos = signal<Record<PasoId, boolean>>({ arca: true, xubio: true, auditoria: true, ...this.prefs.pasos });
-
-  // --- 4. Xubio y carpeta ------------------------------------------------------------
-  protected readonly ajustes = signal<Ajustes | null>(null);
-  protected readonly xubioUsuario = signal('');
-  protected readonly xubioClave = signal('');
-  protected readonly xubioRecordar = signal(false);
-  protected readonly verClave = signal(false);
-  protected readonly carpeta = signal('');
-
-  protected readonly error = signal<string | null>(null);
-  /** Se marca al tocar «Ejecutar»: recién ahí se muestran los faltantes en rojo. */
-  protected readonly intentado = signal(false);
-
-  /** Lo que falta para poder ejecutar, en palabras. */
-  protected readonly problemas = computed(() => {
-    const p: string[] = [];
-    if (!this.seleccion().length) p.push('Elegí al menos un cliente.');
-    const per = this.periodo();
-    if (!per) p.push('Completá el período.');
-    else if (this.modoPeriodo() === 'rango' && this.desdeIso() > this.hastaIso()) p.push('La fecha «Hasta» es anterior a «Desde».');
-    if (!this.ventas() && !this.compras()) p.push('Elegí Ventas, Compras o las dos.');
-    const pasos = this.pasos();
-    if (!pasos.arca && !pasos.xubio && !pasos.auditoria) p.push('Elegí al menos un paso.');
-    if (pasos.xubio) {
-      const a = this.ajustes()?.xubio;
-      const usuario = this.xubioUsuario().trim();
-      const hayClave = !!this.xubioClave() || (!!a?.tiene_clave && usuario === a.usuario);
-      if (!usuario || !hayClave) p.push('El paso de Xubio necesita el usuario y la contraseña de Xubio.');
-    }
-    if (!this.carpeta().trim()) p.push('Indicá la carpeta de salida.');
-    return p;
-  });
-
-  /** Clientes elegidos a los que les faltan datos para los pasos elegidos. */
-  protected readonly avisosClientes = computed(() => {
-    const pasos = this.pasos();
-    return this.elegidos()
-      .map((c) => ({
-        nombre: c.nombre,
-        faltan: c.faltantes.filter((f) => (f === 'URL de Xubio' ? pasos.xubio : pasos.arca)),
-      }))
-      .filter((c) => c.faltan.length)
-      .map((c) => `${c.nombre}: falta ${c.faltan.join(', ').toLocaleLowerCase('es')}`);
+  protected readonly guardadaXubio = computed(() => {
+    const a = this.ajustes()?.xubio;
+    return !!a?.tiene_clave && (this.valor().xubio?.usuario ?? '').trim() === a.usuario;
   });
 
   protected readonly ejemploCarpeta = computed(() => {
-    const base = this.carpeta().trim().replace(/[\\/]+$/, '') || '<carpeta>';
-    const cliente = this.elegidos()[0]?.nombre ?? '<Cliente>';
+    const base = (this.valor().carpeta ?? '').trim().replace(/[\\/]+$/, '') || '<carpeta>';
     const sep = base.includes('/') && !base.includes('\\') ? '/' : '\\';
+    const cliente = this.elegidos()[0]?.nombre ?? '<Cliente>';
     return [base, cliente, carpetaDelPeriodo(this.periodo()?.desde ?? ''), this.ajustes()?.subcarpeta ?? 'Control de Facturas'].join(sep);
   });
 
-  protected readonly resumenOperaciones = computed(() =>
-    [this.ventas() && 'Ventas', this.compras() && 'Compras'].filter(Boolean).join(' y ') || '—',
-  );
-  protected readonly resumenPasos = computed(() => PASOS.filter((p) => this.pasos()[p.id]).map((p) => p.titulo).join(' → ') || '—');
+  /** Una línea para la barra de abajo: qué se va a ejecutar. */
+  protected readonly resumen = computed(() => {
+    const v = this.valor();
+    const ops = [v.operaciones?.ventas && 'Ventas', v.operaciones?.compras && 'Compras'].filter(Boolean).join(' + ');
+    const pasos = PASOS.filter((p) => v.pasos?.[p.id]).map((p) => p.titulo).join(' → ');
+    const per = this.periodo();
+    const periodo = !per ? '' : v.periodo?.modo === 'mes' ? nombreDelMes(v.periodo.mes ?? '') : `${per.desde} – ${per.hasta}`;
+    return [ops, pasos, periodo].filter(Boolean).join(' · ');
+  });
+
+  protected readonly intentado = signal(false);
 
   constructor() {
     void this.clientes.cargar(true);
     void this.cargarAjustes();
-    // Lo elegido se recuerda para la próxima vez (sin contraseñas).
+    this.reaccionarACambios();
+
+    // Errores de conexión de la lista de clientes: toast, no un cartel en el layout.
+    // Solo depende del error: el toast se dispara fuera del seguimiento del effect.
     effect(() => {
-      const prefs: Preferencias = { ventas: this.ventas(), compras: this.compras(), pasos: this.pasos(), seleccion: this.seleccion() };
+      const e = this.clientes.error();
+      if (e) untracked(() => this.toast.error('No se pudieron cargar los clientes', e));
+    });
+
+    // Si un cliente recordado ya no existe, se saca de la selección.
+    effect(() => {
+      if (!this.clientes.cargado()) return;
+      const existentes = new Set(this.clientes.lista().map((c) => c.nombre));
+      const sel = this.form.controls.clientes.value;
+      if (sel.some((n) => !existentes.has(n))) untracked(() => this.form.controls.clientes.setValue(sel.filter((n) => existentes.has(n))));
+    });
+  }
+
+  /** Las dependencias entre campos, con valueChanges: habilitar = mostrar y validar. */
+  private reaccionarACambios(): void {
+    const { periodo, pasos, xubio } = this.form.controls;
+
+    // Mes completo: solo «mes». Otro rango: solo «desde» y «hasta».
+    periodo.controls.modo.valueChanges.pipe(startWith(periodo.controls.modo.value), takeUntilDestroyed(this.destroyRef)).subscribe((modo) => {
+      const rango = modo === 'rango';
+      for (const c of [periodo.controls.desde, periodo.controls.hasta]) rango ? c.enable({ emitEvent: false }) : c.disable({ emitEvent: false });
+      rango ? periodo.controls.mes.disable({ emitEvent: false }) : periodo.controls.mes.enable({ emitEvent: false });
+      periodo.updateValueAndValidity();
+    });
+
+    // Sin el paso de Xubio, sus credenciales no se piden ni se validan.
+    pasos.controls.xubio.valueChanges.pipe(startWith(pasos.controls.xubio.value), takeUntilDestroyed(this.destroyRef)).subscribe((usa) => {
+      usa ? xubio.enable({ emitEvent: false }) : xubio.disable({ emitEvent: false });
+      this.form.updateValueAndValidity();
+    });
+
+    // Lo elegido se recuerda para la próxima vez (sin contraseñas ni carpeta).
+    this.form.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      const v = this.form.getRawValue();
+      const prefs: Preferencias = { operaciones: v.operaciones, pasos: v.pasos, clientes: v.clientes };
       try {
         localStorage.setItem(CLAVE_PREFS, JSON.stringify(prefs));
       } catch {
         // Sin almacenamiento: no se recuerda.
       }
-    });
-    // Si un cliente recordado ya no existe, se saca de la selección.
-    effect(() => {
-      if (!this.clientes.cargado()) return;
-      const existentes = new Set(this.clientes.lista().map((c) => c.nombre));
-      const sel = this.seleccion();
-      if (sel.some((n) => !existentes.has(n))) this.seleccion.set(sel.filter((n) => existentes.has(n)));
     });
   }
 
@@ -187,76 +226,111 @@ export class NuevoControl {
     try {
       const a = await this.api.ajustes();
       this.ajustes.set(a);
-      this.carpeta.set(a.carpeta_salida);
-      this.xubioUsuario.set(a.xubio.usuario);
-      this.xubioRecordar.set(a.xubio.recordar);
+      this.form.patchValue({ carpeta: a.carpeta_salida, xubio: { usuario: a.xubio.usuario, recordar: a.xubio.recordar } });
+      // La clave guardada cambia lo que valida Xubio.
+      this.form.controls.xubio.updateValueAndValidity();
     } catch (e) {
-      this.error.set(mensajeDeError(e, 'No se pudieron cargar los ajustes del servidor.'));
+      this.toast.error('No se pudo hablar con el servidor', mensajeDeError(e, 'No se cargaron los ajustes.'));
     }
   }
 
-  // --- Acciones ----------------------------------------------------------------------
+  // --- Clientes ----------------------------------------------------------------------
+
+  private setClientes(lista: string[]): void {
+    const c = this.form.controls.clientes;
+    c.setValue(lista);
+    c.markAsDirty();
+  }
 
   protected agregar(nombre: string): void {
-    this.seleccion.update((s) => (s.includes(nombre) ? s : [...s, nombre]));
+    const sel = this.form.controls.clientes.value;
+    if (!sel.includes(nombre)) this.setClientes([...sel, nombre]);
   }
 
   protected quitar(nombre: string): void {
-    this.seleccion.update((s) => s.filter((n) => n !== nombre));
+    this.setClientes(this.form.controls.clientes.value.filter((n) => n !== nombre));
   }
 
   protected agregarVisibles(): void {
-    this.seleccion.update((s) => [...s, ...this.disponibles().map((c) => c.nombre)]);
-    this.busqueda.set('');
+    this.setClientes([...this.form.controls.clientes.value, ...this.disponibles().map((c) => c.nombre)]);
+    this.busqueda.setValue('');
   }
 
   protected limpiar(): void {
-    this.seleccion.set([]);
+    this.setClientes([]);
   }
 
-  /** Enter en el buscador: si queda un solo cliente, se agrega. */
-  protected alEnter(): void {
+  /** Enter en el buscador: si queda uno solo, se suma. */
+  protected alEnter(evento: Event): void {
+    evento.preventDefault();
     const d = this.disponibles();
     if (d.length === 1) {
       this.agregar(d[0].nombre);
-      this.busqueda.set('');
+      this.busqueda.setValue('');
     }
   }
 
-  protected mover(indice: number, paso: -1 | 1): void {
-    this.seleccion.update((s) => {
-      const j = indice + paso;
-      if (j < 0 || j >= s.length) return s;
-      const copia = [...s];
-      [copia[indice], copia[j]] = [copia[j], copia[indice]];
-      return copia;
-    });
+  protected mover(i: number, paso: -1 | 1): void {
+    const s = [...this.form.controls.clientes.value];
+    const j = i + paso;
+    if (j < 0 || j >= s.length) return;
+    [s[i], s[j]] = [s[j], s[i]];
+    this.setClientes(s);
   }
 
-  protected alternarPaso(id: PasoId): void {
-    this.pasos.update((p) => ({ ...p, [id]: !p[id] }));
+  // --- Ejecutar ----------------------------------------------------------------------
+
+  protected invalido(ruta: string): boolean {
+    const c = this.form.get(ruta);
+    return !!c && c.enabled && c.invalid && (c.dirty || this.intentado());
+  }
+
+  /** Lo que falta, en palabras, para el toast. */
+  private problemas(): string[] {
+    const f = this.form.controls;
+    const p: string[] = [];
+    if (f.clientes.invalid) p.push('elegí al menos un cliente');
+    if (f.periodo.hasError('rangoInvertido')) p.push('«Hasta» es anterior a «Desde»');
+    else if (f.periodo.invalid) p.push('completá el período');
+    if (f.operaciones.invalid) p.push('elegí Ventas, Compras o las dos');
+    if (f.pasos.invalid) p.push('elegí al menos un paso');
+    if (f.xubio.enabled && f.xubio.invalid) p.push('faltan usuario y/o contraseña de Xubio');
+    if (f.carpeta.invalid) p.push('falta la carpeta de salida');
+    return p;
   }
 
   protected async ejecutar(): Promise<void> {
     this.intentado.set(true);
-    this.error.set(null);
     const periodo = this.periodo();
-    if (this.problemas().length || !periodo) return;
+    if (this.form.invalid || !periodo) {
+      this.form.markAllAsTouched();
+      const p = this.problemas();
+      this.toast.aviso('Faltan datos para ejecutar', p.join(' · ').replace(/^./, (l) => l.toUpperCase()) + '.');
+      return;
+    }
+
+    // Los clientes con datos incompletos no frenan: el bot los marca con error. Se avisa igual.
+    const pasos = this.form.controls.pasos.getRawValue();
+    const incompletos = this.elegidos().filter((c) => c.faltantes.some((f) => (f === 'URL de Xubio' ? pasos.xubio : pasos.arca)));
+    if (incompletos.length) this.toast.aviso('Clientes con datos incompletos', incompletos.map((c) => c.nombre).join(', '));
+
+    const v = this.form.getRawValue();
     try {
       const ej = await this.ejecucion.iniciar({
-        clientes: this.seleccion(),
+        clientes: v.clientes,
         desde: periodo.desde,
         hasta: periodo.hasta,
-        ventas: this.ventas(),
-        compras: this.compras(),
-        pasos: this.pasos(),
-        carpeta: this.carpeta().trim(),
-        xubio: { usuario: this.xubioUsuario().trim(), clave: this.xubioClave(), recordar: this.xubioRecordar() },
+        ventas: v.operaciones.ventas,
+        compras: v.operaciones.compras,
+        pasos: v.pasos,
+        carpeta: v.carpeta.trim(),
+        xubio: { usuario: v.xubio.usuario.trim(), clave: v.xubio.clave, recordar: v.xubio.recordar },
       });
-      this.xubioClave.set('');
+      this.form.controls.xubio.controls.clave.reset('');
+      this.toast.ok('Control iniciado', `${v.clientes.length} cliente(s) · ${this.resumen()}`);
       void this.router.navigate(['/ejecuciones', ej.id]);
     } catch (e) {
-      this.error.set(mensajeDeError(e, 'No se pudo iniciar el control.'));
+      this.toast.error('No se pudo iniciar el control', mensajeDeError(e));
     }
   }
 }

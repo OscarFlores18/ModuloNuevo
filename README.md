@@ -4,7 +4,9 @@ Controla las facturas de compras y ventas: baja **Mis Comprobantes** de ARCA y l
 **Libros IVA** de Xubio, y los cruza en un Excel de control (`AUX - Control de facturas …`).
 
 Es el mismo recorrido de la app de escritorio (`main_control.py`), ahora como módulo web
-de ContadorWeb, con la misma línea visual que el módulo de Retenciones.
+de ContadorWeb, con el mismo sistema de diseño que «Bot modulo Arca» (Mis Facilidades):
+tema oscuro, encabezado con pestañas, tarjetas de resumen, paneles y tablas `mf-*`
+(ver `frontend/src/styles.css`).
 
 - **backend/** — API en FastAPI. Corre los bots de siempre en un hilo y expone el estado.
 - **frontend/** — Angular 22 + Tailwind CSS.
@@ -59,11 +61,13 @@ Usa los puertos 8002/4210 para poder tenerlo abierto junto al módulo de Retenci
    4. *Cuenta de Xubio y carpeta de salida* (en la computadora del servidor).
 
    A la derecha, un resumen con lo que va a pasar y por qué todavía no se puede ejecutar.
-2. **Ejecuciones** — el progreso en vivo: cada cliente con sus pasos (en curso, listo, con
-   avisos, error), los Excel generados para bajar, y el registro de los bots. Entre cliente y
+2. **Ejecuciones** — tarjetas de resumen (estado, procesados, con errores, archivos, duración),
+   la tabla de clientes y, abajo, el detalle del cliente elegido: sus pasos, sus errores y los
+   Excel para bajar. Después, el registro de los bots. Entre cliente y
    cliente aparece la pausa con cuenta regresiva: *Continuar ahora*, *No preguntar más* o
    *Cancelar todo* (sin respuesta, sigue sola). Abajo, las últimas ejecuciones.
-3. **Clientes** — alta, edición y baja (solo supervisores). La clave fiscal nunca llega al
+3. **Clientes** — tarjetas (completos, con datos faltantes, sin clave), tabla con buscador y
+   filtro; alta, edición y baja (solo supervisores). La clave fiscal nunca llega al
    navegador: al editar, dejarla vacía mantiene la guardada.
 
 ## Usuarios (niveles de ContadorWeb)

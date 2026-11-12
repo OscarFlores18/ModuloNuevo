@@ -1,357 +1,146 @@
-<app-encabezado titulo="Nuevo control de facturas"
-  bajada="Bajá Mis Comprobantes de ARCA y los libros IVA de Xubio, y cruzalos para encontrar las facturas que no coinciden.">
-  <svg icono class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="m9 15 2 2 4-4" />
-  </svg>
-</app-encabezado>
-
-@if (ejecucion.hayActiva()) {
-  <div class="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900" role="status">
-    <span class="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 motion-safe:animate-pulse" aria-hidden="true"></span>
-    <p class="flex-1"><span class="font-semibold">Hay un control en curso.</span> Hasta que termine no se puede empezar otro (los bots usan el mismo Chrome).</p>
-    <a routerLink="/ejecuciones" class="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700">Ver el progreso</a>
-  </div>
-}
-@if (clientes.error(); as e) { <app-alerta class="mb-6" nivel="error" [mensajes]="[e]" /> }
-
-<div class="grid grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-  <div class="space-y-6">
-    <!-- 1. Clientes -->
-    <section class="rounded-2xl border border-line bg-white p-6" aria-labelledby="t-clientes">
-      <header class="mb-4 flex items-start gap-3">
-        <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-bold text-white" aria-hidden="true">1</span>
-        <div class="min-w-0 flex-1">
-          <h2 id="t-clientes" class="text-lg font-semibold">Clientes</h2>
-          <p class="text-sm text-muted">Tocá un cliente para sumarlo. Se procesan en el orden de la lista de la derecha.</p>
-        </div>
-        @if (sesion.esSupervisor()) {
-          <a routerLink="/clientes" class="shrink-0 rounded-lg px-3 py-1.5 text-sm font-semibold text-brand-700 hover:bg-brand-50">Administrar clientes</a>
-        }
-      </header>
-
-      <div class="grid gap-4 md:grid-cols-2">
-        <!-- Disponibles -->
-        <div class="flex min-h-0 flex-col rounded-xl border border-line">
-          <div class="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
-            <p class="text-xs font-semibold tracking-wider text-muted uppercase">Disponibles <span class="tabular-nums">({{ disponibles().length }})</span></p>
-            <button type="button" (click)="agregarVisibles()" [disabled]="!disponibles().length"
-              class="rounded-md px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-40">
-              Sumar {{ busqueda() ? 'los encontrados' : 'todos' }}
-            </button>
-          </div>
-          <div class="p-3">
-            <label class="relative block">
-              <span class="sr-only">Buscar cliente</span>
-              <svg class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-              </svg>
-              <input type="search" [value]="busqueda()" (input)="busqueda.set($any($event.target).value)" (keydown.enter)="alEnter()"
-                placeholder="Buscar por nombre o CUIT"
-                class="w-full rounded-lg border border-line py-2 pr-3 pl-9 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none" />
-            </label>
-          </div>
-          <ul class="max-h-80 flex-1 overflow-y-auto px-2 pb-2" aria-label="Clientes disponibles">
-            @for (c of disponibles(); track c.nombre) {
-              <li>
-                <button type="button" (click)="agregar(c.nombre)"
-                  class="group flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-brand-50 focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:outline-none">
-                  <span class="min-w-0 flex-1">
-                    <span class="block truncate text-sm font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
-                    <span class="block text-xs text-muted tabular-nums">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : 'Sin CUIT representado' }}</span>
-                  </span>
-                  @if (c.faltantes.length) {
-                    <span class="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span>
-                  }
-                  <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line text-brand-700 group-hover:border-brand-300 group-hover:bg-white" aria-hidden="true">
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
-                  </span>
-                  <span class="sr-only">Sumar a la lista</span>
-                </button>
-              </li>
-            } @empty {
-              <li class="px-3 py-6 text-center text-sm text-muted">
-                @if (clientes.cargando() && !clientes.cargado()) {
-                  Cargando clientes…
-                } @else if (busqueda()) {
-                  Ningún cliente coincide con «{{ busqueda() }}».
-                } @else if (!clientes.lista().length) {
-                  Todavía no hay clientes cargados.
-                  @if (sesion.esSupervisor()) { <a routerLink="/clientes" class="font-semibold text-brand-700 hover:underline">Cargar el primero</a> }
-                } @else {
-                  Ya sumaste todos los clientes.
-                }
-              </li>
-            }
-          </ul>
-        </div>
-
-        <!-- A procesar -->
-        <div class="flex min-h-0 flex-col rounded-xl border bg-brand-50/40"
-          [class]="intentado() && !seleccion().length ? 'border-red-300' : 'border-brand-100'">
-          <div class="flex items-center justify-between gap-2 border-b border-brand-100 px-4 py-2.5">
-            <p class="text-xs font-semibold tracking-wider text-brand-700 uppercase">A procesar <span class="tabular-nums">({{ elegidos().length }})</span></p>
-            <button type="button" (click)="limpiar()" [disabled]="!seleccion().length"
-              class="rounded-md px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-40">Vaciar</button>
-          </div>
-          <ol class="max-h-[23.5rem] flex-1 space-y-1 overflow-y-auto p-2" aria-label="Clientes a procesar, en orden">
-            @for (c of elegidos(); track c.nombre; let i = $index, primero = $first, ultimo = $last) {
-              <li class="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 ring-1 ring-brand-100">
-                <span class="w-5 shrink-0 text-center text-xs font-bold text-brand-700 tabular-nums">{{ i + 1 }}</span>
-                <span class="min-w-0 flex-1">
-                  <span class="block truncate text-sm font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
-                  @if (c.faltantes.length) {
-                    <span class="block truncate text-xs text-amber-700" [title]="c.faltantes.join(', ')">Falta: {{ c.faltantes.join(', ') }}</span>
-                  }
-                </span>
-                <span class="flex shrink-0 items-center">
-                  <button type="button" (click)="mover(i, -1)" [disabled]="primero" class="rounded p-1 text-muted hover:bg-canvas hover:text-ink disabled:opacity-30" [attr.aria-label]="'Subir ' + c.nombre">
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
-                  </button>
-                  <button type="button" (click)="mover(i, 1)" [disabled]="ultimo" class="rounded p-1 text-muted hover:bg-canvas hover:text-ink disabled:opacity-30" [attr.aria-label]="'Bajar ' + c.nombre">
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
-                  </button>
-                  <button type="button" (click)="quitar(c.nombre)" class="rounded p-1 text-red-600 hover:bg-red-50" [attr.aria-label]="'Quitar ' + c.nombre">
-                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                  </button>
-                </span>
-              </li>
-            } @empty {
-              <li class="flex h-full flex-col items-center justify-center gap-2 px-4 py-10 text-center text-sm text-muted">
-                <svg class="h-8 w-8 text-brand-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6 9 12l6 6" /></svg>
-                Elegí los clientes de la lista de la izquierda.
-              </li>
-            }
-          </ol>
-        </div>
-      </div>
-    </section>
-
-    <!-- 2. Período -->
-    <section class="rounded-2xl border border-line bg-white p-6" aria-labelledby="t-periodo">
-      <header class="mb-4 flex items-start gap-3">
-        <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-bold text-white" aria-hidden="true">2</span>
-        <div>
-          <h2 id="t-periodo" class="text-lg font-semibold">Período</h2>
-          <p class="text-sm text-muted">Lo habitual es el mes cerrado. Los archivos van a la carpeta del mes de la fecha «Desde».</p>
-        </div>
-      </header>
-      <div class="flex flex-wrap items-end gap-6">
-        <app-control-segmentado [opciones]="modosPeriodo" [(valor)]="modoPeriodo" aria-label="Tipo de período" />
-        @if (modoPeriodo() === 'mes') {
-          <label class="block">
-            <span class="mb-1 block text-sm font-medium">Mes</span>
-            <input type="month" [value]="mes()" (input)="mes.set($any($event.target).value)"
-              class="rounded-lg border border-line px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none" />
-          </label>
-        } @else {
-          <label class="block">
-            <span class="mb-1 block text-sm font-medium">Desde</span>
-            <input type="date" [value]="desdeIso()" (input)="desdeIso.set($any($event.target).value)"
-              class="rounded-lg border border-line px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none" />
-          </label>
-          <label class="block">
-            <span class="mb-1 block text-sm font-medium">Hasta</span>
-            <input type="date" [value]="hastaIso()" [min]="desdeIso()" (input)="hastaIso.set($any($event.target).value)"
-              class="rounded-lg border border-line px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none" />
-          </label>
-        }
-        @if (periodo(); as p) {
-          <p class="pb-2 text-sm text-muted">Del <span class="font-semibold text-ink tabular-nums">{{ p.desde }}</span> al <span class="font-semibold text-ink tabular-nums">{{ p.hasta }}</span></p>
-        }
-      </div>
-    </section>
-
-    <!-- 3. Qué controlar -->
-    <section class="rounded-2xl border border-line bg-white p-6" aria-labelledby="t-que">
-      <header class="mb-4 flex items-start gap-3">
-        <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-bold text-white" aria-hidden="true">3</span>
-        <div>
-          <h2 id="t-que" class="text-lg font-semibold">Qué controlar</h2>
-          <p class="text-sm text-muted">Elegí las operaciones y los pasos. Por defecto se hacen los tres, en orden.</p>
-        </div>
-      </header>
-
-      <p class="mb-2 text-sm font-medium">Operaciones</p>
-      <div class="mb-6 grid gap-3 sm:grid-cols-2" role="group" aria-label="Operaciones">
-        <label class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors"
-          [class]="ventas() ? 'border-brand-300 bg-brand-50/60 ring-1 ring-brand-200' : 'border-line hover:border-brand-200'">
-          <input type="checkbox" [checked]="ventas()" (change)="ventas.set($any($event.target).checked)" class="mt-0.5 h-4 w-4 accent-brand-700" />
-          <span>
-            <span class="block font-semibold">Ventas</span>
-            <span class="block text-sm text-muted">Comprobantes emitidos contra el Libro IVA Ventas.</span>
-          </span>
-        </label>
-        <label class="flex cursor-pointer items-start gap-3 rounded-xl border p-4 transition-colors"
-          [class]="compras() ? 'border-brand-300 bg-brand-50/60 ring-1 ring-brand-200' : 'border-line hover:border-brand-200'">
-          <input type="checkbox" [checked]="compras()" (change)="compras.set($any($event.target).checked)" class="mt-0.5 h-4 w-4 accent-brand-700" />
-          <span>
-            <span class="block font-semibold">Compras</span>
-            <span class="block text-sm text-muted">Comprobantes recibidos contra el Libro IVA Compras.</span>
-          </span>
-        </label>
-      </div>
-
-      <p class="mb-2 text-sm font-medium">Pasos</p>
-      <ol class="grid gap-3 lg:grid-cols-3" aria-label="Pasos">
-        @for (p of pasosInfo; track p.id; let ultimo = $last) {
-          <li class="relative">
-            <button type="button" role="checkbox" [attr.aria-checked]="pasos()[p.id]" (click)="alternarPaso(p.id)"
-              class="flex h-full w-full items-start gap-3 rounded-xl border p-4 text-left transition-colors focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:outline-none"
-              [class]="pasos()[p.id] ? 'border-brand-300 bg-brand-50/60 ring-1 ring-brand-200' : 'border-line border-dashed text-muted hover:border-brand-200'">
-              <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold"
-                [class]="pasos()[p.id] ? 'bg-brand-700 text-white' : 'bg-canvas text-muted ring-1 ring-line'">
-                @if (pasos()[p.id]) {
-                  <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>
-                } @else {
-                  {{ p.numero }}
-                }
-              </span>
-              <span>
-                <span class="block font-semibold" [class.text-ink]="pasos()[p.id]">{{ p.numero }}. {{ p.titulo }}</span>
-                <span class="block text-sm" [class]="pasos()[p.id] ? 'text-muted' : ''">{{ p.detalle }}</span>
-              </span>
-            </button>
-            @if (!ultimo) {
-              <span class="absolute top-1/2 -right-3 z-10 hidden h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full bg-white text-brand-400 ring-1 ring-line lg:flex" aria-hidden="true">
-                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6" /></svg>
-              </span>
-            }
-          </li>
-        }
-      </ol>
-      @if (pasos().auditoria && (!pasos().arca || !pasos().xubio)) {
-        <app-alerta class="mt-4" nivel="info"
-          [mensajes]="['La auditoría usa los Excel que ya estén en la carpeta del cliente para el paso que no se ejecute. Si falta alguno, ese cliente va a dar error en la auditoría.']" />
-      }
-    </section>
-
-    <!-- 4. Xubio y carpeta -->
-    <section class="rounded-2xl border border-line bg-white p-6" aria-labelledby="t-destino">
-      <header class="mb-4 flex items-start gap-3">
-        <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-brand-700 text-sm font-bold text-white" aria-hidden="true">4</span>
-        <div>
-          <h2 id="t-destino" class="text-lg font-semibold">{{ pasos().xubio ? 'Cuenta de Xubio y carpeta' : 'Carpeta de salida' }}</h2>
-          <p class="text-sm text-muted">Se usan en la computadora donde corre el servidor.</p>
-        </div>
-      </header>
-
-      @if (pasos().xubio) {
-        @let ax = ajustes()?.xubio;
-        <div class="mb-6 grid gap-3 sm:grid-cols-2">
-          <label class="block">
-            <span class="mb-1 block text-sm font-medium">Usuario de Xubio</span>
-            <input type="email" autocomplete="username" [value]="xubioUsuario()" (input)="xubioUsuario.set($any($event.target).value)" placeholder="nombre@estudio.com"
-              class="w-full rounded-lg border border-line px-3 py-2 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none" />
-          </label>
-          <label class="block">
-            <span class="mb-1 block text-sm font-medium">Contraseña</span>
-            <span class="relative block">
-              <input [type]="verClave() ? 'text' : 'password'" autocomplete="current-password" [value]="xubioClave()" (input)="xubioClave.set($any($event.target).value)"
-                [placeholder]="ax?.tiene_clave && xubioUsuario().trim() === ax?.usuario ? 'Guardada · escribila solo para cambiarla' : ''"
-                class="w-full rounded-lg border border-line py-2 pr-10 pl-3 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none" />
-              <button type="button" (click)="verClave.update((v) => !v)" [attr.aria-label]="verClave() ? 'Ocultar contraseña' : 'Mostrar contraseña'" [attr.aria-pressed]="verClave()"
-                class="absolute inset-y-0 right-0 flex items-center px-3 text-slate-400 hover:text-ink">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
-                  @if (verClave()) {
-                    <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.1A9.8 9.8 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4M6.6 6.6C3.9 8.4 2 12 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6" />
-                  } @else {
-                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" />
-                  }
-                </svg>
-              </button>
-            </span>
-          </label>
-          <label class="flex items-center gap-2 text-sm sm:col-span-2">
-            <input type="checkbox" [checked]="xubioRecordar()" (change)="xubioRecordar.set($any($event.target).checked)" class="h-4 w-4 accent-brand-700" />
-            Recordar la cuenta en este servidor
-            <span class="text-muted">(queda en xubio_credenciales.json, igual que en la app de escritorio)</span>
-          </label>
-          @if (ax?.del_servidor) {
-            <p class="text-xs text-muted sm:col-span-2">El servidor tiene una cuenta de Xubio configurada: si no escribís otra, se usa esa.</p>
-          }
-        </div>
-      }
-
-      <label class="block">
-        <span class="mb-1 block text-sm font-medium">Carpeta de salida</span>
-        <input type="text" [value]="carpeta()" (input)="carpeta.set($any($event.target).value)" spellcheck="false" placeholder="C:\Users\...\Downloads"
-          class="w-full rounded-lg border px-3 py-2 font-mono text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none"
-          [class]="intentado() && !carpeta().trim() ? 'border-red-300' : 'border-line'" />
-      </label>
-      <p class="mt-2 text-xs text-muted">
-        Cada cliente queda en <span class="font-mono break-all text-ink">{{ ejemploCarpeta() }}</span>
-      </p>
-      @if (ajustes(); as a) {
-        @if (carpeta().trim() !== a.carpeta_salida) {
-          <button type="button" (click)="carpeta.set(a.carpeta_salida)" class="mt-2 text-xs font-semibold text-brand-700 hover:underline">Volver a la carpeta por defecto</button>
-        }
-      }
-    </section>
-
-    <app-plegable titulo="¿Qué pasa cuando ejecuto el control?">
-      <ol class="list-decimal space-y-1.5 rounded-xl border border-line bg-white p-5 pl-9 text-sm text-ink/90">
-        <li>En la computadora del servidor se abre <strong>Google Chrome</strong>. No lo cierres: los bots trabajan ahí.</li>
-        <li>Si ARCA pide doble factor o Xubio muestra un captcha, completalo en esa ventana y el bot sigue solo.</li>
-        <li>Al terminar cada cliente hay una pausa de {{ ajustes()?.pausa_segundos ?? 15 }} segundos: podés seguir, cancelar o pedir que no pregunte más. Si no respondés, sigue sola.</li>
-        <li>Los Excel quedan en la carpeta de cada cliente y se pueden bajar desde la pantalla de la ejecución. El archivo de control empieza con «AUX - Control de facturas».</li>
-      </ol>
-    </app-plegable>
+<form [formGroup]="form" (ngSubmit)="ejecutar()" class="flex flex-col gap-3" novalidate aria-labelledby="t-nuevo">
+  <div class="flex items-center justify-between gap-3">
+    <h2 id="t-nuevo" class="m-0 text-xl font-semibold">Nuevo control</h2>
+    @if (ejecucion.hayActiva()) {
+      <a routerLink="/ejecuciones" class="mf-badge mf-badge-ok no-underline"><span class="mf-punto mf-latido" aria-hidden="true"></span>Control en curso · ver</a>
+    }
   </div>
 
-  <!-- Resumen -->
-  <aside class="space-y-4 xl:sticky xl:top-10" aria-labelledby="t-resumen">
-    <div class="rounded-2xl border border-line bg-white p-6">
-      <h2 id="t-resumen" class="mb-4 text-lg font-semibold">Resumen</h2>
-      <dl class="space-y-3 text-sm">
-        <div class="flex justify-between gap-4">
-          <dt class="text-muted">Clientes</dt>
-          <dd class="text-right font-semibold tabular-nums">{{ elegidos().length || '—' }}</dd>
-        </div>
-        <div class="flex justify-between gap-4">
-          <dt class="text-muted">Período</dt>
-          <dd class="text-right font-semibold">
-            @if (periodo(); as p) {
-              @if (modoPeriodo() === 'mes') { <span class="capitalize">{{ nombreDelMes(mes()) }}</span> } @else { <span class="tabular-nums">{{ p.desde }} – {{ p.hasta }}</span> }
-            } @else { — }
-          </dd>
-        </div>
-        <div class="flex justify-between gap-4">
-          <dt class="text-muted">Operaciones</dt>
-          <dd class="text-right font-semibold">{{ resumenOperaciones() }}</dd>
-        </div>
-        <div class="flex justify-between gap-4">
-          <dt class="text-muted">Pasos</dt>
-          <dd class="text-right font-semibold">{{ resumenPasos() }}</dd>
-        </div>
-      </dl>
-
-      @if (avisosClientes().length) {
-        <app-alerta class="mt-4" titulo="Clientes con datos incompletos"
-          [mensajes]="avisosClientes()" />
-      }
-      @if (intentado() && problemas().length) {
-        <app-alerta class="mt-4" nivel="error" titulo="Antes de ejecutar" [mensajes]="problemas()" />
-      }
-      @if (error(); as e) {
-        <app-alerta class="mt-4" nivel="error" [mensajes]="[e]" [descartable]="true" (cerrado)="error.set(null)" />
-      }
-
-      <button type="button" (click)="ejecutar()" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()"
-        class="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-brand-700 px-5 py-3 text-sm font-bold text-white shadow-md shadow-brand-700/20 hover:bg-brand-800 focus-visible:ring-2 focus-visible:ring-brand-400 focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:bg-brand-400 disabled:shadow-none">
-        @if (ejecucion.enviando()) {
-          <span class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
-          Iniciando…
-        } @else {
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z" /></svg>
-          Ejecutar control
-          @if (elegidos().length > 1) { <span class="font-semibold text-white/80">· {{ elegidos().length }} clientes</span> }
-        }
-      </button>
-      @if (ejecucion.hayActiva()) {
-        <p class="mt-2 text-center text-xs text-muted">Esperá a que termine el control en curso.</p>
-      } @else if (!intentado() && problemas().length) {
-        <p class="mt-2 text-center text-xs text-muted">{{ problemas()[0] }}</p>
+  <!-- Clientes -->
+  <section class="mf-panel !py-3" aria-labelledby="t-clientes">
+    <div class="mf-panel-titulo !mb-2">
+      <h2 id="t-clientes" class="!text-base">Clientes</h2>
+      @if (sesion.esSupervisor()) {
+        <a routerLink="/clientes" class="mf-btn-link ml-auto text-sm">Administrar</a>
       }
     </div>
-  </aside>
-</div>
+
+    <div class="grid gap-2 md:grid-cols-2">
+      <!-- Disponibles -->
+      <div class="mf-lista">
+        <div class="mf-lista-cab">
+          <span>Disponibles ({{ disponibles().length }})</span>
+          <button type="button" class="mf-btn-link text-xs tracking-normal normal-case" (click)="agregarVisibles()" [disabled]="!disponibles().length">
+            Sumar {{ busqueda.value ? 'encontrados' : 'todos' }}
+          </button>
+        </div>
+        <div class="p-1.5">
+          <input class="mf-input" type="search" [formControl]="busqueda" (keydown.enter)="alEnter($event)" placeholder="Buscar nombre o CUIT…" aria-label="Buscar cliente" />
+        </div>
+        <ul class="m-0 max-h-56 list-none overflow-y-auto px-1.5 pb-1.5" aria-label="Clientes disponibles">
+          @for (c of disponibles(); track c.nombre) {
+            <li>
+              <button type="button" class="mf-item !py-1" (click)="agregar(c.nombre)" [attr.aria-label]="'Sumar ' + c.nombre">
+                <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
+                <span class="mono mf-tenue text-xs">{{ c.arca.cuit_representado | cuit }}</span>
+                @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">!</span> }
+                <span class="text-acento" aria-hidden="true">+</span>
+              </button>
+            </li>
+          } @empty {
+            <li class="mf-tenue px-2 py-3 text-center text-sm">
+              {{ clientes.cargando() && !clientes.cargado() ? 'Cargando…' : busqueda.value ? 'Sin resultados.' : clientes.lista().length ? 'Todos sumados.' : 'No hay clientes.' }}
+            </li>
+          }
+        </ul>
+      </div>
+
+      <!-- A procesar -->
+      <div class="mf-lista" [style.border-color]="invalido('clientes') ? 'var(--color-error)' : null">
+        <div class="mf-lista-cab">
+          <span class="text-texto">A procesar ({{ elegidos().length }})</span>
+          <button type="button" class="mf-btn-link text-xs tracking-normal normal-case" style="color: var(--color-error-texto)" (click)="limpiar()" [disabled]="!elegidos().length">Vaciar</button>
+        </div>
+        <ol class="m-0 max-h-[17.5rem] list-none space-y-0.5 overflow-y-auto p-1.5" aria-label="Clientes a procesar, en orden">
+          @for (c of elegidos(); track c.nombre; let i = $index, primero = $first, ultimo = $last) {
+            <li class="mf-item mf-item-elegido !py-1">
+              <span class="mono w-5 shrink-0 text-center text-xs font-bold text-acento">{{ i + 1 }}</span>
+              <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
+              @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span> }
+              <button type="button" class="mf-icono-btn" (click)="mover(i, -1)" [disabled]="primero" [attr.aria-label]="'Subir ' + c.nombre">▴</button>
+              <button type="button" class="mf-icono-btn" (click)="mover(i, 1)" [disabled]="ultimo" [attr.aria-label]="'Bajar ' + c.nombre">▾</button>
+              <button type="button" class="mf-icono-btn mf-icono-btn-peligro" (click)="quitar(c.nombre)" [attr.aria-label]="'Quitar ' + c.nombre">✕</button>
+            </li>
+          } @empty {
+            <li class="mf-tenue px-2 py-3 text-center text-sm">Ninguno.</li>
+          }
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- Período, operaciones y pasos: una sola franja -->
+  <section class="mf-panel !py-3" aria-label="Parámetros">
+    <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
+      <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
+        <legend class="mf-campo-etiqueta">Período</legend>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="mf-segmentado" role="radiogroup" aria-label="Tipo de período">
+            <label [class.activo]="modo() === 'mes'"><input type="radio" formControlName="modo" value="mes" class="sr-only" />Mes completo</label>
+            <label [class.activo]="modo() === 'rango'"><input type="radio" formControlName="modo" value="rango" class="sr-only" />Otro rango</label>
+          </div>
+          @if (modo() === 'mes') {
+            <input class="mf-input !w-44" type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
+          } @else {
+            <input class="mf-input !w-40" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
+            <span class="mf-tenue">a</span>
+            <input class="mf-input !w-40" type="date" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
+          }
+        </div>
+      </fieldset>
+
+      <fieldset class="m-0 border-0 p-0" formGroupName="operaciones">
+        <legend class="mf-campo-etiqueta">Operaciones</legend>
+        <div class="flex h-[34px] items-center gap-4" [class.mf-grupo-invalido]="invalido('operaciones')">
+          <label class="mf-check !text-texto"><input type="checkbox" formControlName="ventas" />Ventas</label>
+          <label class="mf-check !text-texto"><input type="checkbox" formControlName="compras" />Compras</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="m-0 border-0 p-0" formGroupName="pasos">
+        <legend class="mf-campo-etiqueta">Pasos</legend>
+        <div class="flex h-[34px] items-center gap-4" [class.mf-grupo-invalido]="invalido('pasos')">
+          @for (p of pasosInfo; track p.id; let n = $index) {
+            <label class="mf-check !text-texto" [title]="p.detalle"><input type="checkbox" [formControlName]="p.id" />{{ n + 1 }}. {{ p.titulo }}</label>
+          }
+        </div>
+      </fieldset>
+    </div>
+  </section>
+
+  <!-- Xubio (solo con el paso de Xubio) y carpeta -->
+  <section class="mf-panel !py-3" aria-label="Destino">
+    <div class="grid gap-3" [class]="usaXubio() ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]' : ''">
+      @if (usaXubio()) {
+        <ng-container formGroupName="xubio">
+          <label class="mf-campo">
+            <span>Usuario Xubio</span>
+            <input class="mf-input" type="email" formControlName="usuario" autocomplete="username" [attr.aria-invalid]="invalido('xubio')" />
+          </label>
+          <label class="mf-campo">
+            <span>Contraseña Xubio</span>
+            <input class="mf-input" type="password" formControlName="clave" autocomplete="current-password"
+              [placeholder]="guardadaXubio() ? 'Guardada' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
+          </label>
+        </ng-container>
+      }
+      <label class="mf-campo">
+        <span>Carpeta de salida</span>
+        <input class="mf-input mono" type="text" formControlName="carpeta" spellcheck="false" [title]="ejemploCarpeta()" [attr.aria-invalid]="invalido('carpeta')" />
+      </label>
+    </div>
+    @if (usaXubio()) {
+      <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar cuenta de Xubio en el servidor</label>
+    }
+  </section>
+
+  <!-- Acción -->
+  <div class="mf-barra-accion">
+    <p class="mf-tenue m-0 min-w-0 flex-1 truncate text-sm">
+      <strong class="text-texto">{{ elegidos().length }} cliente(s)</strong> · {{ resumen() }}
+    </p>
+    <button type="submit" class="mf-btn mf-btn-grande" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()">
+      {{ ejecucion.enviando() ? 'Iniciando…' : 'Ejecutar control' }}
+    </button>
+  </div>
+</form>
