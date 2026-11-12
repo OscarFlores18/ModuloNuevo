@@ -31,6 +31,7 @@ from ..core.models import (
     JobStatus,
 )
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
+from ..bots.sesiones import GestorSesiones
 from .control_facturas import ejecutar_control_facturas
 
 
@@ -185,6 +186,7 @@ class JobManager:
             with self._lock:
                 job.progress = progreso
 
+        sesiones = GestorSesiones(log=log)
         try:
             if cancelacion.is_set():
                 raise Cancelado("Cancelado antes de iniciar.")
@@ -212,6 +214,7 @@ class JobManager:
                 log=log,
                 cancelado=cancelacion.is_set,
                 on_progreso=on_progreso,
+                sesiones=sesiones,
             )
 
             with self._lock:
@@ -245,6 +248,7 @@ class JobManager:
                     JobError(code="error_interno", mensaje=str(exc))
                 )
         finally:
+            sesiones.cerrar()
             with self._lock:
                 job.finished_at = _ahora()
 

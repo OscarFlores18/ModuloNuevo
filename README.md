@@ -7,7 +7,8 @@ El proyecto está en **migración de app de escritorio a sitio web**:
 
 - `backend/` — motor (bots + auditoría) expuesto como API HTTP con **FastAPI**.
   Es la parte activa del proyecto.
-- `frontend/` — Angular. Todavía no existe; se construirá contra la API.
+- `frontend/` — Angular 22 (mismo front que el módulo de ContadorWeb). Consume
+  `/api/clientes`, `/api/ajustes` y `/api/ejecuciones`.
 - `main_control.py` — app de escritorio original (Tkinter/customtkinter).
   Se conserva como referencia y reutiliza el mismo motor del backend.
 
@@ -99,15 +100,37 @@ forma cooperativa entre pasos.
 | `MODULONUEVO_DATA_DIR` | `backend/data` | `config.json` y `xubio_credenciales.json` |
 | `MODULONUEVO_OUTPUT_DIR` | `backend/salidas` | carpeta raíz de las salidas |
 | `MODULONUEVO_LOG_DIR` | `backend/logs` | `backend.log` |
+| `MODULONUEVO_FRONT_DIST` | `frontend/dist/control-fct-frontend/browser` | build de Angular que sirve el backend |
 | `MODULONUEVO_CORS` | `http://localhost:4200,...` | orígenes permitidos (Angular) |
+| `MODULONUEVO_PAUSA_S` | `15` | pausa entre clientes en la web |
+| `MODULONUEVO_ARCA_PING_MIN` | `9` | cada cuántos minutos se consulta ARCA para no perder la sesión |
+| `MODULONUEVO_ARCA_RENOVAR_MIN` | `50` | a los cuántos minutos se renueva el login de ARCA |
 
 ### API (resumen)
+
+Contrato del frontend web:
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET/POST` | `/api/clientes` | listar / crear (la clave fiscal nunca se devuelve) |
+| `GET/PUT/DELETE` | `/api/clientes/{nombre}` | detalle / editar / borrar |
+| `POST` | `/api/clientes/{nombre}/renombrar` | renombrar cliente |
+| `GET` | `/api/ajustes` | carpeta de salida, pausa y credencial de Xubio |
+| `DELETE` | `/api/ajustes/xubio` | olvidar la credencial guardada de Xubio |
+| `GET/POST` | `/api/ejecuciones` | historial / iniciar un control |
+| `GET` | `/api/ejecuciones/activa` | la ejecución en curso (o `null`) |
+| `GET` | `/api/ejecuciones/{id}` | detalle, pasos, archivos y log (`?log_desde=N`) |
+| `POST` | `/api/ejecuciones/{id}/respuesta` | responder la pausa (`continuar`, `cancelar`, `no_preguntar`) |
+| `POST` | `/api/ejecuciones/{id}/cancelar` | cancelar |
+| `GET` | `/api/ejecuciones/{id}/clientes/{i}/archivos/{nombre}` | descargar un resultado |
+| `GET` | `/api/yo` | identidad del usuario (encabezados `X-Usuario-*`) |
+| `POST` | `/api/sesion/entrar` | canje del pase de ContadorWeb (modo local) |
+
+Rutas de uso programático (se mantienen):
 
 | Método | Ruta | Descripción |
 |---|---|---|
 | `GET` | `/health` | estado del backend |
-| `GET/PUT/DELETE` | `/api/clientes[/{nombre}]` | ABM de clientes |
-| `POST` | `/api/clientes/{nombre}/renombrar` | renombrar cliente |
 | `GET/PUT` | `/api/xubio/credenciales` | credenciales del operador |
 | `POST` | `/api/jobs` | encolar control de facturas |
 | `GET` | `/api/jobs[/{id}]` | listar / detallar jobs |
@@ -135,6 +158,50 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/api/jobs `
 Estados: `queued` → `running` → `succeeded` | `partial` | `failed` | `cancelled`.
 `partial` significa que se generaron archivos pero algún paso falló; el detalle
 queda en `errores`.
+
+---
+
+## Ejecutar la web (Angular + backend)
+
+En desarrollo, dos terminales:
+
+```powershell
+# 1. API
+python -m uvicorn backend.app.main:app --port 8000
+
+# 2. Frontend (http://localhost:4210)
+cd frontend
+npm ci
+npm start
+```
+
+El front en desarrollo apunta a `http://localhost:8000/api`
+(`src/environments/environment.ts`).
+
+En producción el backend sirve el build del front en el mismo dominio:
+
+```powershell
+cd frontend
+npm run build
+cd ..
+python -m uvicorn backend.app.main:app --port 8000
+```
+
+Abrí <http://127.0.0.1:8000>: la API queda en `/api` y el `dist` de Angular se
+sirve desde la raíz (`MODULONUEVO_FRONT_DIST`).
+
+### Cómo corre un control
+
+- Un solo control a la vez. Los bots abren Chrome visible en la máquina del
+  servidor (doble factor de ARCA, captcha de Xubio).
+- **Un login por credencial**: la sesión de ARCA se comparte entre clientes y
+  entre Emitidos/Recibidos; la de Xubio se comparte entre clientes (solo cambia
+  de empresa). Antes se hacía login por cada paso.
+- ARCA cierra la sesión por inactividad (~15 min). Antes de cada operación se
+  consulta el portal con las cookies de la sesión (`context.request.get`) y, si
+  venció, se vuelve a entrar sin cerrar el navegador y se reintenta el paso.
+- Entre clientes hay una pausa (`MODULONUEVO_PAUSA_S`) con cuenta regresiva:
+  «Continuar», «Cancelar todo» o «No preguntar más».
 
 ---
 
@@ -225,7 +292,8 @@ python -m pytest
 ```
 
 Los tests no abren Chrome: cubren rutas, storage, modelos, API (con un job
-simulado) y el auditor con Excel sintéticos de ARCA y Xubio.
+simulado), el contrato web (con sesiones simuladas) y el auditor con Excel
+sintéticos de ARCA y Xubio.
 
 ---
 
@@ -258,7 +326,7 @@ ModuloNuevo/
 │   ├── tests/
 │   ├── requirements.txt
 │   └── README.md
-├── frontend/               # Angular (pendiente)
+├── frontend/               # Angular 22 (web)
 ├── main_control.py         # GUI legacy (reutiliza backend/app)
 ├── requirements.txt        # dependencias de la GUI
 └── README.md

@@ -39,9 +39,10 @@ def entorno(tmp_path, monkeypatch):
 @pytest.fixture
 def cliente_demo(entorno):
     client, _ = entorno
-    respuesta = client.put(
-        "/api/clientes/Acme",
+    respuesta = client.post(
+        "/api/clientes",
         json={
+            "nombre": "Acme",
             "arca": {
                 "cuit_login": "20111111112",
                 "clave": "secreto",
@@ -50,5 +51,5 @@ def cliente_demo(entorno):
             "xubio": {"url": "/NXV/empresa/acme"},
         },
     )
-    assert respuesta.status_code == 200, respuesta.text
+    assert respuesta.status_code == 201, respuesta.text
     return client

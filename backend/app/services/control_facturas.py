@@ -21,7 +21,8 @@ from typing import Any, Callable, Mapping
 
 from ..auditor import procesar_cruce
 from ..bots import extraer_arca, extraer_xubio
-from ..core.errors import BotError, Cancelado, ConfigInvalida
+from ..bots.sesiones import GestorSesiones
+from ..core.errors import BotError, Cancelado, ConfigInvalida, SesionVencida
 from ..core.models import JobError, JobProgress, JobRequest, JobResult
 from ..core.paths import carpeta_cliente
 
@@ -54,6 +55,81 @@ def _agregar_archivos(resultado: JobResult, archivos: list[str]) -> None:
             resultado.archivos.append(ruta)
 
 
+def _arca_con_sesion(
+    sesiones: GestorSesiones,
+    cuit_login: str,
+    clave_arca: str,
+    cuit_repres: str,
+    request: JobRequest,
+    cliente: str,
+    carpeta_final: Path,
+    resultado: JobResult,
+    log: Log,
+    cancelado: CanceladoFn,
+) -> None:
+    """Baja Emitidos y Recibidos reutilizando una sola sesión y ventana de ARCA."""
+    servicio = None
+    try:
+        sesion = sesiones.arca(cuit_login, clave_arca)
+        for tipo, hacer in (("Emitidos", request.ventas), ("Recibidos", request.compras)):
+            if not hacer:
+                continue
+            if cancelado():
+                raise Cancelado(f"Cancelado antes de descargar ARCA {tipo} de '{cliente}'.")
+            try:
+                if servicio is None or servicio.is_closed():
+                    servicio = sesion.abrir_mis_comprobantes(cuit_repres)
+                res = sesion.descargar(
+                    servicio,
+                    tipo,
+                    request.fecha_desde,
+                    request.fecha_hasta,
+                    cliente,
+                    str(carpeta_final),
+                    bajar_excel=True,
+                    bajar_csv=False,
+                )
+            except SesionVencida:
+                # Se renueva la sesión y se reintenta una vez con una ventana nueva.
+                log("      [AVISO]: Sesión de ARCA vencida. Se renueva y se reintenta...")
+                sesion.renovar()
+                try:
+                    if servicio is not None and not servicio.is_closed():
+                        servicio.close()
+                except Exception:
+                    pass
+                servicio = sesion.abrir_mis_comprobantes(cuit_repres)
+                try:
+                    res = sesion.descargar(
+                        servicio,
+                        tipo,
+                        request.fecha_desde,
+                        request.fecha_hasta,
+                        cliente,
+                        str(carpeta_final),
+                        bajar_excel=True,
+                        bajar_csv=False,
+                    )
+                except Exception as exc:
+                    log(f" [ERROR] ARCA ({tipo}): {exc}")
+                    resultado.errores.append(_error(exc, cliente, "arca"))
+                    continue
+            except Exception as exc:
+                log(f" [ERROR] ARCA ({tipo}): {exc}")
+                resultado.errores.append(_error(exc, cliente, "arca"))
+                continue
+
+            _agregar_archivos(resultado, res.archivos)
+            if res.sin_datos:
+                _sin_datos(cliente, f"arca_{tipo.lower()}", resultado)
+    finally:
+        if servicio is not None:
+            try:
+                servicio.close()
+            except Exception:
+                pass
+
+
 def ejecutar_control_facturas(
     *,
     request: JobRequest,
@@ -64,11 +140,16 @@ def ejecutar_control_facturas(
     log: Log,
     cancelado: CanceladoFn = lambda: False,
     on_progreso: ProgresoFn | None = None,
+    sesiones: GestorSesiones | None = None,
 ) -> JobResult:
     """Ejecuta el pipeline completo y devuelve qué se generó y qué falló.
 
     `clientes` es el mapa nombre -> datos de `config.json` (solo lectura).
     `base_salida` es la carpeta raíz elegida por el usuario.
+
+    Si se pasa `sesiones`, se reutilizan las sesiones de ARCA/Xubio del job (un
+    solo login por credencial). Si no, se mantiene el comportamiento histórico
+    de abrir una sesión por llamada (app de escritorio y tests).
     """
     resultado = JobResult()
     total = len(request.clientes)
@@ -116,31 +197,45 @@ def ejecutar_control_facturas(
                 on_progreso(
                     JobProgress(actual=index - 1, total=total, cliente=cliente, paso="arca")
                 )
-            for tipo, hacer in (("Emitidos", request.ventas), ("Recibidos", request.compras)):
-                if not hacer:
-                    continue
-                if cancelado():
-                    raise Cancelado(f"Cancelado antes de descargar ARCA {tipo} de '{cliente}'.")
-                try:
-                    res = extraer_arca(
-                        cuit_login,
-                        clave_arca,
-                        cuit_repres,
-                        request.fecha_desde,
-                        request.fecha_hasta,
-                        tipo,
-                        cliente,
-                        str(carpeta_final),
-                        bajar_excel=True,
-                        bajar_csv=False,
-                        log=log,
-                    )
-                    _agregar_archivos(resultado, res.archivos)
-                    if res.sin_datos:
-                        _sin_datos(cliente, f"arca_{tipo.lower()}", resultado)
-                except Exception as exc:
-                    log(f" [ERROR] ARCA ({tipo}): {exc}")
-                    resultado.errores.append(_error(exc, cliente, "arca"))
+            if sesiones is None:
+                for tipo, hacer in (("Emitidos", request.ventas), ("Recibidos", request.compras)):
+                    if not hacer:
+                        continue
+                    if cancelado():
+                        raise Cancelado(f"Cancelado antes de descargar ARCA {tipo} de '{cliente}'.")
+                    try:
+                        res = extraer_arca(
+                            cuit_login,
+                            clave_arca,
+                            cuit_repres,
+                            request.fecha_desde,
+                            request.fecha_hasta,
+                            tipo,
+                            cliente,
+                            str(carpeta_final),
+                            bajar_excel=True,
+                            bajar_csv=False,
+                            log=log,
+                        )
+                        _agregar_archivos(resultado, res.archivos)
+                        if res.sin_datos:
+                            _sin_datos(cliente, f"arca_{tipo.lower()}", resultado)
+                    except Exception as exc:
+                        log(f" [ERROR] ARCA ({tipo}): {exc}")
+                        resultado.errores.append(_error(exc, cliente, "arca"))
+            else:
+                _arca_con_sesion(
+                    sesiones,
+                    cuit_login,
+                    clave_arca,
+                    cuit_repres,
+                    request,
+                    cliente,
+                    carpeta_final,
+                    resultado,
+                    log,
+                    cancelado,
+                )
 
         # -- 2. Xubio ------------------------------------------------------
         if "xubio" in pasos:
@@ -151,18 +246,30 @@ def ejecutar_control_facturas(
             if cancelado():
                 raise Cancelado(f"Cancelado antes de descargar Xubio de '{cliente}'.")
             try:
-                res = extraer_xubio(
-                    xubio_user,
-                    xubio_pass,
-                    cliente,
-                    url_xubio,
-                    request.fecha_desde,
-                    request.fecha_hasta,
-                    request.ventas,
-                    request.compras,
-                    str(carpeta_final),
-                    log=log,
-                )
+                if sesiones is None:
+                    res = extraer_xubio(
+                        xubio_user,
+                        xubio_pass,
+                        cliente,
+                        url_xubio,
+                        request.fecha_desde,
+                        request.fecha_hasta,
+                        request.ventas,
+                        request.compras,
+                        str(carpeta_final),
+                        log=log,
+                    )
+                else:
+                    sesion_xubio = sesiones.xubio(xubio_user, xubio_pass)
+                    sesion_xubio.cambiar_empresa(cliente)
+                    res = sesion_xubio.descargar(
+                        cliente,
+                        request.fecha_desde,
+                        request.fecha_hasta,
+                        request.ventas,
+                        request.compras,
+                        str(carpeta_final),
+                    )
                 _agregar_archivos(resultado, res.archivos)
                 if res.sin_datos:
                     _sin_datos(cliente, "xubio", resultado)
@@ -179,6 +286,9 @@ def ejecutar_control_facturas(
             except Exception as exc:
                 log(f" [ERROR] XUBIO: {exc}")
                 resultado.errores.append(_error(exc, cliente, "xubio"))
+                if sesiones is not None:
+                    # La sesión quedó rota: el próximo cliente vuelve a entrar.
+                    sesiones.descartar_xubio()
 
         # -- 3. Auditoría --------------------------------------------------
         if "auditoria" in pasos:

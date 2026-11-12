@@ -30,15 +30,31 @@ def test_crud_clientes(entorno):
 
     assert client.get("/api/clientes").json() == []
 
-    alta = client.put(
-        "/api/clientes/Acme",
-        json={"arca": {"cuit_login": "20", "clave": "x", "cuit_representado": "21"}},
+    alta = client.post(
+        "/api/clientes",
+        json={
+            "nombre": "Acme",
+            "arca": {"cuit_login": "20", "clave": "x", "cuit_representado": "21"},
+        },
     )
-    assert alta.status_code == 200
+    assert alta.status_code == 201, alta.text
     assert alta.json()["nombre"] == "Acme"
+    assert alta.json()["arca"]["tiene_clave"] is True
+    assert "clave" not in alta.json()["arca"]
 
     listado = client.get("/api/clientes").json()
     assert [c["nombre"] for c in listado] == ["Acme"]
+
+    editado = client.put(
+        "/api/clientes/Acme",
+        json={
+            "nombre": "Acme",
+            "arca": {"cuit_login": "20", "clave": "", "cuit_representado": "21"},
+        },
+    )
+    assert editado.status_code == 200
+    # Una clave vacía al editar conserva la que había.
+    assert editado.json()["arca"]["tiene_clave"] is True
 
     renombrado = client.post("/api/clientes/Acme/renombrar", json={"nuevo": "Acme 2"})
     assert renombrado.status_code == 200
@@ -50,9 +66,9 @@ def test_crud_clientes(entorno):
 
 def test_conserva_claves_extra(entorno):
     client, _ = entorno
-    client.put(
-        "/api/clientes/Acme",
-        json={"arca": {"cuit_login": "20"}, "agip": {"numero": "123"}},
+    client.post(
+        "/api/clientes",
+        json={"nombre": "Acme", "arca": {"cuit_login": "20"}, "agip": {"numero": "123"}},
     )
     datos = client.get("/api/clientes/Acme").json()
     assert datos["agip"] == {"numero": "123"}

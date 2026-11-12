@@ -10,13 +10,15 @@ backend/
 │   │   ├── deps.py              # repositorios y JobManager desde app.state
 │   │   ├── router.py
 │   │   └── routes/
-│   │       ├── clientes.py      # ABM de clientes + credenciales Xubio
+│   │       ├── clientes.py      # credenciales del operador de Xubio
 │   │       ├── health.py
-│   │       └── jobs.py          # crear/consultar/cancelar/descargar
+│   │       ├── jobs.py          # crear/consultar/cancelar/descargar
+│   │       └── web.py           # contrato del frontend (clientes, ajustes, ejecuciones)
 │   ├── auditor/
 │   │   └── cruce_fo.py          # cruce ARCA <-> Xubio (FO 04-01)
 │   ├── bots/
-│   │   ├── arca.py              # "Mis Comprobantes"
+│   │   ├── arca.py              # "Mis Comprobantes" + sesión con keep-alive
+│   │   ├── sesiones.py          # GestorSesiones: una sesión por credencial y job
 │   │   ├── xubio.py             # Libro IVA Ventas/Compras
 │   │   └── xubio_common.py      # login y cambio de empresa
 │   ├── core/
@@ -25,9 +27,11 @@ backend/
 │   │   ├── logging.py           # logging + JobLog
 │   │   ├── models.py            # Pydantic: JobRequest, Job, BotResult...
 │   │   ├── paths.py             # <base>/<Cliente>/<MMAAAA>/Control de Facturas
-│   │   └── storage.py           # config.json / xubio_credenciales.json
+│   │   ├── storage.py           # config.json / xubio_credenciales.json
+│   │   └── usuarios.py          # identidad local (X-Usuario-*)
 │   ├── services/
 │   │   ├── control_facturas.py  # orquestación (equivalente a _run_scrappy)
+│   │   ├── ejecuciones.py       # ejecuciones web (pasos, pausa, archivos)
 │   │   └── jobs.py              # cola + worker + cancelación
 │   └── main.py                  # FastAPI + lifespan
 ├── tests/                       # pytest (incluye Excel sintético del auditor)
@@ -62,6 +66,10 @@ tiene wheel y obliga a compilar. `uvicorn` base alcanza (sin `--reload`).
 | `MODULONUEVO_OUTPUT_DIR` | `backend/salidas` | carpeta raíz por defecto de los jobs |
 | `MODULONUEVO_LOG_DIR` | `backend/logs` | `backend.log` |
 | `MODULONUEVO_CORS` | `http://localhost:4200,http://127.0.0.1:4200` | orígenes permitidos (Angular) |
+| `MODULONUEVO_FRONT_DIST` | `frontend/dist/control-fct-frontend/browser` | build de Angular que sirve el backend |
+| `MODULONUEVO_PAUSA_S` | `15` | pausa entre clientes |
+| `MODULONUEVO_ARCA_PING_MIN` | `9` | cada cuántos minutos se consulta ARCA (keep-alive) |
+| `MODULONUEVO_ARCA_RENOVAR_MIN` | `50` | a los cuántos minutos se renueva el login de ARCA |
 
 El formato de `config.json` es **idéntico** al de la app de escritorio, así que
 ambas pueden convivir durante la migración. Si el archivo todavía tiene la
@@ -73,11 +81,19 @@ primera vez que se lee.
 | Método | Ruta | Descripción |
 |---|---|---|
 | `GET` | `/health` | estado del backend y del worker |
-| `GET` | `/api/clientes` | listar clientes |
-| `GET` | `/api/clientes/{nombre}` | obtener un cliente |
-| `PUT` | `/api/clientes/{nombre}` | crear/actualizar (conserva claves extra: AGIP, ARBA...) |
+| `GET/POST` | `/api/clientes` | listar / crear (la clave fiscal nunca se devuelve) |
+| `GET/PUT/DELETE` | `/api/clientes/{nombre}` | detalle / editar / eliminar (conserva claves extra: AGIP, ARBA...) |
 | `POST` | `/api/clientes/{nombre}/renombrar` | renombrar |
-| `DELETE` | `/api/clientes/{nombre}` | eliminar |
+| `GET` | `/api/ajustes` | carpeta de salida, pausa y credencial de Xubio |
+| `DELETE` | `/api/ajustes/xubio` | olvidar la credencial de Xubio |
+| `GET/POST` | `/api/ejecuciones` | historial / iniciar un control (contrato del frontend) |
+| `GET` | `/api/ejecuciones/activa` | ejecución en curso (o `null`) |
+| `GET` | `/api/ejecuciones/{id}` | detalle, pasos, archivos y log (`?log_desde=N`) |
+| `POST` | `/api/ejecuciones/{id}/respuesta` | responder la pausa |
+| `POST` | `/api/ejecuciones/{id}/cancelar` | cancelar |
+| `GET` | `/api/ejecuciones/{id}/clientes/{i}/archivos/{nombre}` | descargar un archivo |
+| `GET` | `/api/yo` | identidad local (`X-Usuario-*`) |
+| `POST` | `/api/sesion/entrar` | canje del pase de ContadorWeb |
 | `GET` | `/api/xubio/credenciales` | usuario, `recordar` y `tiene_pass` (nunca la clave) |
 | `PUT` | `/api/xubio/credenciales` | guardar usuario/clave |
 | `POST` | `/api/jobs` | encolar un control de facturas |

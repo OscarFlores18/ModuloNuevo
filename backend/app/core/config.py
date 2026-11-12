@@ -30,7 +30,27 @@ LOG_DIR = _path_env("MODULONUEVO_LOG_DIR", BACKEND_DIR / "logs")
 CONFIG_PATH = DATA_DIR / "config.json"
 XUBIO_CRED_PATH = DATA_DIR / "xubio_credenciales.json"
 
-DEFAULT_CORS_ORIGINS = ("http://localhost:4200", "http://127.0.0.1:4200")
+# Pausa entre un cliente y el siguiente (el front muestra la cuenta regresiva).
+PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "15"))
+
+# Keep-alive de ARCA: el portal cierra la sesión por inactividad (~15 min).
+# Se consulta el portal cada ARCA_PING_MIN minutos y se renueva el login a los
+# ARCA_RENOVAR_MIN minutos, antes de que el portal la venza por su cuenta.
+ARCA_PING_MIN = int(os.getenv("MODULONUEVO_ARCA_PING_MIN", "9"))
+ARCA_RENOVAR_MIN = int(os.getenv("MODULONUEVO_ARCA_RENOVAR_MIN", "50"))
+
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:4200",
+    "http://127.0.0.1:4200",
+    "http://localhost:4210",
+    "http://127.0.0.1:4210",
+)
+
+# Build del frontend que sirve este backend (si existe).
+FRONT_DIST = _path_env(
+    "MODULONUEVO_FRONT_DIST",
+    BACKEND_DIR.parent / "frontend" / "dist" / "control-fct-frontend" / "browser",
+)
 
 
 def cors_origins() -> list[str]:

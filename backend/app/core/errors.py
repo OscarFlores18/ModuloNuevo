@@ -32,6 +32,12 @@ class LoginError(BotError):
     code = "login_error"
 
 
+class SesionVencida(BotError):
+    """La sesión del portal se venció y hay que volver a entrar."""
+
+    code = "sesion_vencida"
+
+
 class EmpresaNoEncontrada(BotError):
     code = "empresa_no_encontrada"
 
