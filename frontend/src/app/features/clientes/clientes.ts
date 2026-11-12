@@ -5,100 +5,109 @@ import { Cliente } from '../../core/models';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { SesionService } from '../../core/services/sesion.service';
 import { Alerta } from '../../core/ui/alerta';
-import { ControlSegmentado, OpcionSegmentada } from '../../core/ui/control-segmentado';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ClienteForm } from './cliente-form';
 
-type Filtro = 'todos' | 'incompletos';
-
 @Component({
   selector: 'app-clientes',
-  imports: [RouterLink, CuitPipe, Alerta, ControlSegmentado, Encabezado, ClienteForm],
+  imports: [RouterLink, CuitPipe, Alerta, Encabezado, ClienteForm],
   template: `
     <app-encabezado titulo="Clientes" bajada="Las empresas que se controlan y los datos con los que los bots entran a ARCA y a Xubio.">
-      <svg icono class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M9 21v-6h6v6" /><path d="M9 10h.01M15 10h.01" />
-      </svg>
       @if (sesion.esSupervisor()) {
-        <button type="button" (click)="abrir(null)"
-          class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-bold text-white shadow-md shadow-brand-700/20 hover:bg-brand-800">
-          <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
-          Nuevo cliente
-        </button>
+        <button type="button" class="mf-btn" (click)="abrir(null)">+ Nuevo cliente</button>
       }
     </app-encabezado>
 
-    @if (store.error(); as e) { <app-alerta class="mb-6" nivel="error" [mensajes]="[e]" /> }
+    @if (store.error(); as e) { <app-alerta nivel="error" titulo="No se pudieron cargar los clientes." [mensajes]="[e]" /> }
     @if (!sesion.esSupervisor()) {
-      <app-alerta class="mb-6" nivel="info" [mensajes]="['Solo un supervisor puede dar de alta, editar o borrar clientes. Si falta un dato, pedíselo.']" />
+      <app-alerta nivel="info" [mensajes]="['Solo un supervisor puede dar de alta, editar o borrar clientes. Si falta un dato, pedíselo.']" />
     }
     @if (guardadoRecien(); as g) {
-      <app-alerta class="mb-6" nivel="info" [mensajes]="['Se guardó ' + g + '.']" [descartable]="true" (cerrado)="guardadoRecien.set(null)" />
+      <app-alerta nivel="ok" [mensajes]="['Se guardó ' + g + '.']" [descartable]="true" (cerrado)="guardadoRecien.set(null)" />
     }
 
-    <section class="rounded-2xl border border-line bg-white">
-      <div class="flex flex-wrap items-center gap-3 border-b border-line px-5 py-4">
-        <label class="relative min-w-[16rem] flex-1">
-          <span class="sr-only">Buscar cliente</span>
-          <svg class="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" />
-          </svg>
-          <input type="search" [value]="busqueda()" (input)="busqueda.set($any($event.target).value)" placeholder="Buscar por nombre o CUIT"
-            class="w-full rounded-lg border border-line py-2 pr-3 pl-9 text-sm focus:border-brand-400 focus:ring-2 focus:ring-brand-100 focus:outline-none" />
-        </label>
-        <app-control-segmentado [opciones]="filtros()" [(valor)]="filtro" aria-label="Filtrar clientes" />
+    <!-- Tarjetas: siguen al total, no a los filtros -->
+    <section class="mf-cards" aria-label="Resumen">
+      <article class="mf-card">
+        <span class="mf-card-num">{{ store.lista().length }}</span>
+        <span class="mf-card-etiq">Clientes</span>
+      </article>
+      <article class="mf-card">
+        <span class="mf-card-num">{{ store.lista().length - store.incompletos() }}</span>
+        <span class="mf-card-etiq">Con datos completos</span>
+      </article>
+      <article class="mf-card" [class.mf-card-alerta]="store.incompletos() > 0">
+        <span class="mf-card-num">{{ store.incompletos() }}</span>
+        <span class="mf-card-etiq">Con datos faltantes</span>
+      </article>
+      <article class="mf-card">
+        <span class="mf-card-num">{{ sinClave() }}</span>
+        <span class="mf-card-etiq">Sin clave fiscal</span>
+      </article>
+    </section>
+
+    <section class="mf-panel" aria-labelledby="t-lista">
+      <div class="mf-panel-titulo">
+        <h2 id="t-lista">Listado</h2>
+        <span class="mf-sub">{{ visibles().length }} de {{ store.lista().length }}</span>
+        <div class="mf-filtros">
+          <input class="mf-input !w-64" type="search" [value]="busqueda()" (input)="busqueda.set($any($event.target).value)" placeholder="Buscar nombre o CUIT…" aria-label="Buscar cliente" />
+          <label class="mf-check">
+            <input type="checkbox" [checked]="soloIncompletos()" (change)="soloIncompletos.set($any($event.target).checked)" />
+            Con datos faltantes
+          </label>
+        </div>
       </div>
 
-      <div class="overflow-x-auto">
-        <table class="w-full text-sm">
-          <thead class="border-b border-line text-left text-xs tracking-wider text-muted uppercase">
+      <div class="mf-scroll">
+        <table class="mf-tabla">
+          <thead>
             <tr>
-              <th scope="col" class="px-5 py-3 font-semibold">Cliente</th>
-              <th scope="col" class="px-5 py-3 font-semibold">CUIT representado</th>
-              <th scope="col" class="px-5 py-3 font-semibold">Ingreso ARCA</th>
-              <th scope="col" class="px-5 py-3 font-semibold">Xubio</th>
-              <th scope="col" class="px-5 py-3 font-semibold">Estado</th>
-              <th scope="col" class="px-5 py-3"><span class="sr-only">Acciones</span></th>
+              <th>Cliente</th>
+              <th>CUIT representado</th>
+              <th>CUIT de ingreso</th>
+              <th>Clave fiscal</th>
+              <th>Xubio</th>
+              <th>Estado</th>
+              <th><span class="sr-only">Acciones</span></th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-line">
+          <tbody>
             @for (c of visibles(); track c.nombre) {
-              <tr class="hover:bg-canvas/60">
-                <td class="max-w-[18rem] px-5 py-3"><p class="truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</p></td>
-                <td class="px-5 py-3 whitespace-nowrap tabular-nums">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : '—' }}</td>
-                <td class="px-5 py-3">
-                  <span class="whitespace-nowrap tabular-nums">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</span>
-                  <span class="ml-2 text-xs whitespace-nowrap" [class]="c.arca.tiene_clave ? 'text-emerald-700' : 'font-semibold text-amber-700'">{{ c.arca.tiene_clave ? 'con clave' : 'sin clave' }}</span>
+              <tr [class.mf-fila]="sesion.esSupervisor()" (click)="sesion.esSupervisor() && abrir(c)">
+                <td class="max-w-[18rem] truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</td>
+                <td class="mono">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : '—' }}</td>
+                <td class="mono">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</td>
+                <td>
+                  @if (c.arca.tiene_clave) { <span class="mf-badge mf-badge-ok">Cargada</span> } @else { <span class="mf-badge mf-badge-aviso">Falta</span> }
                 </td>
-                <td class="max-w-[14rem] px-5 py-3">
-                  @if (c.xubio.url) {
-                    <span class="block truncate text-muted" [title]="c.xubio.url">{{ c.xubio.url.replace('https://', '') }}</span>
-                  } @else {
-                    <span class="text-xs font-semibold text-amber-700">sin dirección</span>
-                  }
+                <td class="max-w-[14rem] truncate">
+                  @if (c.xubio.url) { <span class="mf-tenue" [title]="c.xubio.url">{{ c.xubio.url.replace('https://', '') }}</span> }
+                  @else { <span class="mf-badge mf-badge-aviso">Sin dirección</span> }
                 </td>
-                <td class="px-5 py-3">
+                <td>
                   @if (c.faltantes.length) {
-                    <span class="inline-flex rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-800 ring-1 ring-amber-200 ring-inset" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan {{ c.faltantes.length }} dato(s)</span>
+                    <span class="mf-badge mf-badge-error" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan {{ c.faltantes.length }}</span>
                   } @else {
-                    <span class="inline-flex rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 ring-inset">Completo</span>
+                    <span class="mf-badge mf-badge-acento">Completo</span>
                   }
                 </td>
-                <td class="px-5 py-3 text-right">
+                <td class="num">
                   @if (sesion.esSupervisor()) {
-                    <button type="button" (click)="abrir(c)" class="rounded-lg px-3 py-1.5 text-sm font-semibold text-brand-700 hover:bg-brand-50" [attr.aria-label]="'Editar ' + c.nombre">Editar</button>
+                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="$event.stopPropagation(); abrir(c)" [attr.aria-label]="'Editar ' + c.nombre">Editar</button>
                   }
                 </td>
               </tr>
             } @empty {
               <tr>
-                <td colspan="6" class="px-5 py-12 text-center text-muted">
+                <td colspan="7" class="mf-tenue">
                   @if (store.cargando() && !store.cargado()) {
                     Cargando clientes…
-                  } @else if (busqueda() || filtro() !== 'todos') {
-                    Ningún cliente coincide con el filtro.
+                  } @else if (busqueda() || soloIncompletos()) {
+                    Nada que mostrar con esos filtros.
                   } @else {
-                    Todavía no hay clientes. @if (sesion.esSupervisor()) { <button type="button" (click)="abrir(null)" class="font-semibold text-brand-700 hover:underline">Cargar el primero</button> }
+                    Todavía no hay clientes.
+                    @if (sesion.esSupervisor()) { <button type="button" class="mf-btn-link" (click)="abrir(null)">Cargar el primero</button> }
                   }
                 </td>
               </tr>
@@ -106,9 +115,9 @@ type Filtro = 'todos' | 'incompletos';
           </tbody>
         </table>
       </div>
-      <p class="border-t border-line px-5 py-3 text-xs text-muted">
-        {{ store.lista().length }} cliente(s) · se guardan en <span class="font-mono">config.json</span>, el mismo archivo que usa la app de escritorio.
-        <a routerLink="/control" class="ml-1 font-semibold text-brand-700 hover:underline">Ir a Nuevo control</a>
+      <p class="mf-ayuda mb-0 mt-3">
+        Se guardan en <code>config.json</code>, el mismo archivo que usa la app de escritorio.
+        <a routerLink="/control" class="mf-btn-link">Ir a Nuevo control</a>
       </p>
     </section>
 
@@ -120,22 +129,19 @@ export class ClientesPantalla {
   protected readonly sesion = inject(SesionService);
 
   protected readonly busqueda = signal('');
-  protected readonly filtro = signal<Filtro>('todos');
+  protected readonly soloIncompletos = signal(false);
   protected readonly formAbierto = signal(false);
   protected readonly editando = signal<Cliente | null>(null);
   protected readonly guardadoRecien = signal<string | null>(null);
 
-  protected readonly filtros = computed<OpcionSegmentada<Filtro>[]>(() => [
-    { id: 'todos', etiqueta: `Todos (${this.store.lista().length})` },
-    { id: 'incompletos', etiqueta: `Con datos faltantes (${this.store.incompletos()})` },
-  ]);
+  protected readonly sinClave = computed(() => this.store.lista().filter((c) => !c.arca.tiene_clave).length);
 
   protected readonly visibles = computed(() => {
     const q = this.busqueda().trim().toLocaleLowerCase('es');
     const digitos = q.replace(/\D/g, '');
     return this.store
       .lista()
-      .filter((c) => this.filtro() === 'todos' || c.faltantes.length)
+      .filter((c) => !this.soloIncompletos() || c.faltantes.length)
       .filter(
         (c) =>
           !q ||
