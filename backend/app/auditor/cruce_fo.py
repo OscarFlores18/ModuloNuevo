@@ -1,13 +1,24 @@
+"""Auditoría FO 04-01: cruce entre comprobantes de ARCA y el Libro IVA de Xubio.
+
+Reglas:
+- No escribe en consola: reporta con `log(mensaje)`.
+- Devuelve la ruta del Excel generado.
+- Si falta alguno de los dos insumos, falla con `ArchivoNoEncontrado`.
+"""
+
 import os
 import re
-import pandas as pd
+from typing import Callable
+
 import numpy as np
+import pandas as pd
 from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.utils import get_column_letter
-from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.formatting.rule import FormulaRule
-from datetime import datetime
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.utils.dataframe import dataframe_to_rows
+
+from ..core.errors import ArchivoNoEncontrado
 
 def formatear_mes_anio(fecha_str):
     partes = fecha_str.split('/')
@@ -15,8 +26,18 @@ def formatear_mes_anio(fecha_str):
         return f"{partes[1]}-{partes[2][-2:]}"
     return fecha_str.replace('/', '-')
 
-def procesar_cruce(empresa, operacion, fecha_desde, fecha_hasta, directorio_guardado, ruta_arca_manual=None, ruta_xubio_manual=None):
-    print(f"      [INFO] Iniciando cruce FO 04-01 para {empresa} ({operacion})")
+def procesar_cruce(
+    empresa,
+    operacion,
+    fecha_desde,
+    fecha_hasta,
+    directorio_guardado,
+    ruta_arca_manual=None,
+    ruta_xubio_manual=None,
+    log: Callable[[str], None] = print,
+) -> str:
+    """Genera el control de facturas y devuelve la ruta del Excel."""
+    log(f"      [INFO] Iniciando cruce FO 04-01 para {empresa} ({operacion})")
     
     # 1. RUTAS DE LOS ARCHIVOS
     tipo_arca = "Emitidos" if operacion == "Ventas" else "Recibidos"
@@ -34,9 +55,15 @@ def procesar_cruce(empresa, operacion, fecha_desde, fecha_hasta, directorio_guar
     ruta_salida = os.path.join(directorio_guardado, f"AUX - Control de facturas {operacion} con AFIP - {mes_anio_desde} - {cliente_limpio_arca}.xlsx")
 
     if not os.path.exists(ruta_arca):
-        raise Exception(f"No se encontró el archivo de ARCA esperado:\n{ruta_arca}")
+        raise ArchivoNoEncontrado(
+            f"No se encontró el archivo de ARCA esperado:\n{ruta_arca}",
+            detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_arca},
+        )
     if not os.path.exists(ruta_xubio):
-        raise Exception(f"No se encontró el archivo de Xubio esperado:\n{ruta_xubio}")
+        raise ArchivoNoEncontrado(
+            f"No se encontró el archivo de Xubio esperado:\n{ruta_xubio}",
+            detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_xubio},
+        )
 
     # =========================================================
     # LIMPIEZA DE NÚMEROS Y FECHAS
@@ -688,4 +715,5 @@ def procesar_cruce(empresa, operacion, fecha_desde, fecha_hasta, directorio_guar
                 ws.column_dimensions[letter].width = adjusted_width
 
     wb.save(ruta_salida)
-    print(f"      [OK] Control de facturas generado: {ruta_salida}")
+    log(f"      [OK] Control de facturas generado: {ruta_salida}")
+    return ruta_salida

@@ -1,0 +1,10 @@
+# Backend HTTP + bots
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.9
+
+# Scraping y planillas (mismas que la app de escritorio)
+playwright>=1.45
+openpyxl>=3.1
+pandas>=2.2
+numpy>=1.26

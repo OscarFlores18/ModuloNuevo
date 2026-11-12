@@ -1,8 +1,23 @@
+"""Bot de ARCA (ex AFIP) - "Mis Comprobantes".
+
+Reglas del bot:
+- No escribe en consola ni en GUI: reporta con `log(mensaje)`.
+- No devuelve `None`: devuelve un `BotResult` con los archivos generados.
+- Si AFIP no entrega un rango, segmenta fechas automáticamente.
+- Si ni a 15 días hay datos, falla con `TimeoutDescarga` (error tipado).
+- Nunca deja el navegador abierto: el `finally` cierra el browser.
+"""
+
 import os
 import re
 from datetime import datetime, timedelta
+from typing import Callable
+
 import openpyxl
 from playwright.sync_api import sync_playwright
+
+from ..core.errors import BotError, TimeoutDescarga
+from ..core.models import BotResult
 
 
 def formatear_mes_anio(fecha_str):
@@ -41,8 +56,27 @@ def unificar_excels(archivos_parciales, ruta_final):
     wb_master.save(ruta_final)
     wb_master.close()
 
-def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha_hasta, tipo_comprobante, nombre_cliente, directorio_guardado, bajar_excel=True, bajar_csv=False):
-    """ Función principal que será llamada por el Orquestador """
+def ejecutar_extraccion(
+    cuit_login,
+    clave,
+    cuit_representado,
+    fecha_desde,
+    fecha_hasta,
+    tipo_comprobante,
+    nombre_cliente,
+    directorio_guardado,
+    bajar_excel=True,
+    bajar_csv=False,
+    log: Callable[[str], None] = print,
+) -> BotResult:
+    """Descarga los comprobantes de ARCA y devuelve los archivos generados.
+
+    `tipo_comprobante` es "Emitidos" o "Recibidos". El resultado incluye las
+    rutas absolutas de los archivos consolidados y `sin_datos=True` cuando el
+    período no tenía comprobantes.
+    """
+    resultado = BotResult()
+
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False, channel="chrome", args=["--start-maximized"])
         context = browser.new_context(no_viewport=True)
@@ -54,7 +88,7 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
             # Playwright se queda esperando una respuesta manual para siempre
             # y el bot parece "colgado" sin ningún error en el log. Esto lo
             # cierra solo apenas aparece, en cualquier pestaña.
-            print(f"      [AVISO]: ARCA mostró un diálogo del navegador ('{dialog.message}'). Se cerró automáticamente.")
+            log(f"      [AVISO]: ARCA mostró un diálogo del navegador ('{dialog.message}'). Se cerró automáticamente.")
             try:
                 dialog.dismiss()
             except:
@@ -98,7 +132,7 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
                 # pantalla de selección de perfil aparece pero no se pudo
                 # completar (ej. el CUIT representado no matchea ninguna
                 # tarjeta), ahora al menos queda un rastro en el log.
-                print(f"      [INFO]: Selección de perfil no aplicó o no se pudo completar: {e}")
+                log(f"      [INFO]: Selección de perfil no aplicó o no se pudo completar: {e}")
 
             # Botón Emitidos/Recibidos.
             # Se sacó la espera "inteligente" (click con timeout largo +
@@ -110,15 +144,15 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
             # 1,5 seg antes de seguir — nada que "detectar", como se pidió.
             boton_id = "#btnEmitidos" if tipo_comprobante == "Emitidos" else "#btnRecibidos"
             boton_tipo = nueva_pestana.locator(boton_id).first
-            print(f"   -> Apretando botón '{tipo_comprobante}'...")
+            log(f"   -> Apretando botón '{tipo_comprobante}'...")
             try:
                 boton_tipo.click(timeout=5000)
             except Exception as e:
-                print(f"      [AVISO]: Click normal no llegó a tiempo ({e}). Forzando con JS...")
+                log(f"      [AVISO]: Click normal no llegó a tiempo ({e}). Forzando con JS...")
                 try:
                     boton_tipo.evaluate("el => el.click()", timeout=3000)
                 except Exception as e2:
-                    print(f"      [ERROR]: No se pudo apretar el botón '{tipo_comprobante}': {e2}")
+                    log(f"      [ERROR]: No se pudo apretar el botón '{tipo_comprobante}': {e2}")
 
             nueva_pestana.wait_for_timeout(1500)
 
@@ -141,7 +175,7 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
                     }""",
                     timeout=2000,
                 )
-                print(f"      [DEBUG]: Estado de '{tipo_comprobante}' tras click: {info_boton}")
+                log(f"      [DEBUG]: Estado de '{tipo_comprobante}' tras click: {info_boton}")
             except Exception:
                 pass
 
@@ -162,7 +196,7 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
                     nueva_pestana.wait_for_selector("#fechaEmision", timeout=20000)
                 primer_vuelta = False
                 rango_fechas = f"{fecha_desde_actual} - {fecha_hasta_actual}"
-                print(f"   -> Solicitando periodo en ARCA: {rango_fechas}")
+                log(f"   -> Solicitando periodo en ARCA: {rango_fechas}")
                 
                 # ========================================================================
                 # TÁCTICA DEL TRIPLE CLIC Y ESPERA INTELIGENTE (LA QUE FUNCIONÓ BIEN)
@@ -217,7 +251,9 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
                         if datetime.strptime(fecha_desde_actual, "%d/%m/%Y") > datetime.strptime(fecha_hasta, "%d/%m/%Y"):
                             break
                     except Exception as e:
-                        raise Exception(f"Error descargando CSV en ARCA: {str(e)}")
+                        raise TimeoutDescarga(
+                            f"Error descargando CSV en ARCA: {e}", detalle={"tipo": tipo_comprobante}
+                        ) from e
                         
                     nueva_pestana.click('a[href="#tabConsulta"]')
                     page.wait_for_timeout(1000)
@@ -259,17 +295,31 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
                     d_hasta = datetime.strptime(fecha_hasta_actual, "%d/%m/%Y")
                     dias_rango = (d_hasta - d_desde).days + 1
                     
-                    print(f"      [INFO]: ARCA congestionado (Rango: {dias_rango} días). Segmentando...")
+                    log(f"      [INFO]: ARCA congestionado (Rango: {dias_rango} días). Segmentando...")
                     if dias_rango > 31:
                         fecha_hasta_actual = restar_un_mes(fecha_hasta_actual)
                     elif 15 < dias_rango <= 31:
                         mitad_mes = d_desde + timedelta(days=14)
                         fecha_hasta_actual = mitad_mes.strftime("%d/%m/%Y")
                     else:
-                        raise Exception("Límite crítico: ARCA no entrega datos ni a 15 días.")
-                        
+                        raise TimeoutDescarga(
+                            "Límite crítico: ARCA no entrega datos ni a 15 días.",
+                            detalle={
+                                "tipo": tipo_comprobante,
+                                "desde": fecha_desde_actual,
+                                "hasta": fecha_hasta_actual,
+                            },
+                        )
+
                     if datetime.strptime(fecha_hasta_actual, "%d/%m/%Y") < datetime.strptime(fecha_desde_actual, "%d/%m/%Y"):
-                        raise Exception("Fallo en reducción matemática de fechas.")
+                        raise BotError(
+                            "Fallo en reducción matemática de fechas.",
+                            detalle={
+                                "tipo": tipo_comprobante,
+                                "desde": fecha_desde_actual,
+                                "hasta": fecha_hasta_actual,
+                            },
+                        )
                         
                     nueva_pestana.click('a[href="#tabConsulta"]')
                     page.wait_for_timeout(1000)
@@ -283,8 +333,9 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
                 nombre_archivo_final = f"Mis comprobantes - {tipo_comprobante} - {cliente_limpio} - {mes_anio_desde} al {mes_anio_hasta}.xlsx"
                 ruta_final = os.path.join(directorio_guardado, nombre_archivo_final)
                 unificar_excels(excels_parciales, ruta_final)
-                print(f"      ✅ Consolidado: {nombre_archivo_final}")
-                
+                resultado.archivos.append(ruta_final)
+                log(f"      [OK]: Consolidado: {nombre_archivo_final}")
+
             if bajar_csv and csv_parciales:
                 nombre_csv_final = f"Mis comprobantes - {tipo_comprobante} - {cliente_limpio} - {mes_anio_desde} al {mes_anio_hasta}.csv"
                 ruta_final_csv = os.path.join(directorio_guardado, nombre_csv_final)
@@ -298,6 +349,11 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
                                 lineas = contenido.split(b"\n")
                                 if len(lineas) > 2:
                                     master_csv.write(b"\n".join(lineas[2:]))
+                resultado.archivos.append(ruta_final_csv)
+
+            if not resultado.archivos:
+                resultado.sin_datos = True
+                log(f"      [INFO]: ARCA no devolvió comprobantes ({tipo_comprobante}).")
 
             # Limpieza de basura
             for archivo_temp in excels_parciales + csv_parciales:
@@ -309,3 +365,5 @@ def ejecutar_extraccion(cuit_login, clave, cuit_representado, fecha_desde, fecha
 
         finally:
             browser.close()
+
+    return resultado
