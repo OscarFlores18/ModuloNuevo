@@ -1,0 +1,232 @@
+@let e = ej();
+<app-encabezado titulo="Ejecución del control"
+  [bajada]="e ? 'Período ' + e.periodo + ' · iniciada por ' + e.usuario : 'El progreso de cada cliente, lo que dicen los bots y los Excel que se generan.'">
+  <svg icono class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 12h4l3 8 4-16 3 8h4" />
+  </svg>
+  @if (e && activa()) {
+    <button type="button" (click)="confirmarCancelar.set(true)" [disabled]="e.cancelar_pedido"
+      class="rounded-lg border border-transparent px-3 py-2 text-sm font-semibold text-red-700 hover:border-red-300 hover:bg-red-50 disabled:opacity-50">
+      {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar control' }}
+    </button>
+  } @else {
+    <a routerLink="/control" class="inline-flex items-center gap-2 rounded-lg bg-brand-700 px-4 py-2 text-sm font-bold text-white shadow-md shadow-brand-700/20 hover:bg-brand-800">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+      Nuevo control
+    </a>
+  }
+</app-encabezado>
+
+@if (store.error(); as err) { <app-alerta class="mb-6" nivel="error" [mensajes]="[err]" /> }
+
+@if (!e) {
+  @if (!store.error() && !store.historial().length) {
+    <div class="mx-auto mt-10 max-w-md rounded-2xl border border-dashed border-line bg-white p-10 text-center">
+      <p class="font-semibold">Todavía no se ejecutó ningún control</p>
+      <p class="mt-1 text-sm text-muted">Elegí los clientes y el período, y tocá «Ejecutar control».</p>
+      <a routerLink="/control" class="mt-5 inline-flex rounded-lg bg-brand-700 px-4 py-2 text-sm font-bold text-white hover:bg-brand-800">Ir a Nuevo control</a>
+    </div>
+  }
+} @else {
+  <!-- Pausa entre clientes -->
+  @if (e.pausa; as p) {
+    <section class="mb-6 rounded-2xl border-2 border-amber-300 bg-amber-50 p-5 text-amber-950 shadow-sm" role="alertdialog" aria-labelledby="t-pausa" aria-describedby="d-pausa">
+      <div class="flex flex-wrap items-center gap-4">
+        <div class="relative flex h-14 w-14 shrink-0 items-center justify-center" aria-hidden="true">
+          <svg class="absolute inset-0 h-14 w-14 -rotate-90" viewBox="0 0 36 36">
+            <circle cx="18" cy="18" r="16" fill="none" stroke="currentColor" stroke-width="3" class="text-amber-200" />
+            <circle cx="18" cy="18" r="16" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" class="text-amber-500 transition-[stroke-dashoffset] duration-1000 ease-linear"
+              stroke-dasharray="100.5" [attr.stroke-dashoffset]="100.5 * (1 - segundosPausa() / p.segundos)" />
+          </svg>
+          <span class="text-lg font-bold tabular-nums">{{ segundosPausa() }}</span>
+        </div>
+        <div class="min-w-0 flex-1">
+          <h2 id="t-pausa" class="font-semibold">Terminó {{ p.cliente }}</h2>
+          <p id="d-pausa" class="text-sm">
+            @if (siguienteCliente(); as s) { Sigue con <strong>{{ s }}</strong> en {{ segundosPausa() }} s si no respondés. } @else { Sigue en {{ segundosPausa() }} s. }
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" (click)="store.responder('continuar')" class="rounded-lg bg-brand-700 px-4 py-2 text-sm font-bold text-white hover:bg-brand-800">Continuar ahora</button>
+          <button type="button" (click)="store.responder('no_preguntar')" class="rounded-lg border border-amber-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-amber-100">No preguntar más</button>
+          <button type="button" (click)="store.responder('cancelar')" class="rounded-lg px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">Cancelar todo</button>
+        </div>
+      </div>
+    </section>
+  }
+
+  <!-- Estado general -->
+  @let ins = insigniaEjecucion[e.estado];
+  <section class="mb-6 rounded-2xl border border-line bg-white p-6" aria-label="Estado general">
+    <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
+      <span class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold ring-1 ring-inset" [class]="ins.clase" role="status">
+        <span class="h-2 w-2 rounded-full" [class]="ins.punto" aria-hidden="true"></span>{{ ins.texto }}
+      </span>
+      <p class="text-sm text-muted"><span class="font-semibold text-ink tabular-nums">{{ procesados() }} de {{ e.clientes }}</span> clientes</p>
+      <p class="text-sm text-muted">Duración <span class="font-semibold text-ink tabular-nums">{{ duracionTotal() }}</span></p>
+      <p class="text-sm text-muted">{{ e.parametros.ventas && e.parametros.compras ? 'Ventas y Compras' : e.parametros.ventas ? 'Ventas' : 'Compras' }}</p>
+      @if (!e.preguntar && activa()) {
+        <p class="text-sm text-muted">Sin pausas entre clientes</p>
+      }
+    </div>
+    <div class="mt-4 h-2 overflow-hidden rounded-full bg-canvas" role="progressbar" [attr.aria-valuenow]="progreso()" aria-valuemin="0" aria-valuemax="100" aria-label="Avance">
+      <div class="h-full rounded-full transition-[width] duration-500"
+        [class]="e.estado === 'error' ? 'bg-red-500' : e.estado === 'cancelada' ? 'bg-slate-400' : e.estado === 'finalizada' ? (e.totales.con_errores ? 'bg-amber-500' : 'bg-emerald-500') : 'bg-brand-600'"
+        [style.width.%]="progreso()"></div>
+    </div>
+    @if (e.mensaje && !activa()) {
+      <p class="mt-3 text-sm font-semibold" [class]="e.estado === 'finalizada' && !e.totales.con_errores ? 'text-emerald-700' : e.estado === 'error' || e.totales.con_errores ? 'text-red-700' : 'text-muted'">{{ e.mensaje }}</p>
+    }
+    @if (activa()) {
+      <p class="mt-3 text-xs text-muted">Los bots trabajan en Chrome, en la computadora del servidor. Si ARCA pide doble factor o Xubio un captcha, completalo en esa ventana.</p>
+    }
+  </section>
+
+  <div class="grid grid-cols-[minmax(0,1fr)] items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_32rem]">
+    <!-- Clientes -->
+    <section aria-labelledby="t-clientes-ej">
+      <div class="mb-3 flex items-center justify-between">
+        <h2 id="t-clientes-ej" class="text-lg font-semibold">Clientes</h2>
+        @if (archivosTotales()) { <p class="text-sm text-muted tabular-nums">{{ archivosTotales() }} archivo(s) generados</p> }
+      </div>
+      @if (errorDescarga(); as err) { <app-alerta class="mb-3" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
+      <ol class="space-y-3">
+        @for (c of e.detalle_clientes; track c.nombre; let i = $index) {
+          @let ic = insigniaCliente[c.estado];
+          <li class="rounded-2xl border bg-white p-5 transition-colors"
+            [class]="c.estado === 'en_curso' ? 'border-brand-300 ring-1 ring-brand-100' : c.estado === 'con_errores' ? 'border-red-200' : 'border-line'">
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold tabular-nums"
+                [class]="c.estado === 'ok' ? 'bg-emerald-600 text-white' : c.estado === 'con_errores' ? 'bg-red-600 text-white' : c.estado === 'en_curso' ? 'bg-brand-700 text-white' : 'bg-canvas text-muted ring-1 ring-line'"
+                aria-hidden="true">{{ i + 1 }}</span>
+              <h3 class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</h3>
+              <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset" [class]="ic.clase">
+                <span class="h-1.5 w-1.5 rounded-full" [class]="ic.punto" aria-hidden="true"></span>{{ ic.texto }}
+              </span>
+            </div>
+
+            <!-- Pasos -->
+            <ol class="mt-4 flex flex-wrap gap-2" [attr.aria-label]="'Pasos de ' + c.nombre">
+              @for (p of c.pasos; track p.id) {
+                @let ep = estiloPaso[p.estado];
+                <li class="flex min-w-[10rem] flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-sm" [class]="ep.caja" [title]="p.mensaje || ep.texto">
+                  @switch (p.estado) {
+                    @case ('en_curso') { <span class="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-brand-200 border-t-brand-700" aria-hidden="true"></span> }
+                    @case ('ok') { <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg> }
+                    @case ('aviso') { <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg> }
+                    @case ('error') { <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg> }
+                    @default { <span class="h-2 w-2 shrink-0 rounded-full bg-current opacity-40" aria-hidden="true"></span> }
+                  }
+                  <span class="min-w-0 flex-1 truncate font-semibold">{{ p.etiqueta }}</span>
+                  <span class="sr-only">: {{ ep.texto }}</span>
+                  @if (p.inicio) { <span class="shrink-0 text-xs tabular-nums opacity-70">{{ duracionPaso(p.inicio, p.fin) }}</span> }
+                </li>
+              }
+            </ol>
+
+            <!-- Errores del cliente -->
+            @for (p of c.pasos; track p.id) {
+              @if (p.mensaje && (p.estado === 'error' || p.estado === 'aviso')) {
+                <p class="mt-2 flex gap-2 text-sm" [class]="p.estado === 'error' ? 'text-red-800' : 'text-amber-900'">
+                  <span class="shrink-0 font-semibold">{{ p.etiqueta }}:</span><span class="min-w-0 break-words">{{ p.mensaje }}</span>
+                </p>
+              }
+            }
+
+            <!-- Archivos -->
+            @if (c.archivos.length) {
+              <ul class="mt-4 divide-y divide-line rounded-xl border border-line" [attr.aria-label]="'Archivos de ' + c.nombre">
+                @for (a of c.archivos; track a.nombre) {
+                  <li class="flex items-center gap-3 px-3 py-2 text-sm" [class.bg-emerald-50]="a.tipo === 'auditoria'">
+                    <span class="w-16 shrink-0 rounded px-1.5 py-0.5 text-center text-[11px] font-bold tracking-wide uppercase"
+                      [class]="a.tipo === 'auditoria' ? 'bg-emerald-600 text-white' : 'bg-canvas text-muted ring-1 ring-line'">{{ etiquetaArchivo[a.tipo] }}</span>
+                    <span class="min-w-0 flex-1 truncate" [title]="a.nombre">{{ a.nombre }}</span>
+                    <span class="shrink-0 text-xs text-muted tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
+                    <button type="button" (click)="descargar(i, c, a)" [disabled]="descargando() === i + '/' + a.nombre"
+                      class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-semibold text-brand-700 hover:bg-brand-50 disabled:opacity-50" [attr.aria-label]="'Bajar ' + a.nombre">
+                      <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v12m-5-5 5 5 5-5M5 20h14" /></svg>
+                      {{ descargando() === i + '/' + a.nombre ? 'Bajando…' : 'Bajar' }}
+                    </button>
+                  </li>
+                }
+              </ul>
+            }
+            @if (c.carpeta) {
+              <button type="button" (click)="copiar(c.carpeta)" class="mt-3 flex max-w-full items-center gap-1.5 text-left text-xs text-muted hover:text-ink" title="Copiar la ruta">
+                <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+                <span class="min-w-0 truncate font-mono">{{ c.carpeta }}</span>
+              </button>
+            }
+          </li>
+        }
+      </ol>
+    </section>
+
+    <!-- Registro -->
+    <section class="overflow-hidden rounded-2xl border border-line bg-white 2xl:sticky 2xl:top-10" aria-labelledby="t-registro">
+      <div class="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <h2 id="t-registro" class="font-semibold">Registro de los bots</h2>
+        <label class="flex items-center gap-2 text-xs text-muted">
+          <input type="checkbox" [checked]="soloProblemas()" (change)="soloProblemas.set($any($event.target).checked)" class="h-3.5 w-3.5 accent-brand-700" />
+          Solo errores y avisos
+        </label>
+      </div>
+      <ol #consola (scroll)="alDesplazar($event)" class="h-[28rem] overflow-y-auto bg-slate-950 px-4 py-3 font-mono text-xs leading-relaxed" aria-live="polite" aria-label="Registro">
+        @for (l of lineas(); track $index) {
+          <li class="flex gap-3">
+            <time class="shrink-0 text-slate-500 tabular-nums" [attr.datetime]="l.cuando">{{ hora(l.cuando) }}</time>
+            <span class="min-w-0 break-words whitespace-pre-wrap"
+              [class]="l.tipo === 'error' ? 'text-red-400' : l.tipo === 'aviso' ? 'text-amber-300' : l.tipo === 'ok' ? 'text-emerald-400' : 'text-slate-200'">{{ l.texto }}</span>
+          </li>
+        } @empty {
+          <li class="text-slate-500">{{ soloProblemas() ? 'Sin errores ni avisos.' : 'Esperando al primer mensaje…' }}</li>
+        }
+      </ol>
+      <p class="border-t border-line px-4 py-2 text-[11px] text-muted">También queda en <span class="font-mono">debug_log.txt</span> dentro de la carpeta de salida.</p>
+    </section>
+  </div>
+
+  <app-confirm-modal [(abierto)]="confirmarCancelar" titulo="¿Cancelar el control?" textoConfirmar="Sí, cancelar" textoCancelar="Seguir" [peligro]="true" (confirmado)="store.cancelar()">
+    El paso que se está haciendo <strong class="text-ink">termina igual</strong> (el bot no se puede cortar a mitad); después se frena y los clientes que faltan quedan sin hacer.
+  </app-confirm-modal>
+}
+
+<!-- Historial -->
+@if (store.historial().length > (e ? 1 : 0)) {
+  <section class="mt-10" aria-labelledby="t-historial">
+    <h2 id="t-historial" class="mb-3 text-lg font-semibold">Ejecuciones recientes</h2>
+    <div class="overflow-x-auto rounded-2xl border border-line bg-white">
+      <table class="w-full text-sm">
+        <thead class="border-b border-line text-left text-xs tracking-wider text-muted uppercase">
+          <tr>
+            <th scope="col" class="px-4 py-3 font-semibold">Inicio</th>
+            <th scope="col" class="px-4 py-3 font-semibold">Período</th>
+            <th scope="col" class="px-4 py-3 font-semibold">Clientes</th>
+            <th scope="col" class="px-4 py-3 font-semibold">Usuario</th>
+            <th scope="col" class="px-4 py-3 font-semibold">Estado</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-line">
+          @for (h of store.historial(); track h.id) {
+            @let hi = insigniaEjecucion[h.estado];
+            <tr class="cursor-pointer hover:bg-brand-50/50" [class.bg-brand-50]="h.id === e?.id" [routerLink]="['/ejecuciones', h.id]">
+              <td class="px-4 py-3 tabular-nums"><a [routerLink]="['/ejecuciones', h.id]" class="font-semibold text-brand-700 hover:underline">{{ h.creada | date: 'dd/MM HH:mm' }}</a></td>
+              <td class="px-4 py-3 tabular-nums">{{ h.periodo }}</td>
+              <td class="px-4 py-3 tabular-nums">
+                {{ h.clientes }}
+                @if (h.totales.con_errores) { <span class="ml-1 text-xs font-semibold text-red-700">· {{ h.totales.con_errores }} con errores</span> }
+              </td>
+              <td class="px-4 py-3">{{ h.usuario }}</td>
+              <td class="px-4 py-3">
+                <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ring-1 ring-inset" [class]="hi.clase">
+                  <span class="h-1.5 w-1.5 rounded-full" [class]="hi.punto" aria-hidden="true"></span>{{ hi.texto }}
+                </span>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-2 text-xs text-muted">Se guardan las últimas 20 mientras el servidor está prendido.</p>
+  </section>
+}

@@ -1,0 +1,138 @@
+<div class="flex min-h-screen">
+  <!-- Menú lateral: plegado queda solo con los íconos -->
+  <aside
+    class="sticky top-0 flex h-screen shrink-0 flex-col border-r border-line bg-white transition-[width] duration-200"
+    [class]="plegada() ? 'w-20' : 'w-72'"
+  >
+    <div class="flex items-center gap-3 border-b border-line py-6" [class]="plegada() ? 'flex-col px-3' : 'px-6'">
+      <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand-700 text-white" aria-hidden="true">
+        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="m9 15 2 2 4-4" />
+        </svg>
+      </div>
+      @if (!plegada()) {
+        <div class="min-w-0 leading-tight">
+          <p class="font-semibold">Control de Facturas</p>
+          <p class="text-sm text-brand-600">ARCA vs. Xubio</p>
+        </div>
+      }
+      <button
+        type="button"
+        (click)="alternarMenu()"
+        [attr.aria-label]="plegada() ? 'Desplegar menú' : 'Plegar menú'"
+        [attr.aria-expanded]="!plegada()"
+        [title]="plegada() ? 'Desplegar menú' : 'Plegar menú'"
+        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted hover:bg-canvas hover:text-ink"
+        [class.ml-auto]="!plegada()"
+      >
+        <svg class="h-5 w-5 transition-transform" [class.rotate-180]="plegada()" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m15 18-6-6 6-6" />
+        </svg>
+      </button>
+    </div>
+
+    <nav class="flex-1 overflow-y-auto py-6" [class]="plegada() ? 'px-2' : 'px-4'">
+      <p class="mb-3 px-3 text-xs font-semibold tracking-wider text-muted uppercase" [class.sr-only]="plegada()">Operación</p>
+      <ul class="space-y-1">
+        <li>
+          <a routerLink="/control" routerLinkActive="bg-brand-50 text-brand-700" [title]="plegada() ? 'Nuevo control' : ''"
+            class="relative flex items-center gap-3 rounded-lg px-3 py-3 text-ink/90 transition-colors hover:bg-brand-50" [class.justify-center]="plegada()">
+            <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" /><path d="m10 8 6 4-6 4z" />
+            </svg>
+            <span [class.sr-only]="plegada()">Nuevo control</span>
+          </a>
+        </li>
+        <li>
+          <a routerLink="/ejecuciones" routerLinkActive="bg-brand-50 text-brand-700" [title]="plegada() ? 'Ejecuciones' : ''"
+            class="relative flex items-center gap-3 rounded-lg px-3 py-3 text-ink/90 transition-colors hover:bg-brand-50" [class.justify-center]="plegada()">
+            <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 12h4l3 8 4-16 3 8h4" />
+            </svg>
+            <span [class.sr-only]="plegada()">Ejecuciones</span>
+            @if (ejecucion.hayActiva()) {
+              @if (plegada()) {
+                <span class="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-emerald-500 motion-safe:animate-pulse" title="Hay un control en curso"></span>
+              } @else {
+                <span class="ml-auto inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200 ring-inset">
+                  <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 motion-safe:animate-pulse" aria-hidden="true"></span>En curso
+                </span>
+              }
+            }
+          </a>
+        </li>
+      </ul>
+
+      <p class="mt-8 mb-3 px-3 text-xs font-semibold tracking-wider text-muted uppercase" [class.sr-only]="plegada()">Configuración</p>
+      @if (plegada()) { <hr class="mx-2 my-4 border-line" /> }
+      <ul class="space-y-1">
+        <li>
+          <a routerLink="/clientes" routerLinkActive="bg-brand-50 text-brand-700" [title]="plegada() ? 'Clientes' : ''"
+            class="relative flex items-center gap-3 rounded-lg px-3 py-3 text-ink/90 transition-colors hover:bg-brand-50" [class.justify-center]="plegada()">
+            <svg class="h-5 w-5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M3 21h18" /><path d="M5 21V7l7-4 7 4v14" /><path d="M9 21v-6h6v6" /><path d="M9 10h.01M15 10h.01" />
+            </svg>
+            <span [class.sr-only]="plegada()">Clientes</span>
+            @if (clientes.incompletos()) {
+              @if (plegada()) {
+                <span class="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-amber-500" title="Clientes con datos incompletos"></span>
+              } @else {
+                <span class="ml-auto rounded-full bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white tabular-nums" title="Clientes con datos incompletos">{{ clientes.incompletos() }}</span>
+              }
+            }
+          </a>
+        </li>
+      </ul>
+    </nav>
+
+    <!-- Quién está usando el módulo: lo da ContadorWeb; en modo local, un usuario de prueba -->
+    @if (sesion.usuario(); as u) {
+      <div class="border-t border-line py-4" [class]="plegada() ? 'px-2' : 'px-4'">
+        @if (plegada()) {
+          <div class="flex justify-center">
+            <span class="flex h-9 w-9 items-center justify-center rounded-full bg-brand-700 text-xs font-bold text-white" [title]="u.nombre + ' · ' + rolesDe(u)">{{ iniciales(u.nombre) }}</span>
+          </div>
+        } @else {
+          <div class="flex items-center gap-3 px-2">
+            <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand-700 text-xs font-bold text-white">{{ iniciales(u.nombre) }}</span>
+            <div class="min-w-0 leading-tight">
+              <p class="truncate text-sm font-semibold">{{ u.nombre }}</p>
+              <p class="text-xs text-muted">{{ rolesDe(u) }}</p>
+            </div>
+          </div>
+          @if (!sesion.conectado()) {
+            <label class="mt-3 block px-2 text-xs">
+              <span class="font-semibold text-muted">Usuario de prueba</span>
+              <select (change)="cambiarUsuario($any($event.target).value)"
+                class="mt-1 w-full rounded-lg border border-line bg-white px-2 py-1.5 text-sm outline-none focus:border-brand-400">
+                @for (p of usuariosDePrueba; track p.id) {
+                  <option [value]="p.id" [selected]="p.id === sesion.identidadElegida().id">{{ p.nombre }} ({{ p.nivel }})</option>
+                }
+              </select>
+              <span class="mt-1 block text-muted">Modo local: en producción el usuario y su nivel los da ContadorWeb.</span>
+            </label>
+          }
+        }
+      </div>
+    }
+
+    @if (!plegada()) {
+      <div class="border-t border-line px-6 py-5 text-xs text-muted">
+        <p>Mis Comprobantes ARCA vs. Libros IVA Xubio</p>
+        <p class="mt-1">V-1.0.0</p>
+      </div>
+    }
+  </aside>
+
+  <!-- Contenido -->
+  <main class="min-w-0 flex-1 px-10 py-10">
+    @if (sesion.sinSesion(); as motivo) {
+      <div class="mx-auto mt-16 max-w-lg rounded-xl border border-amber-200 bg-amber-50 p-6 text-amber-900" role="alert">
+        <p class="font-semibold">No hay una sesión de ContadorWeb</p>
+        <p class="mt-2 text-sm">{{ motivo }}</p>
+      </div>
+    } @else {
+      <router-outlet />
+    }
+  </main>
+</div>
