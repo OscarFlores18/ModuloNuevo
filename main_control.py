@@ -297,7 +297,7 @@ class CentralAutomatizacionApp:
         self.lbl_contador_disp.pack(side="left", padx=6)
 
         self.search_var = tk.StringVar()
-        self.search_var.trace("w", lambda *args: self.refrescar_vista_clientes())
+        self.search_var.trace_add("write", lambda *args: self.refrescar_vista_clientes())
         ctk.CTkEntry(f_disp, textvariable=self.search_var, placeholder_text="Buscar...", height=30, font=FONT_ENTRY, fg_color=FIELD_BG, border_color=BORDER_COLOR).grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
 
         self.scroll_clientes = ctk.CTkScrollableFrame(f_disp, fg_color="transparent")
