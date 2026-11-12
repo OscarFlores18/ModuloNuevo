@@ -14,12 +14,15 @@ import { Plegable } from '../../core/ui/plegable';
 
 type ModoPeriodo = 'mes' | 'rango';
 
-/** Lo que se recuerda del formulario en este navegador (nunca la contraseña). */
+/**
+ * Lo que se recuerda del formulario en este navegador. Ni la contraseña ni la
+ * carpeta: la carpeta siempre arranca en la del servidor (CARPETA_SALIDA), así
+ * otro servidor u otra configuración nunca escriben en una carpeta vieja.
+ */
 interface Preferencias {
   ventas: boolean;
   compras: boolean;
   pasos: Record<PasoId, boolean>;
-  carpeta: string;
   seleccion: string[];
 }
 
@@ -109,7 +112,7 @@ export class NuevoControl {
   protected readonly xubioClave = signal('');
   protected readonly xubioRecordar = signal(false);
   protected readonly verClave = signal(false);
-  protected readonly carpeta = signal(this.prefs.carpeta ?? '');
+  protected readonly carpeta = signal('');
 
   protected readonly error = signal<string | null>(null);
   /** Se marca al tocar «Ejecutar»: recién ahí se muestran los faltantes en rojo. */
@@ -164,7 +167,7 @@ export class NuevoControl {
     void this.cargarAjustes();
     // Lo elegido se recuerda para la próxima vez (sin contraseñas).
     effect(() => {
-      const prefs: Preferencias = { ventas: this.ventas(), compras: this.compras(), pasos: this.pasos(), carpeta: this.carpeta(), seleccion: this.seleccion() };
+      const prefs: Preferencias = { ventas: this.ventas(), compras: this.compras(), pasos: this.pasos(), seleccion: this.seleccion() };
       try {
         localStorage.setItem(CLAVE_PREFS, JSON.stringify(prefs));
       } catch {
@@ -184,7 +187,7 @@ export class NuevoControl {
     try {
       const a = await this.api.ajustes();
       this.ajustes.set(a);
-      if (!this.carpeta()) this.carpeta.set(a.carpeta_salida);
+      this.carpeta.set(a.carpeta_salida);
       this.xubioUsuario.set(a.xubio.usuario);
       this.xubioRecordar.set(a.xubio.recordar);
     } catch (e) {

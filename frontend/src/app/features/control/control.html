@@ -14,7 +14,7 @@
 }
 @if (clientes.error(); as e) { <app-alerta class="mb-6" nivel="error" [mensajes]="[e]" /> }
 
-<div class="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+<div class="grid grid-cols-[minmax(0,1fr)] items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
   <div class="space-y-6">
     <!-- 1. Clientes -->
     <section class="rounded-2xl border border-line bg-white p-6" aria-labelledby="t-clientes">

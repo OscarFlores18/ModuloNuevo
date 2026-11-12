@@ -4,20 +4,28 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "frontend", "start"],
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "start"
+      ],
       "port": 4210
     },
     {
       "name": "backend",
       "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "--directory", "backend", "uvicorn", "app.main:app", "--port", "8002", "--reload", "--reload-dir", "app"],
-      "port": 8002,
-      "autoPort": false
-    },
-    {
-      "name": "backend-demo",
-      "runtimeExecutable": "uv",
-      "runtimeArgs": ["run", "--directory", "backend", "--env-file", "C:/Users/Admin/AppData/Local/Temp/claude/a06f0ba0983af01b/06a06190-132f-43ca-9d3a-bf2a8ae0ad58/scratchpad/demo/demo.env", "uvicorn", "app.main:app", "--port", "8002"],
+      "runtimeArgs": [
+        "run",
+        "--directory",
+        "backend",
+        "uvicorn",
+        "app.main:app",
+        "--port",
+        "8002",
+        "--reload",
+        "--reload-dir",
+        "app"
+      ],
       "port": 8002,
       "autoPort": false
     }

@@ -65,10 +65,10 @@ type Filtro = 'todos' | 'incompletos';
             @for (c of visibles(); track c.nombre) {
               <tr class="hover:bg-canvas/60">
                 <td class="max-w-[18rem] px-5 py-3"><p class="truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</p></td>
-                <td class="px-5 py-3 tabular-nums">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : '—' }}</td>
+                <td class="px-5 py-3 whitespace-nowrap tabular-nums">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : '—' }}</td>
                 <td class="px-5 py-3">
-                  <span class="tabular-nums">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</span>
-                  <span class="ml-2 text-xs" [class]="c.arca.tiene_clave ? 'text-emerald-700' : 'font-semibold text-amber-700'">{{ c.arca.tiene_clave ? 'con clave' : 'sin clave' }}</span>
+                  <span class="whitespace-nowrap tabular-nums">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</span>
+                  <span class="ml-2 text-xs whitespace-nowrap" [class]="c.arca.tiene_clave ? 'text-emerald-700' : 'font-semibold text-amber-700'">{{ c.arca.tiene_clave ? 'con clave' : 'sin clave' }}</span>
                 </td>
                 <td class="max-w-[14rem] px-5 py-3">
                   @if (c.xubio.url) {

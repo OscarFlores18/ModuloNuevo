@@ -57,7 +57,8 @@ export class EjecucionPantalla {
     return e.detalle_clientes[i + 1]?.nombre ?? null;
   });
 
-  protected readonly procesados = computed(() => this.ej()?.detalle_clientes.filter((c) => c.estado !== 'pendiente' && c.estado !== 'en_curso').length ?? 0);
+  /** Los que llegaron al final (los cancelados no cuentan). */
+  protected readonly procesados = computed(() => this.ej()?.detalle_clientes.filter((c) => c.estado === 'ok' || c.estado === 'con_errores').length ?? 0);
   protected readonly progreso = computed(() => {
     const e = this.ej();
     if (!e) return 0;
