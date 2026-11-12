@@ -82,7 +82,7 @@
     }
   </section>
 
-  <div class="grid items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_32rem]">
+  <div class="grid grid-cols-[minmax(0,1fr)] items-start gap-6 2xl:grid-cols-[minmax(0,1fr)_32rem]">
     <!-- Clientes -->
     <section aria-labelledby="t-clientes-ej">
       <div class="mb-3 flex items-center justify-between">
@@ -154,7 +154,7 @@
             @if (c.carpeta) {
               <button type="button" (click)="copiar(c.carpeta)" class="mt-3 flex max-w-full items-center gap-1.5 text-left text-xs text-muted hover:text-ink" title="Copiar la ruta">
                 <svg class="h-3.5 w-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-                <span class="truncate font-mono">{{ c.carpeta }}</span>
+                <span class="min-w-0 truncate font-mono">{{ c.carpeta }}</span>
               </button>
             }
           </li>

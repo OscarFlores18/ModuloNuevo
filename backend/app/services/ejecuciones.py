@@ -395,7 +395,8 @@ def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> None:
         funcion()
     except Exception as e:  # los bots tiran Exception genérica
         paso.estado = "error"
-        paso.mensaje = str(e).strip().splitlines()[0][:300] if str(e).strip() else type(e).__name__
+        # En una línea: los bots ponen la ruta del archivo que falta en la segunda.
+        paso.mensaje = " ".join(str(e).split())[:400] or type(e).__name__
         ej.registrar(f" [ERROR] {paso.etiqueta}: {e}", "error")
     else:
         # Algunos bots atrapan su propio error y solo lo imprimen.
