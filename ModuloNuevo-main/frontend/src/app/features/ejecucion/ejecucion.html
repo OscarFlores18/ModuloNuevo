@@ -1,0 +1,182 @@
+@let e = ej();
+
+@if (store.error(); as err) { <app-alerta nivel="error" titulo="No se pudo consultar la ejecución." [mensajes]="[err]" /> }
+
+@if (!e) {
+  @if (!store.error() && !store.historial().length) {
+    <div class="mf-aviso">
+      <strong>Todavía no se ejecutó ningún control.</strong>
+      <p><a routerLink="/control" class="mf-btn mt-2">Nuevo control</a></p>
+    </div>
+  }
+} @else {
+  @let ins = insigniaEjecucion[e.estado];
+
+  <!-- 1. Estado global -->
+  <section class="mf-panel mf-panel-acento" aria-labelledby="t-ejecucion">
+    <header class="flex flex-wrap items-center justify-between gap-3">
+      <div class="min-w-0">
+        <h2 id="t-ejecucion" class="m-0 text-xl font-bold">Ejecución del Control</h2>
+        <p class="m-0 mt-0.5 font-semibold">Período {{ e.periodo }}</p>
+      </div>
+      @if (activa()) {
+        <button type="button" class="mf-btn mf-btn-rojo" (click)="confirmarCancelar.set(true)" [disabled]="e.cancelar_pedido">
+          {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar Control' }}
+        </button>
+      } @else {
+        <a routerLink="/control" class="mf-btn">Nuevo control</a>
+      }
+    </header>
+
+    <dl class="ej-kpis">
+      <div class="ej-kpi">
+        <dt>Estado</dt>
+        <dd><span [class]="ins.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="ins.latido" aria-hidden="true"></span>{{ ins.texto }}</span></dd>
+      </div>
+      <div class="ej-kpi">
+        <dt>Progreso</dt>
+        <dd>{{ procesados() }} <small>de {{ e.clientes }} clientes</small></dd>
+      </div>
+      <div class="ej-kpi" [class.ej-kpi-error]="errores() > 0">
+        <dt>Errores</dt>
+        <dd>{{ errores() }}</dd>
+      </div>
+      <div class="ej-kpi">
+        <dt>Duración</dt>
+        <dd class="tabular-nums" role="timer">{{ duracion() || '—' }}</dd>
+      </div>
+    </dl>
+
+    <div class="mf-barra mt-4" role="progressbar" [attr.aria-valuenow]="progreso()" aria-valuemin="0" aria-valuemax="100" aria-label="Avance del control">
+      <div class="mf-barra-relleno" [style.width.%]="progreso()"
+        [style.background]="e.estado === 'error' ? 'var(--color-error)' : e.estado === 'cancelada' ? 'var(--color-tenue)' : e.estado === 'finalizada' ? (errores() ? 'var(--color-aviso)' : 'var(--color-ok)') : null"></div>
+    </div>
+  </section>
+
+  <!-- Pausa entre clientes: espera una respuesta -->
+  @if (e.pausa; as p) {
+    <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-4" role="alertdialog" aria-labelledby="t-pausa">
+      <span class="mono flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-aviso text-lg font-bold" aria-hidden="true">{{ segundosPausa() }}</span>
+      <div class="min-w-0 flex-1">
+        <strong id="t-pausa">
+          Terminó {{ p.cliente }}.
+          @if (siguienteCliente(); as s) { Sigue {{ s }} en {{ segundosPausa() }} s. } @else { Sigue en {{ segundosPausa() }} s. }
+        </strong>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="mf-btn" (click)="store.responder('continuar')">Continuar ahora</button>
+        <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('no_preguntar')">No preguntar más</button>
+        <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')">Cancelar todo</button>
+      </div>
+    </section>
+  }
+
+  <!-- 2. Clientes -->
+  <section aria-labelledby="t-clientes-ej">
+    <h2 id="t-clientes-ej" class="m-0 mb-2 text-lg font-bold">Clientes</h2>
+    <ul class="ej-clientes">
+      @for (c of clientes(); track c.nombre) {
+        <li>
+          <details class="ej-cliente" [class.ej-cliente-error]="c.conError">
+            <summary>
+              <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+              <span class="ej-cliente-nombre" [title]="c.nombre">{{ c.nombre }}</span>
+              <span [class]="c.insignia.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="c.insignia.latido" aria-hidden="true"></span>{{ c.insignia.texto }}</span>
+              <span class="mf-barra ej-cliente-barra" role="progressbar" [attr.aria-valuenow]="c.avance" aria-valuemin="0" aria-valuemax="100" [attr.aria-label]="'Avance de ' + c.nombre">
+                <span class="mf-barra-relleno block" [style.width.%]="c.avance" [style.background]="c.conError ? 'var(--color-error)' : c.avance === 100 ? 'var(--color-ok)' : null"></span>
+              </span>
+            </summary>
+
+            <!-- 3. Detalle: línea de tiempo -->
+            <div class="ej-cliente-cuerpo">
+              <ol class="ej-stepper" [attr.aria-label]="'Pasos de ' + c.nombre">
+                @for (et of c.etapas; track et.id; let n = $index) {
+                  <li class="ej-etapa" [attr.data-estado]="et.estado">
+                    <span class="ej-etapa-icono" aria-hidden="true">
+                      @switch (et.estado) {
+                        @case ('ok') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg> }
+                        @case ('error') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg> }
+                        @case ('procesando') { <span class="ej-spinner"></span> }
+                        @case ('aviso') { ! }
+                        @case ('omitido') { – }
+                        @default { {{ n + 1 }} }
+                      }
+                    </span>
+                    <span class="ej-etapa-nombre">{{ et.titulo }}</span>
+                    <span class="ej-etapa-estado">{{ textoEtapa[et.estado] }}</span>
+                  </li>
+                }
+              </ol>
+
+              @for (p of c.problemas; track p.titulo) {
+                <app-alerta class="mt-3" [nivel]="p.nivel" [titulo]="p.titulo" [mensajes]="[p.mensaje]" />
+              }
+
+              @if (c.archivos.length) {
+                <div class="mt-3">
+                  <button type="button" class="mf-btn mf-btn-suave" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                    {{ carpetaAbierta(c.nombre) ? 'Cerrar Carpeta de Archivos' : 'Abrir Carpeta de Archivos' }}
+                  </button>
+
+                  @if (carpetaAbierta(c.nombre)) {
+                    @if (errorDescarga(); as err) { <app-alerta class="mt-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
+                    <div class="ej-carpeta">
+                      @if (c.carpeta) {
+                        <div class="ej-carpeta-ruta">
+                          <span class="mono min-w-0 flex-1 break-all">{{ c.carpeta }}</span>
+                          <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="copiar(c.carpeta)">Copiar ruta</button>
+                        </div>
+                      }
+                      <ul class="ej-archivos">
+                        @for (a of c.archivos; track a.nombre) {
+                          @let clave = c.indice + '/' + a.nombre;
+                          <li>
+                            <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
+                            <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
+                            <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
+                            <button type="button" class="mf-btn mf-btn-chico" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Bajar ' + a.nombre">
+                              {{ descargando() === clave ? 'Bajando…' : 'Bajar' }}
+                            </button>
+                          </li>
+                        }
+                      </ul>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          </details>
+        </li>
+      }
+    </ul>
+  </section>
+
+  <app-confirm-modal [(abierto)]="confirmarCancelar" titulo="¿Cancelar el control?" textoConfirmar="Sí, cancelar" textoCancelar="Seguir" [peligro]="true" (confirmado)="cancelar()">
+    El paso que se está haciendo <strong class="text-texto">termina igual</strong>; después se frena y los clientes que faltan quedan sin hacer.
+  </app-confirm-modal>
+}
+
+<!-- Historial: plegado -->
+@if (store.historial().length > (e ? 1 : 0)) {
+  <details class="ej-plegable">
+    <summary>
+      <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+      <span class="flex-1">Ejecuciones recientes</span>
+      <span class="mf-badge">{{ store.historial().length }}</span>
+    </summary>
+    <ul class="ej-historial">
+      @for (h of store.historial(); track h.id) {
+        @let hi = insigniaEjecucion[h.estado];
+        <li>
+          <a [routerLink]="['/ejecuciones', h.id]" class="mf-item" [class.mf-item-elegido]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null">
+            <span class="mono w-28 shrink-0">{{ h.creada | date: 'dd/MM HH:mm' }}</span>
+            <span class="min-w-0 flex-1 truncate font-semibold">{{ h.periodo }} · {{ h.clientes }} {{ h.clientes === 1 ? 'cliente' : 'clientes' }}</span>
+            @if (h.totales.con_errores) { <span class="mf-badge mf-badge-error">{{ h.totales.con_errores }} con errores</span> }
+            <span [class]="hi.clase">{{ hi.texto }}</span>
+          </a>
+        </li>
+      }
+    </ul>
+  </details>
+}

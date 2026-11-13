@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "ModuloNuevo-main/frontend", "start"],
+      "port": 4210
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "--directory", "ModuloNuevo-main/backend", "uvicorn", "app.main:app", "--port", "8002", "--reload", "--reload-dir", "app"],
+      "port": 8002,
+      "autoPort": false
+    }
+  ]
+}

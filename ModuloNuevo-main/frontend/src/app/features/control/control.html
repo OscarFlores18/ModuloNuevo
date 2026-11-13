@@ -1,0 +1,143 @@
+<form [formGroup]="form" (ngSubmit)="ejecutar()" class="flex flex-col gap-3" novalidate aria-labelledby="t-nuevo">
+  <div class="flex items-center justify-between gap-3">
+    <h2 id="t-nuevo" class="m-0 text-xl font-semibold">Nuevo control</h2>
+    @if (ejecucion.hayActiva()) {
+      <a routerLink="/ejecuciones" class="mf-badge mf-badge-ok no-underline"><span class="mf-punto mf-latido" aria-hidden="true"></span>Control en curso · ver</a>
+    }
+  </div>
+
+  <!-- Clientes -->
+  <section class="mf-panel !py-3" aria-labelledby="t-clientes">
+    <div class="mf-panel-titulo !mb-2">
+      <h2 id="t-clientes" class="!text-base">Clientes</h2>
+      @if (sesion.esSupervisor()) {
+        <a routerLink="/clientes" class="mf-btn-link ml-auto text-sm">Administrar</a>
+      }
+    </div>
+
+    <div class="grid gap-2 md:grid-cols-2">
+      <!-- Disponibles -->
+      <div class="mf-lista">
+        <div class="mf-lista-cab">
+          <span>Disponibles ({{ disponibles().length }})</span>
+          <button type="button" class="mf-btn-link text-xs tracking-normal normal-case" (click)="agregarVisibles()" [disabled]="!disponibles().length">
+            Sumar {{ busqueda.value ? 'encontrados' : 'todos' }}
+          </button>
+        </div>
+        <div class="p-1.5">
+          <input class="mf-input" type="search" [formControl]="busqueda" (keydown.enter)="alEnter($event)" placeholder="Buscar nombre o CUIT…" aria-label="Buscar cliente" />
+        </div>
+        <ul class="m-0 max-h-56 list-none overflow-y-auto px-1.5 pb-1.5" aria-label="Clientes disponibles">
+          @for (c of disponibles(); track c.nombre) {
+            <li>
+              <button type="button" class="mf-item !py-1" (click)="agregar(c.nombre)" [attr.aria-label]="'Sumar ' + c.nombre">
+                <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
+                <span class="mono mf-tenue text-xs">{{ c.arca.cuit_representado | cuit }}</span>
+                @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">!</span> }
+                <span class="text-acento" aria-hidden="true">+</span>
+              </button>
+            </li>
+          } @empty {
+            <li class="mf-tenue px-2 py-3 text-center text-sm">
+              {{ clientes.cargando() && !clientes.cargado() ? 'Cargando…' : busqueda.value ? 'Sin resultados.' : clientes.lista().length ? 'Todos sumados.' : 'No hay clientes.' }}
+            </li>
+          }
+        </ul>
+      </div>
+
+      <!-- A procesar -->
+      <div class="mf-lista" [style.border-color]="invalido('clientes') ? 'var(--color-error)' : null">
+        <div class="mf-lista-cab">
+          <span class="text-texto">A procesar ({{ elegidos().length }})</span>
+          <button type="button" class="mf-btn-link text-xs tracking-normal normal-case" style="color: var(--color-error-texto)" (click)="limpiar()" [disabled]="!elegidos().length">Vaciar</button>
+        </div>
+        <ol class="m-0 max-h-[17.5rem] list-none space-y-0.5 overflow-y-auto p-1.5" aria-label="Clientes a procesar, en orden">
+          @for (c of elegidos(); track c.nombre; let i = $index, primero = $first, ultimo = $last) {
+            <li class="mf-item mf-item-elegido !py-1">
+              <span class="mono w-5 shrink-0 text-center text-xs font-bold text-acento">{{ i + 1 }}</span>
+              <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
+              @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span> }
+              <button type="button" class="mf-icono-btn" (click)="mover(i, -1)" [disabled]="primero" [attr.aria-label]="'Subir ' + c.nombre">▴</button>
+              <button type="button" class="mf-icono-btn" (click)="mover(i, 1)" [disabled]="ultimo" [attr.aria-label]="'Bajar ' + c.nombre">▾</button>
+              <button type="button" class="mf-icono-btn mf-icono-btn-peligro" (click)="quitar(c.nombre)" [attr.aria-label]="'Quitar ' + c.nombre">✕</button>
+            </li>
+          } @empty {
+            <li class="mf-tenue px-2 py-3 text-center text-sm">Ninguno.</li>
+          }
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- Período y operaciones (los pasos son fijos: solo se informan) -->
+  <section class="mf-panel !py-3" aria-label="Parámetros">
+    <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
+      <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
+        <legend class="mf-campo-etiqueta">Período</legend>
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="mf-segmentado" role="radiogroup" aria-label="Tipo de período">
+            <label [class.activo]="modo() === 'mes'"><input type="radio" formControlName="modo" value="mes" class="sr-only" />Mes completo</label>
+            <label [class.activo]="modo() === 'rango'"><input type="radio" formControlName="modo" value="rango" class="sr-only" />Otro rango</label>
+          </div>
+          @if (modo() === 'mes') {
+            <input class="mf-input !w-44" type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
+          } @else {
+            <input class="mf-input !w-40" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
+            <span class="mf-tenue">a</span>
+            <input class="mf-input !w-40" type="date" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
+          }
+        </div>
+      </fieldset>
+
+      <fieldset class="m-0 border-0 p-0" formGroupName="operaciones">
+        <legend class="mf-campo-etiqueta">Operaciones</legend>
+        <div class="flex h-[42px] items-center gap-4" [class.mf-grupo-invalido]="invalido('operaciones')">
+          <label class="mf-check !text-texto"><input type="checkbox" formControlName="ventas" />Ventas</label>
+          <label class="mf-check !text-texto"><input type="checkbox" formControlName="compras" />Compras</label>
+        </div>
+      </fieldset>
+
+      <div>
+        <div class="mf-campo-etiqueta">Se hacen siempre los 3 pasos</div>
+        <ol class="mf-pasos" aria-label="Pasos del control: se hacen siempre los tres">
+          @for (p of pasosInfo; track p.id; let n = $index) {
+            @if (n) { <li class="mf-pasos-flecha" aria-hidden="true">→</li> }
+            <li class="mf-pasos-item" [title]="p.detalle"><span class="mf-paso" aria-hidden="true">{{ n + 1 }}</span>{{ p.titulo }}</li>
+          }
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- Xubio y carpeta -->
+  <section class="mf-panel !py-3" aria-label="Destino">
+    <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]">
+      <ng-container formGroupName="xubio">
+          <label class="mf-campo">
+            <span>Usuario Xubio</span>
+            <input class="mf-input" type="email" formControlName="usuario" autocomplete="username" [attr.aria-invalid]="invalido('xubio')" />
+          </label>
+          <label class="mf-campo">
+            <span>Contraseña Xubio</span>
+            <input class="mf-input" type="password" formControlName="clave" autocomplete="current-password"
+              [placeholder]="guardadaXubio() ? 'Guardada' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
+          </label>
+      </ng-container>
+      <label class="mf-campo">
+        <span>Carpeta de salida</span>
+        <input class="mf-input mono" type="text" formControlName="carpeta" spellcheck="false" [title]="ejemploCarpeta()" [attr.aria-invalid]="invalido('carpeta')" />
+      </label>
+    </div>
+    <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar cuenta de Xubio en el servidor</label>
+  </section>
+
+  <!-- Acción -->
+  <div class="mf-barra-accion">
+    <p class="mf-tenue m-0 min-w-0 flex-1 truncate text-sm">
+      <strong class="text-texto">{{ elegidos().length }} cliente(s)</strong> · {{ resumen() }}
+    </p>
+    <button type="submit" class="mf-btn mf-btn-grande" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()">
+      {{ ejecucion.enviando() ? 'Iniciando…' : 'Ejecutar control' }}
+    </button>
+  </div>
+</form>
