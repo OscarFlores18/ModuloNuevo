@@ -12,6 +12,7 @@ solo se cambia de empresa antes de bajar cada libro.
 """
 
 import os
+import time
 from typing import Callable
 from urllib.parse import urljoin
 
@@ -44,7 +45,6 @@ def procesar_informe_individual(
     log(f"   -> Navegando al Libro {tipo_reporte}...")
     try:
         page.locator('a', has_text='Impuestos').first.hover(timeout=5000)
-        page.wait_for_timeout(1000)
         page.click(f'a[href="{url_menu}"]', timeout=5000)
     except Exception:
         # El menú no se desplegó (popup encima, ventana chica): se va directo.
@@ -63,7 +63,7 @@ def procesar_informe_individual(
             "nodo.dispatchEvent(new Event('change', { bubbles: true })); }",
             valor,
         )
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(100)
 
     input_desde = iframe.locator("input[formcontrolname='fechaDesdeControl']")
     escribir_fecha(input_desde, fecha_desde)
@@ -74,7 +74,7 @@ def procesar_informe_individual(
     # Combobox "Default"
     try:
         iframe.locator("mat-select[formcontrolname='selectorControl']").click(timeout=5000)
-        page.wait_for_timeout(800)
+        iframe.locator("mat-option").first.wait_for(timeout=5000)
         cantidad_opciones = iframe.locator("mat-option").count()
         for i in range(cantidad_opciones):
             opcion = iframe.locator("mat-option").nth(i)
@@ -86,14 +86,14 @@ def procesar_informe_individual(
             if texto == "default":
                 if not esta_tildado:
                     opcion.evaluate("nodo => nodo.click()")
-                    page.wait_for_timeout(200)
+                    page.wait_for_timeout(100)
             else:
                 if esta_tildado:
                     opcion.evaluate("nodo => nodo.click()")
-                    page.wait_for_timeout(200)
+                    page.wait_for_timeout(100)
 
         page.keyboard.press("Escape")
-        page.wait_for_timeout(400)
+        page.wait_for_timeout(150)
     except Exception as e:
         log(f"      [AVISO]: Falló configuración del filtro default. Detalle: {e}")
 
@@ -115,14 +115,17 @@ def procesar_informe_individual(
     hay_datos = False
     esta_vacio = False
 
-    for _ in range(180):
-        if boton_exportar.is_enabled():
+    # Se revisa cada 0,25 s hasta 3 min. `count()` primero: `is_enabled()` sobre un
+    # botón que todavía no existe se queda esperando 30 s antes de contestar.
+    limite = time.monotonic() + 180
+    while time.monotonic() < limite:
+        if boton_exportar.count() and boton_exportar.is_enabled():
             hay_datos = True
             break
-        if texto_vacio.is_visible():
+        if texto_vacio.count() and texto_vacio.is_visible():
             esta_vacio = True
             break
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(250)
 
     if hay_datos:
         log(f"      [INFO]: Datos encontrados. Descargando Excel de {tipo_reporte}...")

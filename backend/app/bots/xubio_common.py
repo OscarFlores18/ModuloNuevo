@@ -8,6 +8,7 @@ de una vez, ver claude/diagnostico-bug-fecha-anual.md), alcanza con
 corregir este único archivo en vez de dos copias que pueden desalinearse.
 """
 
+import time
 from typing import Callable
 
 from ..core.errors import EmpresaNoEncontrada
@@ -34,33 +35,36 @@ def login_xubio(page, usuario, password, matar_popup, log: Callable[[str], None]
     """ Login completo contra connect.visma.com / Xubio. """
     log(f"   -> Iniciando sesión en Xubio con el usuario {usuario}...")
     page.goto("https://connect.visma.com/?returnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fredirect_uri%3Dhttps%253A%252F%252Fxubio.com%252FNXV%252FvismaConnect%252Fcallback%26response_type%3Dcode%2520id_token%26scope%3Dopenid%2520email%26response_mode%3Dform_post%26client_id%3Dxubio%26state%3Dxubio%26nonce%3D6890436f8d7e8befea5fd4302e574b5d")
-    try:
-        boton_cookies = page.wait_for_selector("#onetrust-accept-btn-handler", timeout=5000)
-        if boton_cookies:
-            boton_cookies.click()
-    except:
-        pass
+    cookies = page.locator("#onetrust-accept-btn-handler")
 
-    page.wait_for_selector("#Username")
+    def aceptar_cookies():
+        try:
+            if cookies.is_visible():
+                cookies.click(timeout=2000)
+        except Exception:
+            pass
+
+    # Sin esperas fijas: se sigue apenas aparece el campo de usuario (o el cartel de cookies).
+    page.locator("#Username").or_(cookies).first.wait_for(timeout=30000)
+    aceptar_cookies()
     page.fill("#Username", usuario)
-    page.click(".form-login-button-email")
+    try:
+        page.click(".form-login-button-email", timeout=5000)
+    except Exception:
+        # El cartel de cookies llegó tarde y tapa el botón.
+        aceptar_cookies()
+        page.click(".form-login-button-email")
     page.wait_for_selector("#Password", state="visible")
     page.fill("#Password", password)
     page.click(".form-login-button-password")
 
-    try:
-        boton_continuar_inicio = page.wait_for_selector('button:has-text("Continuar inicio")', timeout=4000)
-        if boton_continuar_inicio:
-            boton_continuar_inicio.click()
-    except:
-        pass
-
-    # ESPERA MÁS ROBUSTA PARA PCs LENTAS (Espera a que el tráfico de red se calme)
-    try:
-        page.wait_for_load_state("networkidle", timeout=15000)
-    except:
-        pass
-    page.wait_for_timeout(2000)
+    # Se espera lo que llegue primero: «Continuar inicio» (a veces) o Xubio ya adentro.
+    adentro = page.locator("#resaltarCompania")
+    continuar = page.locator('button:has-text("Continuar inicio")')
+    adentro.or_(continuar).first.wait_for(timeout=60000)
+    if continuar.is_visible():
+        continuar.click()
+    adentro.first.wait_for(state="visible", timeout=60000)
     matar_popup()
 
 
@@ -107,7 +111,6 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
     selector_compania = page.locator('.compania').first
     selector_compania.hover()
     selector_compania.click()
-    page.wait_for_timeout(500)
 
     buscador = page.locator('#buscador-empresa')
     try:
@@ -128,13 +131,18 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
         buscador.click()
         buscador.fill("")
         buscador.fill(texto_busqueda)
-        page.wait_for_timeout(800)  # espera a que el filtro JS actualice la lista
         opciones = page.locator('#compania-lista li.licomp a')
-        for i in range(opciones.count()):
-            opcion = opciones.nth(i)
-            texto = opcion.inner_text().strip()
-            if texto and (nombre_cliente.lower() in texto.lower() or texto.lower() in nombre_cliente.lower()):
-                return opcion
+        # El filtro de Xubio es JS: se revisa la lista cada 150 ms hasta 3 s en vez de esperar fijo.
+        for _ in range(20):
+            page.wait_for_timeout(150)
+            for i in range(opciones.count()):
+                opcion = opciones.nth(i)
+                try:
+                    texto = opcion.inner_text(timeout=500).strip()
+                except Exception:
+                    continue
+                if texto and (nombre_cliente.lower() in texto.lower() or texto.lower() in nombre_cliente.lower()):
+                    return opcion
         return None
 
     objetivo = filtrar_y_ubicar(nombre_cliente)
@@ -148,6 +156,7 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
             detalle={"cliente": nombre_cliente, "empresa_actual": empresa_actual},
         )
 
+    texto_objetivo = objetivo.inner_text().strip().lower()
     try:
         objetivo.click(timeout=4000)
     except Exception:
@@ -156,10 +165,18 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
         matar_popup()
         objetivo.click(timeout=10000)
 
-    # 4) Esperar a que cargue la nueva empresa
-    try:
-        page.wait_for_load_state("networkidle", timeout=15000)
-    except:
-        pass
-    page.wait_for_timeout(2000)
+    # 4) Esperar a que la barra muestre la nueva empresa (en vez de «red tranquila» + 2 s fijos,
+    # que en Xubio casi siempre agotaba los 15 s porque la página nunca deja de pedir datos).
+    # Se pregunta desde acá (no con wait_for_function) porque elegir empresa recarga la página.
+    limite = time.monotonic() + 30
+    while time.monotonic() < limite:
+        try:
+            actual = page.locator('#resaltarCompania').first.inner_text(timeout=1000).strip().lower()
+            if actual and (texto_objetivo in actual or actual in texto_objetivo):
+                break
+        except Exception:
+            pass
+        page.wait_for_timeout(250)
+    else:
+        log("      [AVISO]: Xubio tardó en mostrar la empresa nueva; se sigue igual.")
     matar_popup()

@@ -31,7 +31,7 @@ from ..auditor import procesar_cruce
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
-from ..core.paths import carpeta_cliente
+from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 
 MAX_HISTORIAL = 20
@@ -633,27 +633,43 @@ def guardar_archivo(ej: Ejecucion, indice: int, nombre: str, destino: Path) -> d
     return {"ruta": str(destino)}
 
 
-def exportar_archivos(ej: Ejecucion, indice: int, destino: Path) -> dict:
-    """Copia los archivos del cliente a `<destino>/<Cliente>/<mmaaaa>/Control de Facturas/`,
-    el mismo formato de la app de escritorio y de DRLiqui.
-
-    Si uno no se puede copiar (por ejemplo, ya existe y está abierto en Excel),
-    los demás se copian igual y ese queda en `fallas`.
-    """
+def archivos_del_cliente(ej: Ejecucion, indice: int) -> tuple[Path, list[dict]]:
+    """La carpeta de salida del cliente y sus archivos; error si no hay nada que bajar."""
     if not 0 <= indice < len(ej.clientes) or not ej.clientes[indice].carpeta:
         raise ErrorEjecucion("Ese cliente no tiene carpeta en esta ejecución.", 404)
     origen = Path(ej.clientes[indice].carpeta)
     archivos = listar_archivos(origen)
     if not archivos:
         raise ErrorEjecucion("Ese cliente no tiene archivos generados.", 404)
-    if not Path(destino).is_dir():
-        raise ErrorEjecucion(f"La carpeta «{destino}» no existe.", 422)
+    return origen, archivos
 
+
+def exportar_archivos(
+    ej: Ejecucion, indice: int, destino: Path | None, base_por_defecto: Path | None = None
+) -> dict:
+    """Copia los archivos del cliente con el formato de la app de escritorio y DRLiqui.
+
+    - Con carpeta elegida (por ejemplo, la del cliente que ya existe):
+      `<elegida>/<mmaaaa>/Control de Facturas/`.
+    - Sin carpeta elegida: se crea la del cliente en Descargas:
+      `<Descargas>/<Cliente>/<mmaaaa>/Control de Facturas/`.
+
+    Si uno no se puede copiar (por ejemplo, ya existe y está abierto en Excel),
+    los demás se copian igual y ese queda en `fallas`.
+    """
+    origen, archivos = archivos_del_cliente(ej, indice)
     _, mes, anio = ej.parametros["desde"].split("/")
     try:
-        carpeta = carpeta_cliente(Path(destino), ej.clientes[indice].nombre, mes, anio)
+        if destino is not None:
+            if not Path(destino).is_dir():
+                raise ErrorEjecucion(f"La carpeta «{destino}» no existe.", 422)
+            carpeta = Path(destino) / f"{mes}{anio}" / SUBCARPETA_CONTROL
+            carpeta.mkdir(parents=True, exist_ok=True)
+        else:
+            base = Path(base_por_defecto or Path.home() / "Downloads")
+            carpeta = carpeta_cliente(base, ej.clientes[indice].nombre, mes, anio)
     except OSError as exc:
-        raise ErrorEjecucion(f"No se pudo crear la carpeta en «{destino}»: {exc}", 422) from exc
+        raise ErrorEjecucion(f"No se pudo crear la carpeta para los archivos: {exc}", 422) from exc
 
     copiados: list[str] = []
     fallas: list[dict] = []
@@ -665,5 +681,5 @@ def exportar_archivos(ej: Ejecucion, indice: int, destino: Path) -> dict:
             fallas.append({"nombre": a["nombre"], "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})
         except OSError as exc:
             fallas.append({"nombre": a["nombre"], "motivo": str(exc)})
-    return {"carpeta": str(carpeta), "copiados": copiados, "fallas": fallas}
+    return {"carpeta": str(carpeta), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
 

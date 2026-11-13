@@ -354,13 +354,15 @@ def guardar_archivo_ejecucion(ejecucion_id: str, indice: int, nombre: str) -> di
 
 @router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/exportar")
 def exportar_archivos_ejecucion(ejecucion_id: str, indice: int) -> dict:
-    """Abre en la PC del servidor la ventana para elegir carpeta y copia ahí los
-    archivos del cliente en `<Cliente>/<mmaaaa>/Control de Facturas`."""
+    """Abre en la PC del servidor la ventana para elegir carpeta. Con una carpeta
+    elegida, los archivos van a `<elegida>/<mmaaaa>/Control de Facturas`; si se
+    cierra sin elegir, a `<Descargas>/<Cliente>/<mmaaaa>/Control de Facturas`."""
     try:
         ej = ejecuciones_srv.obtener(ejecucion_id)
-        destino = dialogos.elegir_carpeta()
-        if destino is None:
-            return {"cancelado": True}
+        ejecuciones_srv.archivos_del_cliente(ej, indice)  # que haya algo antes de abrir la ventana
+        destino = dialogos.elegir_carpeta(
+            "Elegí la carpeta del cliente (o cerrá para crearla en Descargas)"
+        )
         return ejecuciones_srv.exportar_archivos(ej, indice, destino)
     except ejecuciones_srv.ErrorEjecucion as exc:
         raise _http_error(exc) from exc

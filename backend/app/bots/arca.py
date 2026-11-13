@@ -169,6 +169,26 @@ class SesionArca:
         except Exception:
             pass
 
+    def _ir(self, page: Page, url: str) -> None:
+        """Abre una página de ARCA sin esperar a que bajen todos sus recursos.
+
+        Con el `load` por defecto, cuando ARCA está lenta se pasaba de los 30 s
+        aunque el formulario ya estuviera a la vista. Se espera el HTML
+        (`domcontentloaded`), con 60 s de margen y un reintento.
+        """
+        for intento in (1, 2):
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                return
+            except Exception as exc:
+                if intento == 2:
+                    raise BotError(
+                        "ARCA no respondió: la página no cargó en dos intentos de 60 s. "
+                        "Puede estar caída o muy lenta; probá de nuevo en unos minutos.",
+                        detalle={"url": url, "error": str(exc)[:300]},
+                    ) from exc
+                self.log("      [AVISO]: ARCA tarda en responder. Se reintenta...")
+
     def _login(self) -> None:
         if self._portal is None or self._portal.is_closed():
             self._portal = self._context.new_page()
@@ -176,7 +196,7 @@ class SesionArca:
 
         page = self._portal
         self.log("   -> Iniciando sesión en ARCA...")
-        page.goto(URL_LOGIN)
+        self._ir(page, URL_LOGIN)
         page.fill("id=F1:username", self.cuit_login)
         page.click("id=F1:btnSiguiente")
         page.fill("id=F1:password", self.clave)
@@ -254,7 +274,7 @@ class SesionArca:
             raise SesionVencida("La ventana del portal de ARCA se cerró.")
 
         if portal.locator("#buscadorInput").count() == 0:
-            portal.goto(URL_PORTAL)
+            self._ir(portal, URL_PORTAL)
             portal.wait_for_selector("#buscadorInput", timeout=30000)
             portal.wait_for_timeout(500)
 
