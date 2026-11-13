@@ -1,7 +1,8 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { duracion, tamanoLegible } from '../../core/fechas';
+import { carpetaDelPeriodo, duracion, tamanoLegible } from '../../core/fechas';
 import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, estaActiva, mensajeDeError } from '../../core/models';
+import { descargarBlob } from '../../core/descargar';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
@@ -70,6 +71,8 @@ export class EjecucionPantalla {
 
   protected readonly confirmarCancelar = signal(false);
   protected readonly descargando = signal<string | null>(null);
+  /** true: backend en esta PC, se guarda con ventanas de Windows. false (servidor): por el navegador. */
+  protected readonly dialogosLocales = signal(false);
   protected readonly errorDescarga = signal<string | null>(null);
   /** Clientes con la lista de archivos desplegada (por nombre). */
   private readonly carpetasAbiertas = signal<ReadonlySet<string>>(new Set());
@@ -129,6 +132,7 @@ export class EjecucionPantalla {
   });
 
   constructor() {
+    this.api.ajustes().then((a) => this.dialogosLocales.set(a.dialogos_locales), () => this.dialogosLocales.set(false));
     void this.store.cargarHistorial();
 
     // El reloj corre solo con el control activo: al finalizar, el cronómetro queda quieto.
@@ -196,6 +200,11 @@ export class EjecucionPantalla {
     this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
+      if (!this.dialogosLocales()) {
+        descargarBlob(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
+        this.toast.ok('Archivo descargado', archivo.nombre);
+        return;
+      }
       const r = await this.api.guardarArchivo(e.id, c.indice, archivo.nombre);
       if (!r.cancelado) this.toast.ok('Archivo guardado', r.ruta);
     } catch (err) {
@@ -206,7 +215,8 @@ export class EjecucionPantalla {
   }
 
   /**
-   * El servidor (esta misma PC) abre la ventana para elegir carpeta. Elegida: adentro van
+   * Modo servidor: un .zip con Cliente/mmaaaa(/Ventas|Compras). Modo local:
+   * el servidor (esta misma PC) abre la ventana para elegir carpeta. Elegida: adentro van
    * mmaaaa con los archivos. Cerrada sin elegir: se crea Descargas/Cliente/mmaaaa.
    */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
@@ -215,6 +225,13 @@ export class EjecucionPantalla {
     this.descargando.set(`${c.indice}/*`);
     this.errorDescarga.set(null);
     try {
+      if (!this.dialogosLocales()) {
+        // Mismo nombre que arma el backend: sin caracteres inválidos ni punto final («S.A.»).
+        const cliente = c.nombre.replace(/[\\/*?:"<>|]/g, '').trim().replace(/[. ]+$/, '') || 'Cliente';
+        descargarBlob(`${cliente} - ${carpetaDelPeriodo(e.parametros.desde)}.zip`, await this.api.zip(e.id, c.indice));
+        this.toast.ok('Archivos descargados', 'Un .zip con las carpetas del cliente y del período.');
+        return;
+      }
       const r = await this.api.exportar(e.id, c.indice);
       const donde = r.elegida ? r.carpeta : `${r.carpeta} (no elegiste carpeta: se creó en Descargas)`;
       if (r.copiados.length) this.toast.ok('Archivos guardados', `${r.copiados.length} ${r.copiados.length === 1 ? 'archivo' : 'archivos'} en ${donde}`);

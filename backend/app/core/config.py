@@ -9,6 +9,8 @@ a una máquina concreta (requisito de la migración a sitio web).
     MODULONUEVO_CORS        -> orígenes permitidos, separados por coma
     MODULONUEVO_MASTER_KEY  -> secreto para cifrar credenciales en reposo. Si
                                no se define, se genera DATA_DIR/fernet.key
+    MODULONUEVO_DIALOGOS    -> 1/0: ventanas de Windows para guardar archivos
+                               (por defecto, solo en Windows local)
 """
 
 from __future__ import annotations
@@ -57,6 +59,17 @@ PLAYWRIGHT_CHANNEL = (os.getenv("MODULONUEVO_CHROME_CHANNEL", "chrome") or "").s
 # Protección opcional para despliegues públicos: "usuario:clave".
 # Vacío = sin autenticación (modo local).
 BASIC_AUTH = os.getenv("MODULONUEVO_BASIC_AUTH", "").strip()
+
+# Ventanas de Windows («Guardar como», elegir carpeta) que abre el backend en su
+# propia PC. Solo tienen sentido si el backend corre en la PC de quien usa la
+# página: en un servidor (Docker/Render, o con BASIC_AUTH) quedan apagadas y el
+# front baja los archivos por el navegador (uno suelto o un .zip con todo).
+_DIALOGOS_ENV = os.getenv("MODULONUEVO_DIALOGOS", "").strip().lower()
+DIALOGOS_LOCALES = (
+    _DIALOGOS_ENV in ("1", "true", "si", "sí", "yes")
+    if _DIALOGOS_ENV
+    else os.name == "nt" and not PLAYWRIGHT_HEADLESS and not BASIC_AUTH
+)
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:4200",

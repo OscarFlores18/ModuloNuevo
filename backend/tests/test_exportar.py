@@ -6,8 +6,19 @@ import os
 import shutil
 import time
 
-from backend.app.core import dialogos
+import io
+import zipfile
+
+import pytest
+
+from backend.app.core import config, dialogos
 from backend.app.services import ejecuciones as srv
+
+
+@pytest.fixture(autouse=True)
+def _con_dialogos(monkeypatch):
+    """Estos tests prueban el modo local (ventanas de Windows); el de servidor, aparte."""
+    monkeypatch.setattr(config, "DIALOGOS_LOCALES", True)
 
 
 def _ejecucion(tmp_path):
@@ -211,3 +222,40 @@ def test_operacion_de_cada_archivo():
     assert srv.operacion_de("IVA COMPRAS - X.xlsx") == "Compras"
     assert srv.operacion_de("AUX - Control de facturas Compras con AFIP - 10-26 - X.xlsx") == "Compras"
     assert srv.operacion_de("otro.xlsx") is None
+
+
+def test_en_servidor_no_se_abren_ventanas(entorno, tmp_path, monkeypatch):
+    client, _ = entorno
+    _ejecucion(tmp_path)
+    monkeypatch.setattr(config, "DIALOGOS_LOCALES", False)
+
+    def no_llamar(*a, **k):
+        raise AssertionError("no tiene que abrir ventanas en el servidor")
+
+    monkeypatch.setattr(dialogos, "elegir_carpeta", no_llamar)
+    monkeypatch.setattr(dialogos, "guardar_como", no_llamar)
+
+    assert client.post("/api/ejecuciones/exp123/clientes/0/exportar").status_code == 409
+    assert client.post("/api/ejecuciones/exp123/clientes/0/archivos/IVA VENTAS - X.xlsx/guardar").status_code == 409
+    assert client.get("/api/ajustes").json()["dialogos_locales"] is False
+    # Bajar por el navegador sigue andando.
+    assert client.get("/api/ejecuciones/exp123/clientes/0/archivos/IVA VENTAS - X.xlsx").status_code == 200
+
+
+def test_zip_con_la_misma_estructura_de_carpetas(entorno, tmp_path, monkeypatch):
+    client, _ = entorno
+    ej = _ejecucion(tmp_path)
+    ej.parametros.update({"ventas": True, "compras": True})
+    monkeypatch.setattr(config, "DIALOGOS_LOCALES", False)
+
+    r = client.get("/api/ejecuciones/exp123/clientes/0/archivos.zip")
+
+    assert r.status_code == 200, r.text
+    assert r.headers["content-type"] == "application/zip"
+    assert "Cliente%20SA%20-%20102026.zip" in r.headers["content-disposition"]
+    nombres = sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
+    assert nombres == [
+        "Cliente SA/102026/AUX - Control X.xlsx",
+        "Cliente SA/102026/Ventas/IVA VENTAS - X.xlsx",
+        "Cliente SA/102026/Ventas/Mis comprobantes - Emitidos - X.xlsx",
+    ]

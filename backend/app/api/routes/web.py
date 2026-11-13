@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import re
 import time
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...core import config, dialogos
@@ -221,6 +222,7 @@ def ajustes(
     return {
         "carpeta_salida": str(config.OUTPUT_DIR),
         "pausa_segundos": config.PAUSA_ENTRE_CLIENTES_S,
+        "dialogos_locales": config.DIALOGOS_LOCALES,
         "xubio": {
             "usuario": datos["user"],
             "tiene_clave": datos["tiene_pass"],
@@ -338,9 +340,34 @@ def descargar_archivo_ejecucion(
     return FileResponse(archivo, filename=archivo.name)
 
 
+def _solo_local() -> None:
+    """Las ventanas de Windows abren en la PC del backend: en un servidor no."""
+    if not config.DIALOGOS_LOCALES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"mensaje": "Guardar con ventana de Windows solo funciona con el backend en esta PC."},
+        )
+
+
+@router.get("/ejecuciones/{ejecucion_id}/clientes/{indice}/archivos.zip")
+def descargar_zip_ejecucion(ejecucion_id: str, indice: int) -> Response:
+    """Todos los archivos del cliente en un .zip con <Cliente>/<mmaaaa>/(Ventas|Compras)/."""
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        nombre, datos = ejecuciones_srv.zip_de_archivos(ej, indice)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    return Response(
+        content=datos,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=utf-8''{quote(nombre)}"},
+    )
+
+
 @router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/archivos/{nombre}/guardar")
 def guardar_archivo_ejecucion(ejecucion_id: str, indice: int, nombre: str) -> dict:
     """Abre en la PC del servidor «Guardar como» y copia ahí ese archivo."""
+    _solo_local()
     try:
         ej = ejecuciones_srv.obtener(ejecucion_id)
         ejecuciones_srv.ruta_archivo(ej, indice, nombre)  # que exista antes de abrir la ventana
@@ -357,6 +384,7 @@ def exportar_archivos_ejecucion(ejecucion_id: str, indice: int) -> dict:
     """Abre en la PC del servidor la ventana para elegir carpeta. Con una carpeta
     elegida, los archivos van a `<elegida>/<mmaaaa>/`; si se cierra sin elegir,
     a `<Descargas>/<Cliente>/<mmaaaa>/`."""
+    _solo_local()
     try:
         ej = ejecuciones_srv.obtener(ejecucion_id)
         ejecuciones_srv.archivos_del_cliente(ej, indice)  # que haya algo antes de abrir la ventana

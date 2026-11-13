@@ -55,6 +55,14 @@ export class ApiService {
   exportar(id: string, indice: number): Promise<ResultadoExportar> {
     return firstValueFrom(this.http.post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}));
   }
+  /** Modo servidor: el archivo como Blob (la descarga lleva los encabezados de sesión). */
+  archivo(id: string, indice: number, nombre: string): Promise<Blob> {
+    return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
+  }
+  /** Modo servidor: todos los archivos del cliente en un .zip con Cliente/mmaaaa/(Ventas|Compras). */
+  zip(id: string, indice: number): Promise<Blob> {
+    return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
+  }
   /** El servidor abre «Guardar como» y copia ahí ese archivo. */
   guardarArchivo(id: string, indice: number, nombre: string): Promise<{ cancelado: true } | { cancelado?: false; ruta: string }> {
     return firstValueFrom(

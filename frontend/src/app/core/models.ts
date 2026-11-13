@@ -27,6 +27,8 @@ export interface ClienteEntrada {
 export interface Ajustes {
   carpeta_salida: string;
   pausa_segundos: number;
+  /** true: el backend corre en esta PC y guarda con ventanas de Windows. false (servidor): se baja por el navegador. */
+  dialogos_locales: boolean;
   xubio: { usuario: string; tiene_clave: boolean; recordar: boolean; del_servidor: boolean };
 }
 

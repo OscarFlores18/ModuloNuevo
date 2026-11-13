@@ -18,11 +18,13 @@ computadora del servidor (doble factor de ARCA, captcha de Xubio).
 
 from __future__ import annotations
 
+import io
 import re
 import shutil
 import threading
 import time
 import uuid
+import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +33,7 @@ from ..auditor import procesar_cruce
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
-from ..core.paths import carpeta_cliente
+from ..core.paths import carpeta_cliente, nombre_carpeta
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from .credenciales import ServicioCredenciales
 
@@ -671,6 +673,30 @@ def operacion_de(nombre: str) -> str | None:
     return None
 
 
+def plan_de_archivos(ej: Ejecucion, indice: int) -> tuple[Path, list[tuple[str, Path]]]:
+    """La carpeta de origen y, por archivo, su ruta relativa dentro de <mmaaaa>:
+    `Ventas/…` o `Compras/…` si el control hizo las dos operaciones."""
+    origen, archivos = archivos_del_cliente(ej, indice)
+    separar = bool(ej.parametros.get("ventas")) and bool(ej.parametros.get("compras"))
+    plan = []
+    for a in archivos:
+        op = operacion_de(a["nombre"]) if separar else None
+        plan.append((a["nombre"], Path(op, a["nombre"]) if op else Path(a["nombre"])))
+    return origen, plan
+
+
+def zip_de_archivos(ej: Ejecucion, indice: int) -> tuple[str, bytes]:
+    """«Descargar todos» sin ventanas (servidor): un .zip con <Cliente>/<mmaaaa>/…"""
+    origen, plan = plan_de_archivos(ej, indice)
+    _, mes, anio = ej.parametros["desde"].split("/")
+    raiz = Path(nombre_carpeta(ej.clientes[indice].nombre), f"{mes}{anio}")
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as z:
+        for nombre, relativa in plan:
+            z.write(origen / nombre, (raiz / relativa).as_posix())
+    return f"{raiz.parts[0]} - {mes}{anio}.zip", buffer.getvalue()
+
+
 def _misma_carpeta(a: Path, b: Path) -> bool:
     try:
         return Path(a).resolve() == Path(b).resolve()
@@ -693,7 +719,7 @@ def exportar_archivos(
     Si uno no se puede copiar (por ejemplo, ya existe y está abierto en Excel),
     los demás se copian igual y ese queda en `fallas`.
     """
-    origen, archivos = archivos_del_cliente(ej, indice)
+    origen, plan = plan_de_archivos(ej, indice)
     _, mes, anio = ej.parametros["desde"].split("/")
     base = Path(base_por_defecto or Path.home() / "Downloads")
     if destino is not None and _misma_carpeta(destino, base):
@@ -709,22 +735,17 @@ def exportar_archivos(
     except OSError as exc:
         raise ErrorEjecucion(f"No se pudo crear la carpeta para los archivos: {exc}", 422) from exc
 
-    # Con Ventas y Compras en el mismo control, cada una en su subcarpeta.
-    separar = bool(ej.parametros.get("ventas")) and bool(ej.parametros.get("compras"))
-
     copiados: list[str] = []
     fallas: list[dict] = []
-    for a in archivos:
-        destino_archivo = carpeta
-        if separar and (op := operacion_de(a["nombre"])):
-            destino_archivo = carpeta / op
+    for nombre, relativa in plan:
+        destino_archivo = carpeta / relativa
         try:
-            destino_archivo.mkdir(exist_ok=True)
-            shutil.copy2(origen / a["nombre"], destino_archivo / a["nombre"])
-            copiados.append(a["nombre"])
+            destino_archivo.parent.mkdir(exist_ok=True)
+            shutil.copy2(origen / nombre, destino_archivo)
+            copiados.append(nombre)
         except PermissionError:
-            fallas.append({"nombre": a["nombre"], "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})
+            fallas.append({"nombre": nombre, "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})
         except OSError as exc:
-            fallas.append({"nombre": a["nombre"], "motivo": str(exc)})
+            fallas.append({"nombre": nombre, "motivo": str(exc)})
     return {"carpeta": str(carpeta), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
 

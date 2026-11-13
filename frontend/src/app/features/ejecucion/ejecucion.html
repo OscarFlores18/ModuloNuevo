@@ -124,7 +124,13 @@
                     @if (errorDescarga(); as err) { <app-alerta class="mt-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
                     <div class="ej-carpeta">
                       <div class="ej-carpeta-ruta">
-                        <span class="mf-tenue min-w-0 flex-1">Descargar todos: elegí la carpeta del cliente y adentro se crea la del período (mmaaaa) con los archivos. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.</span>
+                        <span class="mf-tenue min-w-0 flex-1">
+                          @if (dialogosLocales()) {
+                            Descargar todos: elegí la carpeta del cliente y adentro se crea la del período (mmaaaa), separada en Ventas y Compras si hiciste las dos. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.
+                          } @else {
+                            Descargar todos baja un .zip con las carpetas del cliente y del período (separadas en Ventas y Compras si hiciste las dos).
+                          }
+                        </span>
                         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'">
                           {{ descargando() === c.indice + '/*' ? 'Descargando…' : 'Descargar todos' }}
                         </button>

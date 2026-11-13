@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from backend.app.core import config
+from backend.app.core.crypto import descifrar
 
 ARCA = {"cuit_login": "20-23510216-2", "clave": "secreta", "cuit_representado": "30-71080988-3"}
 
@@ -33,4 +34,5 @@ def test_editar_conserva_la_direccion_vieja_de_xubio(entorno):
     assert r.status_code == 200, r.text
     guardado = json.loads(config.CONFIG_PATH.read_text(encoding="utf-8"))["clientes"]["Viejo SA"]
     assert guardado["xubio"] == {"url": "https://xubio.com/NXV/viejo"}
-    assert guardado["arca"]["clave"] == "x"
+    # La clave fiscal sigue siendo la misma (cifrada o no en disco, según la migración).
+    assert descifrar(guardado["arca"]["clave"]) == "x"
