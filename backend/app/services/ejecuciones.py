@@ -1,23 +1,24 @@
-"""
-Ejecuciones del control de facturas: el mismo recorrido que `_run_scrappy` de la
-app de escritorio, pero en un hilo del servidor y con estado consultable.
+"""Ejecuciones del control de facturas para el frontend web.
 
-Por cliente, en orden: ARCA (Ventas/Compras) -> Xubio -> Auditoría (Ventas/Compras).
-Cada paso queda con su estado (pendiente, en_curso, ok, aviso, error, omitido) y
-lo que imprimen los bots se guarda en el registro de la ejecución.
+Es el mismo recorrido de la app de escritorio, pero con estado consultable y
+una pausa entre clientes. El contrato de datos es el que consume el Angular
+(`frontend/src/app/core/models.ts`).
 
-Entre un cliente y el siguiente hay una pausa: el front muestra la cuenta regresiva
-con «Continuar», «Cancelar todo» y «No preguntar más»; sin respuesta, sigue sola.
+Por cliente, en orden: ARCA (Ventas/Compras) -> Xubio -> Auditoría
+(Ventas/Compras). Cada paso queda con su estado y lo que reportan los bots se
+guarda en el registro de la ejecución.
 
-Hay una sola ejecución a la vez: los bots abren Chrome visible en la computadora
-del servidor (doble factor de ARCA, captcha de Xubio).
+Las sesiones de ARCA y Xubio se comparten entre clientes y pasos: un solo login
+por credencial. ARCA se mantiene viva con pings al portal y se renueva sola si
+vence por inactividad (ver `bots/sesiones.py` y `bots/arca.py`).
+
+Hay una sola ejecución a la vez: los bots abren Chrome visible en la
+computadora del servidor (doble factor de ARCA, captcha de Xubio).
 """
 
 from __future__ import annotations
 
-import io
 import re
-import sys
 import threading
 import time
 import uuid
@@ -25,12 +26,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from app import motor
-from app.core.config import settings
-from app.services import clientes as clientes_srv
+from ..auditor import procesar_cruce
+from ..bots.sesiones import GestorSesiones
+from ..core import config
+from ..core.errors import BotError, SesionVencida
+from ..core.paths import carpeta_cliente
+from ..core.storage import ClientesRepository, CredencialesXubioRepository
 
 MAX_HISTORIAL = 20
 MAX_LINEAS_LOG = 5000
+
+ESTADOS_FINALES = {"finalizada", "cancelada", "error"}
 
 
 class ErrorEjecucion(Exception):
@@ -40,65 +46,7 @@ class ErrorEjecucion(Exception):
         self.estado = estado
 
 
-# --- Captura de los print() de los bots -----------------------------------------
-
-
-class _Despachador(io.TextIOBase):
-    """
-    Reemplaza a sys.stdout una sola vez. Lo que escribe un hilo registrado va al
-    registro de su ejecución; lo demás (uvicorn, otros hilos) sigue a la consola.
-    """
-
-    def __init__(self, original) -> None:
-        self.original = original
-        self.destinos: dict[int, callable] = {}
-        self._pendiente: dict[int, str] = {}
-
-    def write(self, texto: str) -> int:
-        if self.original:
-            try:
-                self.original.write(texto)
-            except Exception:
-                pass
-        hilo = threading.get_ident()
-        destino = self.destinos.get(hilo)
-        if destino:
-            buffer = self._pendiente.get(hilo, "") + texto
-            *lineas, resto = buffer.split("\n")
-            self._pendiente[hilo] = resto
-            for linea in lineas:
-                if linea.strip():
-                    destino(linea)
-        return len(texto)
-
-    def flush(self) -> None:
-        if self.original:
-            try:
-                self.original.flush()
-            except Exception:
-                pass
-
-    def soltar(self, hilo: int) -> None:
-        resto = self._pendiente.pop(hilo, "")
-        destino = self.destinos.pop(hilo, None)
-        if destino and resto.strip():
-            destino(resto)
-
-
-_despachador: _Despachador | None = None
-
-
-def _instalar_despachador() -> _Despachador:
-    global _despachador
-    if _despachador is None:
-        _despachador = _Despachador(sys.stdout)
-        sys.stdout = _despachador
-    return _despachador
-
-
-# --- Modelo ----------------------------------------------------------------------
-
-ESTADOS_FINALES = {"finalizada", "cancelada", "error"}
+# --- Modelo ------------------------------------------------------------------
 
 
 def _ahora() -> str:
@@ -116,8 +64,15 @@ def _tipo_de_linea(texto: str) -> str:
     return "info"
 
 
-# Sin emojis en la interfaz (regla del proyecto): los bots imprimen alguno.
-_EMOJIS = re.compile("[☀-➿\U0001f300-\U0001faff️]")
+# Sin emojis en la interfaz (regla del proyecto).
+_EMOJIS = re.compile(
+    "["
+    "\U0001F300-\U0001FAFF"
+    "\U00002600-\U000027BF"
+    "\U0001F000-\U0001F2FF"
+    "\U0000FE0F"
+    "]+"
+)
 
 
 @dataclass
@@ -154,17 +109,19 @@ class Ejecucion:
     cancelar_pedido: bool = False
     mensaje: str = ""
     log: list[dict] = field(default_factory=list)
-    log_base: int = 0  # cuántas líneas viejas se descartaron (el front pide por índice absoluto)
+    log_base: int = 0  # líneas viejas descartadas (el front pide por índice absoluto)
 
     # Interno: la respuesta a la pausa.
     _respuesta: str | None = None
     _evento: threading.Event = field(default_factory=threading.Event)
 
     def registrar(self, texto: str, tipo: str | None = None) -> None:
-        texto = _EMOJIS.sub("", texto).rstrip()
+        texto = _EMOJIS.sub("", str(texto)).rstrip()
         if not texto.strip():
             return
-        self.log.append({"cuando": _ahora(), "texto": texto, "tipo": tipo or _tipo_de_linea(texto)})
+        self.log.append(
+            {"cuando": _ahora(), "texto": texto, "tipo": tipo or _tipo_de_linea(texto)}
+        )
         if len(self.log) > MAX_LINEAS_LOG:
             sobra = len(self.log) - MAX_LINEAS_LOG
             del self.log[:sobra]
@@ -173,7 +130,10 @@ class Ejecucion:
 
     def _a_disco(self, texto: str) -> None:
         # Como la app de escritorio: debug_log.txt en la carpeta elegida.
-        carpeta = Path(self.parametros["carpeta"])
+        try:
+            carpeta = Path(self.parametros["carpeta"])
+        except (KeyError, TypeError):
+            return
         if carpeta.is_dir():
             try:
                 with open(carpeta / "debug_log.txt", "a", encoding="utf-8") as f:
@@ -226,7 +186,7 @@ class Ejecucion:
         }
 
 
-# --- Registro de ejecuciones -----------------------------------------------------
+# --- Registro de ejecuciones -------------------------------------------------
 
 _ejecuciones: dict[str, Ejecucion] = {}
 _orden: list[str] = []
@@ -239,9 +199,12 @@ def listar() -> list[dict]:
 
 
 def obtener(ejecucion_id: str) -> Ejecucion:
-    e = _ejecuciones.get(ejecucion_id)
+    with _lock:
+        e = _ejecuciones.get(ejecucion_id)
     if e is None:
-        raise ErrorEjecucion("No existe esa ejecución (se borran al reiniciar el servidor).", 404)
+        raise ErrorEjecucion(
+            "No existe esa ejecución (se borran al reiniciar el servidor).", 404
+        )
     return e
 
 
@@ -267,23 +230,34 @@ def _pasos_para(p: dict) -> list[Paso]:
 
 def _validar_fecha(texto: str, etiqueta: str) -> datetime:
     try:
-        return datetime.strptime(texto.strip(), "%d/%m/%Y")
+        return datetime.strptime(str(texto).strip(), "%d/%m/%Y")
     except (ValueError, AttributeError):
-        raise ErrorEjecucion(f"La fecha «{etiqueta}» tiene que tener el formato DD/MM/AAAA.", 422) from None
+        raise ErrorEjecucion(
+            f"La fecha «{etiqueta}» tiene que tener el formato DD/MM/AAAA.", 422
+        ) from None
 
 
-def iniciar(usuario: str, pedido: dict) -> Ejecucion:
+def iniciar(
+    usuario: str,
+    pedido: dict,
+    clientes_repo: ClientesRepository,
+    credenciales_repo: CredencialesXubioRepository,
+) -> Ejecucion:
     """Valida el pedido y arranca el hilo. Devuelve la ejecución nueva."""
     if activa() is not None:
-        raise ErrorEjecucion("Ya hay un control en curso. Esperá a que termine o cancelalo.", 409)
+        raise ErrorEjecucion(
+            "Ya hay un control en curso. Esperá a que termine o cancelalo.", 409
+        )
 
     nombres = [n for n in dict.fromkeys(pedido.get("clientes") or []) if n]
     if not nombres:
         raise ErrorEjecucion("Elegí al menos un cliente.", 422)
-    config = clientes_srv.leer_config()["clientes"]
-    desconocidos = [n for n in nombres if n not in config]
+    config_clientes = clientes_repo.listar()
+    desconocidos = [n for n in nombres if n not in config_clientes]
     if desconocidos:
-        raise ErrorEjecucion("No existen estos clientes: " + ", ".join(desconocidos), 422)
+        raise ErrorEjecucion(
+            "No existen estos clientes: " + ", ".join(desconocidos), 422
+        )
 
     desde = _validar_fecha(pedido.get("desde", ""), "Desde")
     hasta = _validar_fecha(pedido.get("hasta", ""), "Hasta")
@@ -293,25 +267,36 @@ def iniciar(usuario: str, pedido: dict) -> Ejecucion:
     ventas, compras = bool(pedido.get("ventas")), bool(pedido.get("compras"))
     if not (ventas or compras):
         raise ErrorEjecucion("Elegí Ventas, Compras o las dos.", 422)
+
     pasos = pedido.get("pasos") or {}
     pasos = {k: bool(pasos.get(k)) for k in ("arca", "xubio", "auditoria")}
     if not any(pasos.values()):
         raise ErrorEjecucion("Elegí al menos un paso (ARCA, Xubio o Auditoría).", 422)
 
-    carpeta = Path((pedido.get("carpeta") or "").strip() or settings.CARPETA_SALIDA).expanduser()
+    carpeta_cruda = (pedido.get("carpeta") or "").strip()
+    carpeta = Path(carpeta_cruda).expanduser() if carpeta_cruda else config.OUTPUT_DIR
+    try:
+        carpeta.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ErrorEjecucion(
+            f"No se pudo usar la carpeta «{carpeta}»: {exc}", 422
+        ) from exc
     if not carpeta.is_dir():
-        raise ErrorEjecucion(f"La carpeta «{carpeta}» no existe en la computadora del servidor.", 422)
+        raise ErrorEjecucion(
+            f"La carpeta «{carpeta}» no existe en la computadora del servidor.", 422
+        )
 
     xubio_usuario = xubio_clave = ""
     if pasos["xubio"]:
         x = pedido.get("xubio") or {}
-        guardada = clientes_srv.leer_xubio()
-        xubio_usuario = (x.get("usuario") or "").strip() or guardada["user"]
-        xubio_clave = x.get("clave") or (guardada["pass"] if xubio_usuario == guardada["user"] else "")
-        if not xubio_usuario or not xubio_clave:
-            raise ErrorEjecucion("El paso de Xubio necesita el usuario y la contraseña de Xubio.", 422)
-        if not guardada["env"] or x.get("recordar"):
-            clientes_srv.guardar_xubio(xubio_usuario, xubio_clave, bool(x.get("recordar")))
+        try:
+            xubio_usuario, xubio_clave = credenciales_repo.resolver_para_job(
+                (x.get("usuario") or "").strip(), x.get("clave") or ""
+            )
+        except BotError as exc:
+            raise ErrorEjecucion(exc.mensaje, 422) from exc
+        if x.get("recordar"):
+            credenciales_repo.guardar(xubio_usuario, xubio_clave, True)
 
     parametros = {
         "desde": desde.strftime("%d/%m/%Y"),
@@ -339,8 +324,12 @@ def iniciar(usuario: str, pedido: dict) -> Ejecucion:
                 _orden.insert(0, viejo)
                 break
 
-    _instalar_despachador()
-    hilo = threading.Thread(target=_correr, args=(ej, xubio_clave), name=f"control-{ej.id}", daemon=True)
+    hilo = threading.Thread(
+        target=_correr,
+        args=(ej, xubio_clave, clientes_repo),
+        name=f"control-{ej.id}",
+        daemon=True,
+    )
     hilo.start()
     return ej
 
@@ -358,21 +347,15 @@ def cancelar(ej: Ejecucion) -> None:
     if ej.estado in ESTADOS_FINALES:
         raise ErrorEjecucion("La ejecución ya terminó.", 409)
     ej.cancelar_pedido = True
-    ej.registrar("[AVISO] Cancelación pedida: se corta al terminar el paso en curso.", "aviso")
+    ej.registrar(
+        "[AVISO] Cancelación pedida: se corta al terminar el paso en curso.", "aviso"
+    )
     if ej.pausa is not None:
         ej._respuesta = "cancelar"
         ej._evento.set()
 
 
 # --- El recorrido ---------------------------------------------------------------
-
-
-def _carpeta_cliente(base: str, cliente: str, mes: str, anio: str) -> Path:
-    """<Carpeta>/<Cliente>/<mmaaaa>/Control de Facturas (igual que la app de escritorio)."""
-    limpio = re.sub(r'[\\/*?:"<>|]', "", cliente).strip()
-    carpeta = Path(base) / limpio / f"{mes}{anio}" / settings.SUBCARPETA_CONTROL
-    carpeta.mkdir(parents=True, exist_ok=True)
-    return carpeta
 
 
 def listar_archivos(carpeta: Path) -> list[dict]:
@@ -382,57 +365,85 @@ def listar_archivos(carpeta: Path) -> list[dict]:
     for a in sorted(carpeta.iterdir(), key=lambda x: x.name.casefold()):
         if a.is_file() and a.suffix.lower() in (".xlsx", ".xls", ".csv"):
             st = a.stat()
-            tipo = "auditoria" if a.name.startswith("AUX - ") else "arca" if a.name.startswith("Mis comprobantes") else "xubio" if a.name.startswith("IVA ") else "otro"
-            archivos.append({"nombre": a.name, "tamano": st.st_size, "modificado": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"), "tipo": tipo})
+            tipo = (
+                "auditoria"
+                if a.name.startswith("AUX - ")
+                else "arca"
+                if a.name.startswith("Mis comprobantes")
+                else "xubio"
+                if a.name.startswith("IVA ")
+                else "otro"
+            )
+            archivos.append(
+                {
+                    "nombre": a.name,
+                    "tamano": st.st_size,
+                    "modificado": datetime.fromtimestamp(st.st_mtime).isoformat(
+                        timespec="seconds"
+                    ),
+                    "tipo": tipo,
+                }
+            )
     return archivos
 
 
-def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> None:
+def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> BaseException | None:
     paso.estado = "en_curso"
     paso.inicio = _ahora()
     desde = ej.log_base + len(ej.log)
+    error: BaseException | None = None
     try:
         funcion()
-    except Exception as e:  # los bots tiran Exception genérica
+    except Exception as exc:  # los bots tiran Exception genérica
+        error = exc
         paso.estado = "error"
-        # En una línea: los bots ponen la ruta del archivo que falta en la segunda.
-        paso.mensaje = " ".join(str(e).split())[:400] or type(e).__name__
-        ej.registrar(f" [ERROR] {paso.etiqueta}: {e}", "error")
+        paso.mensaje = " ".join(str(exc).split())[:400] or type(exc).__name__
+        ej.registrar(f" [ERROR] {paso.etiqueta}: {exc}", "error")
     else:
-        # Algunos bots atrapan su propio error y solo lo imprimen.
-        errores = [l["texto"] for l in ej.log[max(0, desde - ej.log_base):] if l["tipo"] == "error"]
+        # Algunos bots atrapan su propio error y solo lo registran.
+        errores = [
+            linea["texto"]
+            for linea in ej.log[max(0, desde - ej.log_base) :]
+            if linea["tipo"] == "error"
+        ]
         if errores:
             paso.estado = "aviso"
             paso.mensaje = errores[-1].strip()[:300]
         else:
             paso.estado = "ok"
     paso.fin = _ahora()
+    return error
 
 
 def _pausa(ej: Ejecucion, cliente: str) -> str:
     if not ej.preguntar:
         return "continuar"
+    segundos = config.PAUSA_ENTRE_CLIENTES_S
     ej._respuesta = None
     ej._evento.clear()
-    ej.pausa = {"cliente": cliente, "vence": time.time() + settings.PAUSA_ENTRE_CLIENTES_S, "segundos": settings.PAUSA_ENTRE_CLIENTES_S}
+    ej.pausa = {
+        "cliente": cliente,
+        "vence": time.time() + segundos,
+        "segundos": segundos,
+    }
     ej.estado = "esperando"
-    ej._evento.wait(settings.PAUSA_ENTRE_CLIENTES_S)
+    ej._evento.wait(segundos)
     ej.pausa = None
     ej.estado = "en_curso"
     return ej._respuesta or "continuar"
 
 
-def _correr(ej: Ejecucion, xubio_clave: str) -> None:
-    hilo = threading.get_ident()
-    if _despachador is not None:
-        _despachador.destinos[hilo] = ej.registrar
+def _correr(ej: Ejecucion, xubio_clave: str, clientes_repo: ClientesRepository) -> None:
     p = ej.parametros
     _, mes, anio = p["desde"].split("/")
+    gestor = GestorSesiones(log=ej.registrar)
     try:
-        bots = motor.cargar()
+        clientes = clientes_repo.listar()
         ej.registrar("[INICIO] CONTROL DE FACTURAS")
-        ej.registrar(f" Período {p['desde']} al {p['hasta']} · {len(ej.clientes)} cliente(s) · usuario {ej.usuario}")
-        config = clientes_srv.leer_config()["clientes"]
+        ej.registrar(
+            f" Período {p['desde']} al {p['hasta']} · "
+            f"{len(ej.clientes)} cliente(s) · usuario {ej.usuario}"
+        )
 
         for indice, cli in enumerate(ej.clientes):
             if ej.cancelar_pedido:
@@ -440,33 +451,114 @@ def _correr(ej: Ejecucion, xubio_clave: str) -> None:
             ej.cliente_actual = indice
             cli.estado = "en_curso"
             ej.registrar(f"[{indice + 1}/{len(ej.clientes)}] PROCESANDO: {cli.nombre}")
-            datos = config.get(cli.nombre, {})
+
+            datos = clientes.get(cli.nombre, {})
             arca = datos.get("arca") or {}
             cuit_login = str(arca.get("cuit_login") or "").strip()
             clave_arca = str(arca.get("clave") or "")
             cuit_repres = str(arca.get("cuit_representado") or "").strip()
-            url_xubio = str((datos.get("xubio") or {}).get("url") or "").strip()
 
-            carpeta = _carpeta_cliente(p["carpeta"], cli.nombre, mes, anio)
+            carpeta = carpeta_cliente(Path(p["carpeta"]), cli.nombre, mes, anio)
             cli.carpeta = str(carpeta)
             ej.registrar(f" -> Carpeta: {carpeta}")
 
-            acciones = {
-                "arca_ventas": lambda: bots.arca.ejecutar_extraccion(cuit_login, clave_arca, cuit_repres, p["desde"], p["hasta"], "Emitidos", cli.nombre, str(carpeta), bajar_excel=True, bajar_csv=False),
-                "arca_compras": lambda: bots.arca.ejecutar_extraccion(cuit_login, clave_arca, cuit_repres, p["desde"], p["hasta"], "Recibidos", cli.nombre, str(carpeta), bajar_excel=True, bajar_csv=False),
-                "xubio": lambda: bots.xubio.ejecutar_extraccion(p["xubio_usuario"], xubio_clave, cli.nombre, url_xubio, p["desde"], p["hasta"], p["ventas"], p["compras"], str(carpeta)),
-                "auditoria_ventas": lambda: bots.auditor.procesar_cruce(cli.nombre, "Ventas", p["desde"], p["hasta"], str(carpeta)),
-                "auditoria_compras": lambda: bots.auditor.procesar_cruce(cli.nombre, "Compras", p["desde"], p["hasta"], str(carpeta)),
-            }
-            for paso in cli.pasos:
-                if ej.cancelar_pedido:
-                    paso.estado = "omitido"
-                    continue
-                ej.registrar(f" -> {paso.etiqueta}")
-                _correr_paso(ej, paso, acciones[paso.id])
-                cli.archivos = listar_archivos(carpeta)
+            servicio_arca = None
 
-            cli.estado = "con_errores" if any(x.estado in ("error", "aviso") for x in cli.pasos) else "ok"
+            def hacer_arca(sesion, tipo, _cuit_repres=cuit_repres, _cli=cli.nombre):
+                nonlocal servicio_arca
+                for intento in (1, 2):
+                    if servicio_arca is None or servicio_arca.is_closed():
+                        servicio_arca = sesion.abrir_mis_comprobantes(_cuit_repres)
+                    try:
+                        return sesion.descargar(
+                            servicio_arca,
+                            tipo,
+                            p["desde"],
+                            p["hasta"],
+                            _cli,
+                            str(carpeta),
+                            bajar_excel=True,
+                            bajar_csv=False,
+                        )
+                    except SesionVencida:
+                        if intento == 2:
+                            raise
+                        ej.registrar(
+                            "      [AVISO]: Sesión de ARCA vencida. "
+                            "Se renueva y se reintenta..."
+                        )
+                        try:
+                            servicio_arca.close()
+                        except Exception:
+                            pass
+                        servicio_arca = None
+                        sesion.renovar()
+                return None
+
+            try:
+                for paso in cli.pasos:
+                    if ej.cancelar_pedido:
+                        paso.estado = "omitido"
+                        continue
+                    ej.registrar(f" -> {paso.etiqueta}")
+
+                    if paso.id in ("arca_ventas", "arca_compras"):
+                        tipo = "Emitidos" if paso.id == "arca_ventas" else "Recibidos"
+
+                        def hacer_paso_arca(_tipo=tipo):
+                            sesion = gestor.arca(cuit_login, clave_arca)
+                            return hacer_arca(sesion, _tipo)
+
+                        _correr_paso(ej, paso, hacer_paso_arca)
+
+                    elif paso.id == "xubio":
+                        def hacer_xubio():
+                            sesion = gestor.xubio(p["xubio_usuario"], xubio_clave)
+                            sesion.cambiar_empresa(cli.nombre)
+                            return sesion.descargar(
+                                cli.nombre,
+                                p["desde"],
+                                p["hasta"],
+                                p["ventas"],
+                                p["compras"],
+                                str(carpeta),
+                            )
+
+                        error = _correr_paso(ej, paso, hacer_xubio)
+                        if error is not None:
+                            gestor.descartar_xubio()
+
+                    elif paso.id.startswith("auditoria_"):
+                        operacion = (
+                            "Ventas" if paso.id == "auditoria_ventas" else "Compras"
+                        )
+                        _correr_paso(
+                            ej,
+                            paso,
+                            lambda op=operacion: procesar_cruce(
+                                cli.nombre,
+                                op,
+                                p["desde"],
+                                p["hasta"],
+                                str(carpeta),
+                                log=ej.registrar,
+                            ),
+                        )
+
+                    cli.archivos = listar_archivos(carpeta)
+            finally:
+                if servicio_arca is not None:
+                    try:
+                        servicio_arca.close()
+                    except Exception:
+                        pass
+
+            cli.archivos = listar_archivos(carpeta)
+            cli.estado = (
+                "con_errores"
+                if any(x.estado in ("error", "aviso") for x in cli.pasos)
+                else "ok"
+            )
             if ej.cancelar_pedido and any(x.estado == "omitido" for x in cli.pasos):
                 cli.estado = "cancelado"
             ej.registrar("-----------------------------------------")
@@ -490,22 +582,25 @@ def _correr(ej: Ejecucion, xubio_clave: str) -> None:
         else:
             ej.estado = "finalizada"
             con_errores = sum(1 for c in ej.clientes if c.estado == "con_errores")
-            ej.mensaje = "Terminó sin errores." if not con_errores else f"Terminó: {con_errores} cliente(s) con errores o avisos."
+            ej.mensaje = (
+                "Terminó sin errores."
+                if not con_errores
+                else f"Terminó: {con_errores} cliente(s) con errores o avisos."
+            )
             ej.registrar("[OK] PROCESO DE CONTROL DE FACTURAS FINALIZADO.", "ok")
-    except Exception as e:
+    except Exception as exc:
         ej.estado = "error"
-        ej.mensaje = f"El control se cortó: {e}"
-        ej.registrar(f"[ERROR] El control se cortó: {e}", "error")
+        ej.mensaje = f"El control se cortó: {exc}"
+        ej.registrar(f"[ERROR] El control se cortó: {exc}", "error")
     finally:
+        gestor.cerrar()
         ej.pausa = None
         ej.cliente_actual = -1
         ej.terminada = _ahora()
-        if _despachador is not None:
-            _despachador.soltar(hilo)
 
 
 def ruta_archivo(ej: Ejecucion, indice: int, nombre: str) -> Path:
-    """Un archivo generado para un cliente de la ejecución, sin salir de su carpeta."""
+    """Un archivo generado para un cliente, sin salir de su carpeta."""
     if not 0 <= indice < len(ej.clientes) or not ej.clientes[indice].carpeta:
         raise ErrorEjecucion("Ese cliente no tiene carpeta en esta ejecución.", 404)
     carpeta = Path(ej.clientes[indice].carpeta).resolve()

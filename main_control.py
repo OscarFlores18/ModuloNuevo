@@ -1,8 +1,11 @@
 """
 CONTROL DE FACTURAS (compras y ventas) - version independiente de DRLiqui.
 
-Archivos necesarios en la misma carpeta:
-    main_control.py, bot_arca.py, bot_xubio.py, bot_xubio_common.py, auditor_fo.py
+Este archivo es la app de escritorio original (legacy). El motor vive en
+`backend/app/` y este GUI solo lo reutiliza durante la migración.
+
+Archivos necesarios:
+    main_control.py + paquete backend/
 
 Uso:  python main_control.py
 Requiere: Google Chrome instalado y las librerias customtkinter, playwright,
@@ -21,9 +24,9 @@ from datetime import datetime
 import threading
 import customtkinter as ctk
 
-import bot_arca
-import bot_xubio
-import auditor_fo
+from backend.app.auditor import cruce_fo as auditor_fo
+from backend.app.bots import arca as bot_arca
+from backend.app.bots import xubio as bot_xubio
 
 # --- CONFIGURACIÓN VISUAL ---
 # Paleta oscura renovada: mismos tonos violetas de siempre (VIOLET_MAIN /
@@ -297,7 +300,7 @@ class CentralAutomatizacionApp:
         self.lbl_contador_disp.pack(side="left", padx=6)
 
         self.search_var = tk.StringVar()
-        self.search_var.trace_add("write", lambda *args: self.refrescar_vista_clientes())
+        self.search_var.trace("w", lambda *args: self.refrescar_vista_clientes())
         ctk.CTkEntry(f_disp, textvariable=self.search_var, placeholder_text="Buscar...", height=30, font=FONT_ENTRY, fg_color=FIELD_BG, border_color=BORDER_COLOR).grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 6))
 
         self.scroll_clientes = ctk.CTkScrollableFrame(f_disp, fg_color="transparent")

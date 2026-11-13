@@ -1,54 +1,65 @@
+"""Configuración del backend.
+
+Todo se puede sobreescribir por variables de entorno para no atar el código
+a una máquina concreta (requisito de la migración a sitio web).
+
+    MODULONUEVO_DATA_DIR    -> dónde viven config.json / xubio_credenciales.json
+    MODULONUEVO_OUTPUT_DIR  -> carpeta base por defecto de las salidas
+    MODULONUEVO_LOG_DIR     -> logs del backend
+    MODULONUEVO_CORS        -> orígenes permitidos, separados por coma
+"""
+
+from __future__ import annotations
+
+import os
 from pathlib import Path
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-RAIZ_BACKEND = Path(__file__).resolve().parent.parent.parent
-# La carpeta del proyecto: ahí viven los bots (bot_arca.py, bot_xubio.py,
-# auditor_fo.py) y los .json que comparte con la app de escritorio.
-RAIZ_PROYECTO = RAIZ_BACKEND.parent
+# backend/app/core/config.py -> backend/
+BACKEND_DIR = Path(__file__).resolve().parents[2]
 
 
-class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=RAIZ_BACKEND / ".env", extra="ignore")
-
-    # Cualquier puerto de localhost ya está permitido (regex en main.py);
-    # acá van los orígenes que no son localhost.
-    CORS_ORIGINS: list[str] = []
-
-    # ------------------------------------------------------------------
-    # Datos compartidos con la app de escritorio (main_control.py)
-    # ------------------------------------------------------------------
-    # Clientes con sus datos de ARCA y Xubio. Es el mismo archivo que usa la app
-    # de escritorio (y DRLiqui): las claves que no se editan acá se conservan.
-    CONFIG_CLIENTES: Path = RAIZ_PROYECTO / "config.json"
-    # Credencial propia de Xubio cuando se tilda «Recordar».
-    CREDENCIALES_XUBIO: Path = RAIZ_PROYECTO / "xubio_credenciales.json"
-    # Cuenta de Xubio del servidor (opcional): si están las dos, no hace falta
-    # escribirla en cada ejecución.
-    XUBIO_USUARIO: str = ""
-    XUBIO_CLAVE: str = ""
-
-    # Carpeta de salida por defecto: <carpeta>/<Cliente>/<mmaaaa>/Control de Facturas
-    CARPETA_SALIDA: Path = Path.home() / "Downloads"
-    SUBCARPETA_CONTROL: str = "Control de Facturas"
-    # Segundos que espera la pausa entre clientes antes de seguir sola.
-    PAUSA_ENTRE_CLIENTES_S: int = 15
-
-    # ------------------------------------------------------------------
-    # Usuario (ver app/core/usuarios.py)
-    # ------------------------------------------------------------------
-    # Secreto compartido con ContadorWeb (el MISMO valor en los dos servicios,
-    # mínimo 32 caracteres). Vacío = modo local (usuarios de prueba).
-    CONTROL_FCT_MODULO_SECRETO: str = ""
-    SESION_HORAS: float = 12
-    USUARIO_POR_DEFECTO_ID: str = "local"
-    USUARIO_POR_DEFECTO_NOMBRE: str = "Usuario local"
-    USUARIO_POR_DEFECTO_NIVEL: str = "100"
-    USUARIO_POR_DEFECTO_MODULOS: str = ""
-
-    # Carpeta con el build del front (dist/<app>/browser). Si existe, el backend
-    # sirve la app en el mismo dominio que la API.
-    FRONT_DIST: Path | None = None
+def _path_env(nombre: str, default: Path) -> Path:
+    valor = os.getenv(nombre)
+    return Path(valor).expanduser().resolve() if valor else default
 
 
-settings = Settings()
+DATA_DIR = _path_env("MODULONUEVO_DATA_DIR", BACKEND_DIR / "data")
+OUTPUT_DIR = _path_env("MODULONUEVO_OUTPUT_DIR", BACKEND_DIR / "salidas")
+LOG_DIR = _path_env("MODULONUEVO_LOG_DIR", BACKEND_DIR / "logs")
+
+CONFIG_PATH = DATA_DIR / "config.json"
+XUBIO_CRED_PATH = DATA_DIR / "xubio_credenciales.json"
+
+# Pausa entre un cliente y el siguiente (el front muestra la cuenta regresiva).
+PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "15"))
+
+# Keep-alive de ARCA: el portal cierra la sesión por inactividad (~15 min).
+# Se consulta el portal cada ARCA_PING_MIN minutos y se renueva el login a los
+# ARCA_RENOVAR_MIN minutos, antes de que el portal la venza por su cuenta.
+ARCA_PING_MIN = int(os.getenv("MODULONUEVO_ARCA_PING_MIN", "9"))
+ARCA_RENOVAR_MIN = int(os.getenv("MODULONUEVO_ARCA_RENOVAR_MIN", "50"))
+
+DEFAULT_CORS_ORIGINS = (
+    "http://localhost:4200",
+    "http://127.0.0.1:4200",
+    "http://localhost:4210",
+    "http://127.0.0.1:4210",
+)
+
+# Build del frontend que sirve este backend (si existe).
+FRONT_DIST = _path_env(
+    "MODULONUEVO_FRONT_DIST",
+    BACKEND_DIR.parent / "frontend" / "dist" / "control-fct-frontend" / "browser",
+)
+
+
+def cors_origins() -> list[str]:
+    crudo = os.getenv("MODULONUEVO_CORS", "")
+    if not crudo:
+        return list(DEFAULT_CORS_ORIGINS)
+    return [origen.strip() for origen in crudo.split(",") if origen.strip()]
+
+
+def ensure_dirs() -> None:
+    for carpeta in (DATA_DIR, OUTPUT_DIR, LOG_DIR):
+        carpeta.mkdir(parents=True, exist_ok=True)
