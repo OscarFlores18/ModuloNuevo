@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from playwright.sync_api import sync_playwright
+
 from .arca import SesionArca
 from .xubio import SesionXubio
 
@@ -25,6 +27,14 @@ class GestorSesiones:
         self.log = log
         self._arca: dict[tuple[str, str], SesionArca] = {}
         self._xubio: SesionXubio | None = None
+        self._pw = None
+
+    def _playwright(self):
+        """Uno solo para todo el job: Playwright sync no deja arrancar un segundo
+        en el mismo hilo («Sync API inside the asyncio loop»)."""
+        if self._pw is None:
+            self._pw = sync_playwright().start()
+        return self._pw
 
     # -- ARCA --------------------------------------------------------------
     def arca(self, cuit_login: str, clave: str) -> SesionArca:
@@ -32,7 +42,9 @@ class GestorSesiones:
         clave_sesion = ((cuit_login or "").strip(), clave or "")
         sesion = self._arca.get(clave_sesion)
         if sesion is None:
-            sesion = SesionArca(cuit_login, clave, log=self.log)
+            sesion = SesionArca(
+                cuit_login, clave, log=self.log, playwright=self._playwright()
+            )
             sesion.abrir()
             self._arca[clave_sesion] = sesion
         else:
@@ -43,7 +55,9 @@ class GestorSesiones:
     def xubio(self, usuario: str, password: str) -> SesionXubio:
         """La única sesión de Xubio del job (se crea la primera vez)."""
         if self._xubio is None:
-            sesion = SesionXubio(usuario, password, log=self.log)
+            sesion = SesionXubio(
+                usuario, password, log=self.log, playwright=self._playwright()
+            )
             sesion.abrir()
             self._xubio = sesion
         return self._xubio
@@ -70,6 +84,12 @@ class GestorSesiones:
             except Exception:
                 pass
             self._xubio = None
+        if self._pw is not None:
+            try:
+                self._pw.stop()
+            except Exception:
+                pass
+            self._pw = None
 
     def __enter__(self) -> "GestorSesiones":
         return self

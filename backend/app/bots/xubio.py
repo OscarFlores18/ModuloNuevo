@@ -13,6 +13,7 @@ solo se cambia de empresa antes de bajar cada libro.
 
 import os
 from typing import Callable
+from urllib.parse import urljoin
 
 from playwright.sync_api import Page, sync_playwright
 
@@ -41,9 +42,14 @@ def procesar_informe_individual(
     "sin datos", es un fallo que el job debe informar.
     """
     log(f"   -> Navegando al Libro {tipo_reporte}...")
-    page.locator('a', has_text='Impuestos').first.hover()
-    page.wait_for_timeout(1000)
-    page.click(f'a[href="{url_menu}"]')
+    try:
+        page.locator('a', has_text='Impuestos').first.hover(timeout=5000)
+        page.wait_for_timeout(1000)
+        page.click(f'a[href="{url_menu}"]', timeout=5000)
+    except Exception:
+        # El menú no se desplegó (popup encima, ventana chica): se va directo.
+        log("      [INFO]: Menú de Impuestos no disponible, se abre el libro por URL.")
+        page.goto(urljoin(page.url, url_menu))
     page.mouse.move(0, 0)
 
     page.wait_for_selector(f"{selector_iframe} iframe", timeout=20000)
@@ -159,10 +165,13 @@ class SesionXubio:
         usuario: str,
         password: str,
         log: Callable[[str], None] = print,
+        playwright=None,
     ) -> None:
         self.usuario = usuario or ""
         self.password = password or ""
         self.log = log
+        # Playwright sync admite uno solo por hilo: si viene de afuera, no es nuestro.
+        self._pw_ajeno = playwright
         self._pw = None
         self._browser = None
         self._context = None
@@ -172,7 +181,7 @@ class SesionXubio:
     def abrir(self) -> "SesionXubio":
         if self._browser is not None:
             return self
-        self._pw = sync_playwright().start()
+        self._pw = self._pw_ajeno or sync_playwright().start()
         try:
             opciones: dict[str, object] = {"headless": config.PLAYWRIGHT_HEADLESS}
             if config.PLAYWRIGHT_CHANNEL:
@@ -202,7 +211,7 @@ class SesionXubio:
             self._context = None
             self._page = None
             self._matar_popup = None
-            if self._pw is not None:
+            if self._pw is not None and self._pw is not self._pw_ajeno:
                 try:
                     self._pw.stop()
                 except Exception:

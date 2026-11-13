@@ -14,9 +14,15 @@ def limpiar_nombre(texto: str) -> str:
     return _CARACTERES_INVALIDOS.sub("", texto).strip()
 
 
+def nombre_carpeta(texto: str) -> str:
+    """Windows no admite carpetas que terminen en punto o espacio («S.A.»): las
+    crea sin el punto y después Python y el navegador no apuntan al mismo lugar."""
+    return limpiar_nombre(texto).rstrip(". ") or "Cliente"
+
+
 def carpeta_cliente(base: Path, cliente: str, mes: str, anio: str) -> Path:
     """<base>/<Cliente>/<MMAAAA>/Control de Facturas"""
-    destino = Path(base) / limpiar_nombre(cliente) / f"{mes}{anio}" / SUBCARPETA_CONTROL
+    destino = Path(base) / nombre_carpeta(cliente) / f"{mes}{anio}" / SUBCARPETA_CONTROL
     destino.mkdir(parents=True, exist_ok=True)
     return destino
 

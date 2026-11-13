@@ -466,6 +466,14 @@ def _correr(ej: Ejecucion, xubio_clave: str, clientes_repo: ClientesRepository) 
 
             def hacer_arca(sesion, tipo, _cuit_repres=cuit_repres, _cli=cli.nombre):
                 nonlocal servicio_arca
+                # Los botones Emitidos/Recibidos están solo en la entrada del
+                # servicio: cada tipo arranca con Mis Comprobantes recién abierto.
+                if servicio_arca is not None:
+                    try:
+                        servicio_arca.close()
+                    except Exception:
+                        pass
+                    servicio_arca = None
                 for intento in (1, 2):
                     if servicio_arca is None or servicio_arca.is_closed():
                         servicio_arca = sesion.abrir_mis_comprobantes(_cuit_repres)

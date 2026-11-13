@@ -11,8 +11,11 @@ def test_limpiar_nombre_saca_caracteres_invalidos():
 
 def test_carpeta_cliente_respeta_estructura(tmp_path: Path):
     destino = carpeta_cliente(tmp_path, "Acme S.A.", "03", "2025")
-    assert destino == tmp_path / "Acme S.A." / "032025" / "Control de Facturas"
+    # Sin el punto final: Windows no admite carpetas que terminen en punto.
+    assert destino == tmp_path / "Acme S.A" / "032025" / "Control de Facturas"
     assert destino.is_dir()
+    (destino / "prueba.xlsx").write_bytes(b"x")
+    assert (destino / "prueba.xlsx").is_file()
 
 
 def test_dentro_de_detecta_traversal(tmp_path: Path):

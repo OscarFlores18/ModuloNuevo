@@ -3,7 +3,7 @@ import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { duracion, tamanoLegible } from '../../core/fechas';
 import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, estaActiva, mensajeDeError } from '../../core/models';
-import { guardarComo, guardarEnCarpeta } from '../../core/guardar-archivo';
+import { descargarArchivo } from '../../core/guardar-archivo';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
@@ -191,14 +191,15 @@ export class EjecucionPantalla {
     });
   }
 
-  /** Abre «Guardar como» para elegir la carpeta y después baja el archivo del servidor. */
+  /** Baja el archivo del servidor y lo entrega como descarga del navegador. */
   protected async descargar(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
-      if (await guardarComo(archivo.nombre, () => this.api.archivo(e.id, c.indice, archivo.nombre))) this.toast.ok('Archivo guardado', archivo.nombre);
+      descargarArchivo(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
+      this.toast.ok('Archivo descargado', archivo.nombre);
     } catch (err) {
       this.errorDescarga.set(mensajeDeError(err, `No se pudo descargar ${archivo.nombre} de ${c.nombre}.`));
     } finally {
@@ -206,15 +207,15 @@ export class EjecucionPantalla {
     }
   }
 
-  /** Todos los archivos del cliente a una carpeta elegida en el diálogo. */
+  /** Todos los archivos del cliente, uno detrás del otro. */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/*`);
     this.errorDescarga.set(null);
     try {
-      const n = await guardarEnCarpeta(c.archivos.map((a) => ({ nombre: a.nombre, obtener: () => this.api.archivo(e.id, c.indice, a.nombre) })));
-      if (n !== null) this.toast.ok('Archivos guardados', `${n} archivo(s) de ${c.nombre}`);
+      for (const a of c.archivos) descargarArchivo(a.nombre, await this.api.archivo(e.id, c.indice, a.nombre));
+      this.toast.ok('Archivos descargados', `${c.archivos.length} archivo(s) de ${c.nombre}`);
     } catch (err) {
       this.errorDescarga.set(mensajeDeError(err, `No se pudieron descargar los archivos de ${c.nombre}.`));
     } finally {

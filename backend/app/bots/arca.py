@@ -96,7 +96,10 @@ class SesionArca:
         *,
         intervalo_ping_s: int | None = None,
         renovar_s: int | None = None,
+        playwright=None,
     ) -> None:
+        # Playwright sync admite uno solo por hilo: si viene de afuera, no es nuestro.
+        self._pw_ajeno = playwright
         self.cuit_login = (cuit_login or "").strip()
         self.clave = clave or ""
         self.log = log
@@ -114,7 +117,7 @@ class SesionArca:
     def abrir(self) -> "SesionArca":
         if self._browser is not None:
             return self
-        self._pw = sync_playwright().start()
+        self._pw = self._pw_ajeno or sync_playwright().start()
         try:
             opciones: dict[str, object] = {"headless": config.PLAYWRIGHT_HEADLESS}
             if config.PLAYWRIGHT_CHANNEL:
@@ -142,7 +145,7 @@ class SesionArca:
             self._browser = None
             self._context = None
             self._portal = None
-            if self._pw is not None:
+            if self._pw is not None and self._pw is not self._pw_ajeno:
                 try:
                     self._pw.stop()
                 except Exception:
