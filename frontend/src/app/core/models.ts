@@ -15,15 +15,13 @@ export interface Usuario {
 export interface Cliente {
   nombre: string;
   arca: { cuit_login: string; cuit_representado: string; tiene_clave: boolean };
-  xubio: { url: string };
-  /** Datos que le faltan para correr todos los pasos («Clave fiscal», «URL de Xubio»…). */
+  /** Datos que le faltan para correr todos los pasos («Clave fiscal», «CUIT representado»…). */
   faltantes: string[];
 }
 
 export interface ClienteEntrada {
   nombre: string;
   arca: { cuit_login: string; clave: string; cuit_representado: string };
-  xubio: { url: string };
 }
 
 export interface Ajustes {

@@ -1,9 +1,7 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
-import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { duracion, tamanoLegible } from '../../core/fechas';
 import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, estaActiva, mensajeDeError } from '../../core/models';
-import { guardarComo } from '../../core/guardar-archivo';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
@@ -44,7 +42,7 @@ function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
 
 /**
  * El monitoreo de un control: estado global, un acordeón por cliente con su
- * línea de tiempo (ARCA -> Xubio -> Auditoría) y, plegado al final, el historial.
+ * línea de tiempo (ARCA -> Xubio -> Auditoría).
  * El registro técnico de los bots no se muestra: queda en debug_log.txt.
  *
  * Los datos llegan del `EjecucionStore`, que consulta al backend cada poco más
@@ -53,7 +51,7 @@ function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
  */
 @Component({
   selector: 'app-ejecucion',
-  imports: [RouterLink, DatePipe, Alerta, ConfirmModal],
+  imports: [RouterLink, Alerta, ConfirmModal],
   templateUrl: './ejecucion.html',
 })
 export class EjecucionPantalla {
@@ -112,7 +110,7 @@ export class EjecucionPantalla {
       conError: c.estado === 'con_errores',
       problemas: problemasDe(c.pasos),
       carpeta: c.carpeta,
-      archivos: c.archivos,
+      archivos: ordenarArchivos(c.archivos),
       origen: c,
     })),
   );
@@ -191,19 +189,17 @@ export class EjecucionPantalla {
     });
   }
 
-  /** «Guardar como» para un archivo: se elige dónde y después se baja del servidor. */
+  /** El servidor (esta misma PC) abre «Guardar como» y copia ahí el archivo. */
   protected async descargar(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
-      const r = await guardarComo(archivo.nombre, () => this.api.archivo(e.id, c.indice, archivo.nombre));
-      if (r === 'guardado') this.toast.ok('Archivo guardado', archivo.nombre);
-      if (r === 'sin-permiso') this.errorDescarga.set('El navegador no abrió el diálogo. Volvé a hacer clic en Descargar.');
+      const r = await this.api.guardarArchivo(e.id, c.indice, archivo.nombre);
+      if (!r.cancelado) this.toast.ok('Archivo guardado', r.ruta);
     } catch (err) {
-      console.error(`No se pudo guardar ${archivo.nombre}`, err);
-      this.errorDescarga.set(motivoFalla(archivo.nombre, err));
+      this.errorDescarga.set(mensajeDeError(err, `No se pudo guardar «${archivo.nombre}».`));
     } finally {
       this.descargando.set(null);
     }
@@ -228,11 +224,9 @@ export class EjecucionPantalla {
   }
 }
 
-/** Por qué no se pudo guardar, en palabras: lo más común es que esté abierto en Excel. */
-function motivoFalla(nombre: string, err: unknown): string {
-  if (err instanceof DOMException && ['NoModificationAllowedError', 'InvalidStateError', 'InvalidModificationError'].includes(err.name)) {
-    return `No se pudo guardar «${nombre}»: ya existe un archivo con ese nombre y está abierto (¿en Excel?). Cerralo y volvé a descargar.`;
-  }
-  if (err instanceof DOMException) return `No se pudo guardar «${nombre}» en la carpeta elegida (${err.message || err.name}).`;
-  return mensajeDeError(err, `No se pudo bajar «${nombre}» del servidor.`);
+const ORDEN_ARCHIVO: Record<string, number> = { arca: 0, xubio: 1, auditoria: 2, otro: 3 };
+
+/** En el orden en que se generan: ARCA, Xubio y al final la auditoría. */
+function ordenarArchivos(archivos: ArchivoGenerado[]): ArchivoGenerado[] {
+  return [...archivos].sort((a, b) => (ORDEN_ARCHIVO[a.tipo] ?? 9) - (ORDEN_ARCHIVO[b.tipo] ?? 9) || a.nombre.localeCompare(b.nombre, 'es'));
 }

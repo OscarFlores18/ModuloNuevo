@@ -619,6 +619,20 @@ def ruta_archivo(ej: Ejecucion, indice: int, nombre: str) -> Path:
     return archivo
 
 
+def guardar_archivo(ej: Ejecucion, indice: int, nombre: str, destino: Path) -> dict:
+    """Copia un archivo del cliente a la ruta elegida en «Guardar como»."""
+    origen = ruta_archivo(ej, indice, nombre)
+    try:
+        shutil.copy2(origen, destino)
+    except PermissionError as exc:
+        raise ErrorEjecucion(
+            f"No se pudo guardar «{Path(destino).name}»: ya existe y está abierto (¿en Excel?). Cerralo y volvé a intentar.", 409
+        ) from exc
+    except OSError as exc:
+        raise ErrorEjecucion(f"No se pudo guardar «{destino}»: {exc}", 422) from exc
+    return {"ruta": str(destino)}
+
+
 def exportar_archivos(ej: Ejecucion, indice: int, destino: Path) -> dict:
     """Copia los archivos del cliente a `<destino>/<Cliente>/<mmaaaa>/Control de Facturas/`,
     el mismo formato de la app de escritorio y de DRLiqui.

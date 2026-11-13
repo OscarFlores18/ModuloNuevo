@@ -16,12 +16,12 @@
   <section class="mf-panel mf-panel-acento" aria-labelledby="t-ejecucion">
     <header class="flex flex-wrap items-center justify-between gap-3">
       <div class="min-w-0">
-        <h2 id="t-ejecucion" class="m-0 text-xl font-bold">Ejecución del Control</h2>
+        <h2 id="t-ejecucion" class="m-0 text-xl font-bold">Ejecución del control</h2>
         <p class="m-0 mt-0.5 font-semibold">Período {{ e.periodo }}</p>
       </div>
       @if (activa()) {
         <button type="button" class="mf-btn mf-btn-rojo" (click)="confirmarCancelar.set(true)" [disabled]="e.cancelar_pedido">
-          {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar Control' }}
+          {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar control' }}
         </button>
       } @else {
         <a routerLink="/control" class="mf-btn">Nuevo control</a>
@@ -35,7 +35,7 @@
       </div>
       <div class="ej-kpi">
         <dt>Progreso</dt>
-        <dd>{{ procesados() }} <small>de {{ e.clientes }} clientes</small></dd>
+        <dd>{{ procesados() }} <small>de {{ e.clientes }} {{ e.clientes === 1 ? 'cliente' : 'clientes' }}</small></dd>
       </div>
       <div class="ej-kpi" [class.ej-kpi-error]="errores() > 0">
         <dt>Errores</dt>
@@ -155,28 +155,4 @@
   <app-confirm-modal [(abierto)]="confirmarCancelar" titulo="¿Cancelar el control?" textoConfirmar="Sí, cancelar" textoCancelar="Seguir" [peligro]="true" (confirmado)="cancelar()">
     El paso que se está haciendo <strong class="text-texto">termina igual</strong>; después se frena y los clientes que faltan quedan sin hacer.
   </app-confirm-modal>
-}
-
-<!-- Historial: plegado -->
-@if (store.historial().length > (e ? 1 : 0)) {
-  <details class="ej-plegable">
-    <summary>
-      <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
-      <span class="flex-1">Ejecuciones recientes</span>
-      <span class="mf-badge">{{ store.historial().length }}</span>
-    </summary>
-    <ul class="ej-historial">
-      @for (h of store.historial(); track h.id) {
-        @let hi = insigniaEjecucion[h.estado];
-        <li>
-          <a [routerLink]="['/ejecuciones', h.id]" class="mf-item" [class.mf-item-elegido]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null">
-            <span class="mono w-28 shrink-0">{{ h.creada | date: 'dd/MM HH:mm' }}</span>
-            <span class="min-w-0 flex-1 truncate font-semibold">{{ h.periodo }} · {{ h.clientes }} {{ h.clientes === 1 ? 'cliente' : 'clientes' }}</span>
-            @if (h.totales.con_errores) { <span class="mf-badge mf-badge-error">{{ h.totales.con_errores }} con errores</span> }
-            <span [class]="hi.clase">{{ hi.texto }}</span>
-          </a>
-        </li>
-      }
-    </ul>
-  </details>
 }

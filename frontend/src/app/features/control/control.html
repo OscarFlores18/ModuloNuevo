@@ -1,10 +1,9 @@
 <form [formGroup]="form" (ngSubmit)="ejecutar()" class="flex flex-col gap-3" novalidate aria-labelledby="t-nuevo">
-  <div class="flex items-center justify-between gap-3">
-    <h2 id="t-nuevo" class="m-0 text-xl font-semibold">Nuevo control</h2>
+  <app-encabezado id="t-nuevo" titulo="Nuevo control" bajada="Elegí los clientes y el período: los bots bajan ARCA y Xubio y arman la auditoría.">
     @if (ejecucion.hayActiva()) {
       <a routerLink="/ejecuciones" class="mf-badge mf-badge-ok no-underline"><span class="mf-punto mf-latido" aria-hidden="true"></span>Control en curso · ver</a>
     }
-  </div>
+  </app-encabezado>
 
   <!-- Clientes -->
   <section class="mf-panel !py-3" aria-labelledby="t-clientes">
@@ -133,7 +132,7 @@
   <!-- Acción -->
   <div class="mf-barra-accion">
     <p class="mf-tenue m-0 min-w-0 flex-1 truncate text-sm">
-      <strong class="text-texto">{{ elegidos().length }} cliente(s)</strong> · {{ resumen() }}
+      <strong class="text-texto">{{ elegidos().length || 'Ningún' }} {{ elegidos().length === 1 || !elegidos().length ? 'cliente' : 'clientes' }}</strong> · {{ resumen() }}
     </p>
     <button type="submit" class="mf-btn mf-btn-grande" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()">
       {{ ejecucion.enviando() ? 'Iniciando…' : 'Ejecutar control' }}

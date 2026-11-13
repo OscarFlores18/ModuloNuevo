@@ -67,7 +67,6 @@ import { ClienteForm } from './cliente-form';
               <th>CUIT representado</th>
               <th>CUIT de ingreso</th>
               <th>Clave fiscal</th>
-              <th>Xubio</th>
               <th>Estado</th>
               <th><span class="sr-only">Acciones</span></th>
             </tr>
@@ -80,10 +79,6 @@ import { ClienteForm } from './cliente-form';
                 <td class="mono">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</td>
                 <td>
                   @if (c.arca.tiene_clave) { <span class="mf-badge mf-badge-ok">Cargada</span> } @else { <span class="mf-badge mf-badge-aviso">Falta</span> }
-                </td>
-                <td class="max-w-[14rem] truncate">
-                  @if (c.xubio.url) { <span class="mf-tenue" [title]="c.xubio.url">{{ c.xubio.url.replace('https://', '') }}</span> }
-                  @else { <span class="mf-badge mf-badge-aviso">Sin dirección</span> }
                 </td>
                 <td>
                   @if (c.faltantes.length) {

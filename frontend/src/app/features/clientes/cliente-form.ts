@@ -28,7 +28,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
             <span>Nombre del cliente</span>
             <input class="mf-input" name="nombre" [value]="nombre()" (input)="nombre.set($any($event.target).value)" required
               [attr.aria-invalid]="intentado() && !nombre().trim()" placeholder="Como figura en Xubio (se usa para elegir la empresa)" />
-            <small class="mf-ayuda">Se usa también como nombre de la carpeta del cliente.</small>
+            <small class="mf-ayuda">En Xubio se busca la empresa por este nombre. También es el nombre de la carpeta del cliente.</small>
           </label>
 
           <fieldset class="mf-panel mf-panel-acento m-0 !bg-panel-alt">
@@ -59,17 +59,6 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
                 <small class="mf-ayuda">La empresa cuyos comprobantes se consultan (si el contador la representa con su clave).</small>
               </label>
             </div>
-          </fieldset>
-
-          <fieldset class="mf-panel mf-panel-acento m-0 !bg-panel-alt">
-            <legend class="sr-only">Xubio</legend>
-            <h3 class="!mt-0">Xubio</h3>
-            <label class="mf-campo">
-              <span>Dirección de la empresa en Xubio</span>
-              <input class="mf-input" name="url" type="url" [value]="url()" (input)="url.set($any($event.target).value)" placeholder="https://xubio.com/NXV/home"
-                spellcheck="false" [attr.aria-invalid]="!!url().trim() && !url().trim().startsWith('http')" />
-              <small class="mf-ayuda">La que aparece en la barra del navegador con la empresa abierta. La cuenta de Xubio se elige al ejecutar.</small>
-            </label>
           </fieldset>
 
           @if (error(); as e) { <app-alerta nivel="error" titulo="No se pudo guardar." [mensajes]="[e]" /> }
@@ -106,7 +95,6 @@ export class ClienteForm {
   protected readonly cuitLogin = signal('');
   protected readonly clave = signal('');
   protected readonly cuitRepres = signal('');
-  protected readonly url = signal('');
   protected readonly verClave = signal(false);
   protected readonly guardando = signal(false);
   protected readonly intentado = signal(false);
@@ -131,7 +119,6 @@ export class ClienteForm {
     this.cuitLogin.set(formatearCuit(c?.arca.cuit_login));
     this.clave.set('');
     this.cuitRepres.set(formatearCuit(c?.arca.cuit_representado));
-    this.url.set(c?.xubio.url ?? '');
     this.verClave.set(false);
     this.intentado.set(false);
     this.error.set(null);
@@ -155,7 +142,6 @@ export class ClienteForm {
     const datos: ClienteEntrada = {
       nombre: this.nombre().trim(),
       arca: { cuit_login: this.cuitLogin(), clave: this.clave(), cuit_representado: this.cuitRepres() },
-      xubio: { url: this.url().trim() },
     };
     this.guardando.set(true);
     this.error.set(null);

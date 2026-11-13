@@ -895,16 +895,14 @@ input[type='checkbox'] {
 /* Botón flotante para ir al final / volver arriba. */
 .cf-flotante {
   position: fixed;
-  right: 24px;
-  top: 50%;
+  right: 20px;
+  bottom: 20px;
   z-index: 30;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  width: 56px;
-  height: 56px;
+  width: 44px;
+  height: 44px;
   border: 0;
   border-radius: 999px;
   background: linear-gradient(135deg, var(--color-acento), var(--color-marino));
@@ -1009,10 +1007,9 @@ input[type='checkbox'] {
   color: var(--color-error-texto);
 }
 
-/* Acordeones: clientes, logs e historial */
+/* Acordeones: clientes */
 
 .ej-clientes,
-.ej-historial,
 .ej-archivos {
   margin: 0;
   padding: 0;
@@ -1025,8 +1022,7 @@ input[type='checkbox'] {
   gap: 8px;
 }
 
-.ej-cliente,
-.ej-plegable {
+.ej-cliente {
   border: 1px solid var(--color-borde);
   border-radius: 12px;
   background: #ffffff;
@@ -1035,9 +1031,7 @@ input[type='checkbox'] {
 }
 
 .ej-cliente:hover,
-.ej-cliente[open],
-.ej-plegable:hover,
-.ej-plegable[open] {
+.ej-cliente[open] {
   border-color: rgba(37, 99, 235, 0.4);
   box-shadow: 0 6px 18px rgba(30, 58, 138, 0.1);
 }
@@ -1046,8 +1040,7 @@ input[type='checkbox'] {
   border-left: 4px solid var(--color-error);
 }
 
-.ej-cliente > summary,
-.ej-plegable > summary {
+.ej-cliente > summary {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1059,13 +1052,11 @@ input[type='checkbox'] {
   list-style: none;
 }
 
-.ej-cliente > summary::-webkit-details-marker,
-.ej-plegable > summary::-webkit-details-marker {
+.ej-cliente > summary::-webkit-details-marker {
   display: none;
 }
 
-.ej-cliente > summary:focus-visible,
-.ej-plegable > summary:focus-visible {
+.ej-cliente > summary:focus-visible {
   outline: 2px solid var(--color-acento);
   outline-offset: 2px;
 }
@@ -1098,22 +1089,11 @@ details[open] > summary .ej-chevron {
   flex-shrink: 0;
 }
 
-.ej-cliente-cuerpo,
-.ej-plegable-cuerpo {
+.ej-cliente-cuerpo {
   min-width: 0;
   overflow-wrap: anywhere;
   padding: 16px;
   border-top: 1px solid var(--color-borde);
-}
-
-.ej-historial {
-  padding: 8px;
-  border-top: 1px solid var(--color-borde);
-}
-
-.ej-historial .mf-item {
-  text-decoration: none;
-  cursor: pointer;
 }
 
 /* Línea de tiempo: ARCA -> Xubio -> Auditoría */

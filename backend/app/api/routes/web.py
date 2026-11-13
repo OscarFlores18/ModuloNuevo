@@ -38,18 +38,11 @@ class DatosArca(BaseModel):
     cuit_representado: str = ""
 
 
-class DatosXubio(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    url: str = ""
-
-
 class ClienteEntrada(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     nombre: str = ""
     arca: DatosArca = Field(default_factory=DatosArca)
-    xubio: DatosXubio = Field(default_factory=DatosXubio)
 
 
 class RenombrarCliente(BaseModel):
@@ -62,7 +55,6 @@ def _solo_digitos(texto: str) -> str:
 
 def _faltantes(datos: dict) -> list[str]:
     arca = datos.get("arca") or {}
-    xubio = datos.get("xubio") or {}
     falta = []
     if not str(arca.get("cuit_login") or "").strip():
         falta.append("CUIT de ingreso a ARCA")
@@ -70,15 +62,12 @@ def _faltantes(datos: dict) -> list[str]:
         falta.append("Clave fiscal")
     if not str(arca.get("cuit_representado") or "").strip():
         falta.append("CUIT representado")
-    if not str(xubio.get("url") or "").strip():
-        falta.append("URL de Xubio")
     return falta
 
 
 def _publico(nombre: str, datos: dict) -> dict:
     """Lo que ve el front: nunca la clave fiscal."""
     arca = datos.get("arca") or {}
-    xubio = datos.get("xubio") or {}
     salida = {
         "nombre": nombre,
         "arca": {
@@ -86,7 +75,6 @@ def _publico(nombre: str, datos: dict) -> dict:
             "cuit_representado": str(arca.get("cuit_representado") or "").strip(),
             "tiene_clave": bool(str(arca.get("clave") or "").strip()),
         },
-        "xubio": {"url": str(xubio.get("url") or "").strip()},
         "faltantes": _faltantes(datos),
     }
     # Se conservan claves extra (AGIP, ARBA, categoría...) para la app de escritorio.
@@ -98,7 +86,6 @@ def _publico(nombre: str, datos: dict) -> dict:
 
 def _combinar(previo: dict, body: ClienteEntrada) -> dict:
     arca_previo = previo.get("arca") or {}
-    xubio_previo = previo.get("xubio") or {}
 
     arca = {
         **arca_previo,
@@ -110,13 +97,13 @@ def _combinar(previo: dict, body: ClienteEntrada) -> dict:
         "clave": (body.arca.clave or "").strip()
         or str(arca_previo.get("clave") or ""),
     }
-    xubio = {**xubio_previo, "url": (body.xubio.url or "").strip()}
-
+    # Xubio no necesita datos por cliente: la empresa se elige por el nombre. Si hay
+    # una dirección vieja en config.json (app de escritorio, DRLiqui) se deja como está.
     datos = dict(previo)
     datos["arca"] = arca
-    datos["xubio"] = xubio
     for clave, valor in (body.model_extra or {}).items():
-        datos[clave] = valor
+        if clave != "xubio":
+            datos[clave] = valor
     return datos
 
 
@@ -349,6 +336,20 @@ def descargar_archivo_ejecucion(
     except ejecuciones_srv.ErrorEjecucion as exc:
         raise _http_error(exc) from exc
     return FileResponse(archivo, filename=archivo.name)
+
+
+@router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/archivos/{nombre}/guardar")
+def guardar_archivo_ejecucion(ejecucion_id: str, indice: int, nombre: str) -> dict:
+    """Abre en la PC del servidor «Guardar como» y copia ahí ese archivo."""
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        ejecuciones_srv.ruta_archivo(ej, indice, nombre)  # que exista antes de abrir la ventana
+        destino = dialogos.guardar_como(nombre)
+        if destino is None:
+            return {"cancelado": True}
+        return ejecuciones_srv.guardar_archivo(ej, indice, nombre, destino)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
 
 
 @router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/exportar")

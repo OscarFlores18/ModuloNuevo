@@ -55,10 +55,13 @@ export class ApiService {
   exportar(id: string, indice: number): Promise<ResultadoExportar> {
     return firstValueFrom(this.http.post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}));
   }
-  /** El archivo como Blob (la descarga lleva el encabezado de sesión, no sirve un <a href>). */
-  archivo(id: string, indice: number, nombre: string): Promise<Blob> {
+  /** El servidor abre «Guardar como» y copia ahí ese archivo. */
+  guardarArchivo(id: string, indice: number, nombre: string): Promise<{ cancelado: true } | { cancelado?: false; ruta: string }> {
     return firstValueFrom(
-      this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }),
+      this.http.post<{ cancelado: true } | { cancelado?: false; ruta: string }>(
+        `${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}/guardar`,
+        {},
+      ),
     );
   }
 }

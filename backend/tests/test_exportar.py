@@ -79,3 +79,26 @@ def test_ejecucion_inexistente_da_404(entorno, monkeypatch):
     client, _ = entorno
     monkeypatch.setattr(dialogos, "elegir_carpeta", lambda *a, **k: None)
     assert client.post("/api/ejecuciones/nada/clientes/0/exportar").status_code == 404
+
+
+def test_descargar_un_archivo_con_guardar_como(entorno, tmp_path, monkeypatch):
+    client, _ = entorno
+    _ejecucion(tmp_path)
+    destino = tmp_path / "otra" / "mi copia.xlsx"
+    destino.parent.mkdir()
+    monkeypatch.setattr(dialogos, "guardar_como", lambda *a, **k: destino)
+
+    r = client.post("/api/ejecuciones/exp123/clientes/0/archivos/IVA VENTAS - X.xlsx/guardar")
+
+    assert r.status_code == 200, r.text
+    assert r.json() == {"ruta": str(destino)}
+    assert destino.read_bytes() == b"IVA VENTAS - X.xlsx"
+
+
+def test_guardar_como_cancelado_y_archivo_inexistente(entorno, tmp_path, monkeypatch):
+    client, _ = entorno
+    _ejecucion(tmp_path)
+    monkeypatch.setattr(dialogos, "guardar_como", lambda *a, **k: None)
+
+    assert client.post("/api/ejecuciones/exp123/clientes/0/archivos/IVA VENTAS - X.xlsx/guardar").json() == {"cancelado": True}
+    assert client.post("/api/ejecuciones/exp123/clientes/0/archivos/no-existe.xlsx/guardar").status_code == 404

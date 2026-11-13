@@ -21,6 +21,7 @@ import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { SesionService } from '../../core/services/sesion.service';
+import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 
 type ModoPeriodo = 'mes' | 'trimestre' | 'anio' | 'rango';
@@ -65,7 +66,7 @@ const rangoOrdenado: ValidatorFn = (g: AbstractControl): ValidationErrors | null
 
 @Component({
   selector: 'app-nuevo-control',
-  imports: [ReactiveFormsModule, RouterLink, CuitPipe],
+  imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado],
   templateUrl: './control.html',
 })
 export class NuevoControl {

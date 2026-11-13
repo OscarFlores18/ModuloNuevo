@@ -52,7 +52,8 @@ def procesar_cruce(
     ruta_arca = ruta_arca_manual if ruta_arca_manual else os.path.join(directorio_guardado, f"Mis comprobantes - {tipo_arca} - {cliente_limpio_arca} - {mes_anio_desde} al {mes_anio_hasta}.xlsx")
     ruta_xubio = ruta_xubio_manual if ruta_xubio_manual else os.path.join(directorio_guardado, f"IVA {operacion.upper()} - {nombre_seguro_xubio} - {f_desde_limpia} al {f_hasta_limpia}.xlsx")
     
-    ruta_salida = os.path.join(directorio_guardado, f"AUX - Control de facturas {operacion} con AFIP - {mes_anio_desde} - {cliente_limpio_arca}.xlsx")
+    # Sin el punto final del nombre («S.A.»): si no, el archivo queda «S.A..xlsx».
+    ruta_salida = os.path.join(directorio_guardado, f"AUX - Control de facturas {operacion} con AFIP - {mes_anio_desde} - {cliente_limpio_arca.rstrip('. ')}.xlsx")
 
     if not os.path.exists(ruta_arca):
         raise ArchivoNoEncontrado(

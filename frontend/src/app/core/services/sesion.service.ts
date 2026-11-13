@@ -41,7 +41,6 @@ export const USUARIOS_DE_PRUEBA: readonly UsuarioDePrueba[] = [
  */
 const ESPERA_MS = 5000;
 
-const CLAVE = 'control-fct.usuario_prueba';
 const CLAVE_TOKEN = 'control-fct.sesion';
 
 function leer(almacen: 'local' | 'session', clave: string): string | null {
@@ -83,8 +82,8 @@ export class SesionService {
   private readonly http = inject(HttpClient);
   private readonly navegador = isPlatformBrowser(inject(PLATFORM_ID));
 
-  /** Modo local: la identidad que se manda en cada pedido. */
-  readonly identidadElegida = signal<UsuarioDePrueba>(USUARIOS_DE_PRUEBA.find((u) => u.id === leer('local', CLAVE)) ?? USUARIOS_DE_PRUEBA[1]);
+  /** Modo local (sin ContadorWeb): siempre el Administrador de prueba, que puede todo. */
+  readonly identidadElegida = signal<UsuarioDePrueba>(USUARIOS_DE_PRUEBA[1]);
   /** La sesión abierta con el pase de ContadorWeb. */
   private readonly token = signal<Token | null>(tokenGuardado());
   /** Lo que confirmó el backend (/api/yo): es lo que usan las pantallas. */
@@ -129,15 +128,6 @@ export class SesionService {
         this.usuario.set(this.token() ? null : this.identidadElegida());
       }
     }
-  }
-
-  /** Modo local: cambia el usuario de prueba y las pantallas se recargan con sus permisos. */
-  cambiar(id: string): void {
-    const elegido = USUARIOS_DE_PRUEBA.find((u) => u.id === id);
-    if (!elegido) return;
-    this.identidadElegida.set(elegido);
-    escribir('local', CLAVE, id);
-    void this.iniciar();
   }
 
   /** Lo que lleva cada pedido a la API: el token de ContadorWeb o, en modo local, el usuario de prueba. */

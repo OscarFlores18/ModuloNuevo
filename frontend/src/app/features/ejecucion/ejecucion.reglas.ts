@@ -28,7 +28,7 @@ export const INSIGNIA_CLIENTE: Record<EstadoCliente, Insignia> = {
 export const ETIQUETA_ARCHIVO: Record<string, string> = {
   arca: 'ARCA',
   xubio: 'Xubio',
-  auditoria: 'Control',
+  auditoria: 'Auditoría',
   otro: 'Archivo',
 };
 
