@@ -5,8 +5,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-SUBCARPETA_CONTROL = "Control de Facturas"
-
 _CARACTERES_INVALIDOS = re.compile(r'[\\/*?:"<>|]')
 
 
@@ -21,8 +19,8 @@ def nombre_carpeta(texto: str) -> str:
 
 
 def carpeta_cliente(base: Path, cliente: str, mes: str, anio: str) -> Path:
-    """<base>/<Cliente>/<MMAAAA>/Control de Facturas"""
-    destino = Path(base) / nombre_carpeta(cliente) / f"{mes}{anio}" / SUBCARPETA_CONTROL
+    """<base>/<Cliente>/<MMAAAA>: los archivos van directo en la carpeta del período."""
+    destino = Path(base) / nombre_carpeta(cliente) / f"{mes}{anio}"
     destino.mkdir(parents=True, exist_ok=True)
     return destino
 

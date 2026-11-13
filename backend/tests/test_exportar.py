@@ -1,15 +1,17 @@
-"""«Descargar todos»: a <elegida>/<mmaaaa>/Control de Facturas o, sin elegir, a Descargas/<Cliente>/..."""
+"""«Descargar todos»: a <elegida>/<mmaaaa>/ o, sin elegir, a Descargas/<Cliente>/<mmaaaa>/."""
 
 from __future__ import annotations
 
+import os
 import shutil
+import time
 
 from backend.app.core import dialogos
 from backend.app.services import ejecuciones as srv
 
 
 def _ejecucion(tmp_path):
-    origen = tmp_path / "salidas" / "Cliente SA" / "102026" / "Control de Facturas"
+    origen = tmp_path / "salidas" / "Cliente SA" / "102026"
     origen.mkdir(parents=True)
     for nombre in ("Mis comprobantes - Emitidos - X.xlsx", "IVA VENTAS - X.xlsx", "AUX - Control X.xlsx"):
         (origen / nombre).write_bytes(nombre.encode())
@@ -17,7 +19,7 @@ def _ejecucion(tmp_path):
         id="exp123",
         usuario="test",
         parametros={"desde": "01/10/2026", "hasta": "31/10/2026"},
-        clientes=[srv.ClienteEnCurso("Cliente SA.", [], carpeta=str(origen))],
+        clientes=[srv.ClienteEnCurso("Cliente SA.", [], carpeta=str(origen), archivos=srv.listar_archivos(origen))],
         estado="finalizada",
     )
     with srv._lock:
@@ -26,7 +28,7 @@ def _ejecucion(tmp_path):
 
 
 def test_carpeta_elegida_recibe_solo_las_subcarpetas(entorno, tmp_path, monkeypatch):
-    """Se elige la carpeta del cliente que ya existe: adentro van mmaaaa/Control de Facturas."""
+    """Se elige la carpeta del cliente que ya existe: adentro va mmaaaa con los archivos."""
     client, _ = entorno
     _ejecucion(tmp_path)
     destino = tmp_path / "Clientes" / "Cliente SA"
@@ -37,7 +39,7 @@ def test_carpeta_elegida_recibe_solo_las_subcarpetas(entorno, tmp_path, monkeypa
 
     assert r.status_code == 200, r.text
     datos = r.json()
-    carpeta = destino / "102026" / "Control de Facturas"
+    carpeta = destino / "102026"
     assert datos["carpeta"] == str(carpeta) and datos["elegida"] is True
     assert sorted(p.name for p in carpeta.iterdir()) == sorted(datos["copiados"])
     assert len(datos["copiados"]) == 3 and datos["fallas"] == []
@@ -57,9 +59,27 @@ def test_sin_elegir_se_crea_la_carpeta_del_cliente_en_descargas(entorno, tmp_pat
     assert r.status_code == 200, r.text
     datos = r.json()
     # El punto final del nombre se saca: Windows no admite carpetas que terminen en punto.
-    carpeta = casa / "Downloads" / "Cliente SA" / "102026" / "Control de Facturas"
+    carpeta = casa / "Downloads" / "Cliente SA" / "102026"
     assert datos["carpeta"] == str(carpeta) and datos["elegida"] is False
     assert len(list(carpeta.iterdir())) == 3
+
+
+def test_elegir_descargas_tal_cual_crea_la_carpeta_del_cliente(entorno, tmp_path, monkeypatch):
+    """La ventana abre en Descargas: «Seleccionar carpeta» sin entrar a ninguna devuelve Descargas."""
+    client, _ = entorno
+    _ejecucion(tmp_path)
+    casa = tmp_path / "casa"
+    descargas = casa / "Downloads"
+    descargas.mkdir(parents=True)
+    monkeypatch.setattr(srv.Path, "home", classmethod(lambda cls: casa))
+    monkeypatch.setattr(dialogos, "elegir_carpeta", lambda *a, **k: descargas)
+
+    r = client.post("/api/ejecuciones/exp123/clientes/0/exportar")
+
+    assert r.status_code == 200, r.text
+    datos = r.json()
+    assert datos["carpeta"] == str(descargas / "Cliente SA" / "102026") and datos["elegida"] is False
+    assert not (descargas / "102026").exists()
 
 
 def test_un_archivo_bloqueado_no_frena_a_los_demas(entorno, tmp_path, monkeypatch):
@@ -109,3 +129,85 @@ def test_guardar_como_cancelado_y_archivo_inexistente(entorno, tmp_path, monkeyp
 
     assert client.post("/api/ejecuciones/exp123/clientes/0/archivos/IVA VENTAS - X.xlsx/guardar").json() == {"cancelado": True}
     assert client.post("/api/ejecuciones/exp123/clientes/0/archivos/no-existe.xlsx/guardar").status_code == 404
+
+
+def test_solo_se_listan_los_archivos_de_este_control(tmp_path):
+    """La carpeta del mes la comparten todos los controles: un Ventas no muestra los Compras de antes."""
+    carpeta = tmp_path / "102026"
+    carpeta.mkdir(parents=True)
+    viejo = carpeta / "IVA COMPRAS - X - 01-10-2026 al 31-10-2026.xlsx"
+    viejo.write_bytes(b"de otro control")
+    hace_una_hora = time.time() - 3600
+    os.utime(viejo, (hace_una_hora, hace_una_hora))
+    (carpeta / "~$IVA VENTAS - X.xlsx").write_bytes(b"bloqueo de Excel")
+
+    inicio = time.time()
+    (carpeta / "IVA VENTAS - X - 05-10-2026 al 20-10-2026.xlsx").write_bytes(b"de este control")
+
+    assert [a["nombre"] for a in srv.listar_archivos(carpeta, inicio)] == ["IVA VENTAS - X - 05-10-2026 al 20-10-2026.xlsx"]
+    assert len(srv.listar_archivos(carpeta)) == 2  # sin filtro: todo menos el bloqueo de Excel
+
+
+def test_no_se_puede_bajar_un_archivo_de_otro_control(entorno, tmp_path, monkeypatch):
+    client, _ = entorno
+    ej = _ejecucion(tmp_path)
+    ajeno = "IVA COMPRAS - de otro control.xlsx"
+    (tmp_path / "salidas" / "Cliente SA" / "102026" / ajeno).write_bytes(b"x")
+    monkeypatch.setattr(dialogos, "guardar_como", lambda *a, **k: tmp_path / "copia.xlsx")
+
+    r = client.post(f"/api/ejecuciones/{ej.id}/clientes/0/archivos/{ajeno}/guardar")
+
+    assert r.status_code == 404
+
+
+def test_ventas_y_compras_van_en_subcarpetas(tmp_path):
+    origen = tmp_path / "salidas" / "Cliente SA" / "112026"
+    origen.mkdir(parents=True)
+    nombres = [
+        "Mis comprobantes - Emitidos - X - 11-26 al 11-26.xlsx",
+        "Mis comprobantes - Recibidos - X - 11-26 al 11-26.xlsx",
+        "IVA VENTAS - X - 01-11-2026 al 30-11-2026.xlsx",
+        "IVA COMPRAS - X - 01-11-2026 al 30-11-2026.xlsx",
+        "AUX - Control de facturas Ventas con AFIP - 11-26 - X.xlsx",
+        "AUX - Control de facturas Compras con AFIP - 11-26 - X.xlsx",
+    ]
+    for n in nombres:
+        (origen / n).write_bytes(b"x")
+    ej = srv.Ejecucion(
+        id="ambas1", usuario="t", estado="finalizada",
+        parametros={"desde": "01/11/2026", "hasta": "30/11/2026", "ventas": True, "compras": True},
+        clientes=[srv.ClienteEnCurso("Cliente SA", [], carpeta=str(origen), archivos=srv.listar_archivos(origen))],
+    )
+    destino = tmp_path / "elegida"
+    destino.mkdir()
+
+    r = srv.exportar_archivos(ej, 0, destino)
+
+    carpeta = destino / "112026"
+    assert r["fallas"] == [] and len(r["copiados"]) == 6
+    assert sorted(p.name for p in carpeta.iterdir()) == ["Compras", "Ventas"]
+    assert sorted(p.name for p in (carpeta / "Ventas").iterdir()) == sorted(n for n in nombres if "Emitidos" in n or "VENTAS" in n or "Ventas" in n)
+    assert sorted(p.name for p in (carpeta / "Compras").iterdir()) == sorted(n for n in nombres if "Recibidos" in n or "COMPRAS" in n or "Compras" in n)
+
+
+def test_una_sola_operacion_queda_sin_subcarpetas(entorno, tmp_path, monkeypatch):
+    client, _ = entorno
+    ej = _ejecucion(tmp_path)  # solo los parámetros de fecha: ni ventas ni compras juntas
+    ej.parametros.update({"ventas": True, "compras": False})
+    destino = tmp_path / "elegida"
+    destino.mkdir()
+    monkeypatch.setattr(dialogos, "elegir_carpeta", lambda *a, **k: destino)
+
+    r = client.post("/api/ejecuciones/exp123/clientes/0/exportar")
+
+    assert r.status_code == 200, r.text
+    assert sorted(p.name for p in (destino / "102026").iterdir()) == sorted(r.json()["copiados"])
+
+
+def test_operacion_de_cada_archivo():
+    assert srv.operacion_de("Mis comprobantes - Emitidos - X - 10-26 al 10-26.xlsx") == "Ventas"
+    assert srv.operacion_de("Mis comprobantes - Recibidos - X - 10-26 al 10-26.xlsx") == "Compras"
+    assert srv.operacion_de("IVA VENTAS - X.xlsx") == "Ventas"
+    assert srv.operacion_de("IVA COMPRAS - X.xlsx") == "Compras"
+    assert srv.operacion_de("AUX - Control de facturas Compras con AFIP - 10-26 - X.xlsx") == "Compras"
+    assert srv.operacion_de("otro.xlsx") is None

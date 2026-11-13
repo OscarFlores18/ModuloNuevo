@@ -18,7 +18,6 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...core import config, dialogos
-from ...core.paths import SUBCARPETA_CONTROL
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...services import ejecuciones as ejecuciones_srv
@@ -219,7 +218,6 @@ def ajustes(
     datos = creds.obtener()
     return {
         "carpeta_salida": str(config.OUTPUT_DIR),
-        "subcarpeta": SUBCARPETA_CONTROL,
         "pausa_segundos": config.PAUSA_ENTRE_CLIENTES_S,
         "xubio": {
             "usuario": datos["user"],
@@ -355,8 +353,8 @@ def guardar_archivo_ejecucion(ejecucion_id: str, indice: int, nombre: str) -> di
 @router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/exportar")
 def exportar_archivos_ejecucion(ejecucion_id: str, indice: int) -> dict:
     """Abre en la PC del servidor la ventana para elegir carpeta. Con una carpeta
-    elegida, los archivos van a `<elegida>/<mmaaaa>/Control de Facturas`; si se
-    cierra sin elegir, a `<Descargas>/<Cliente>/<mmaaaa>/Control de Facturas`."""
+    elegida, los archivos van a `<elegida>/<mmaaaa>/`; si se cierra sin elegir,
+    a `<Descargas>/<Cliente>/<mmaaaa>/`."""
     try:
         ej = ejecuciones_srv.obtener(ejecucion_id)
         ejecuciones_srv.archivos_del_cliente(ej, indice)  # que haya algo antes de abrir la ventana

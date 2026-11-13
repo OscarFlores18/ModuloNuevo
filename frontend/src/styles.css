@@ -138,6 +138,18 @@ code {
   border-radius: 8px;
 }
 
+/* Acciones chicas dentro de títulos y cabeceras de listas */
+.mf-btn-mini {
+  min-height: 28px;
+  gap: 5px;
+  padding: 3px 11px;
+  border-radius: 7px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
 .mf-btn-link {
   background: none;
   border: 0;
@@ -183,8 +195,10 @@ code {
   color: var(--color-tenue);
 }
 
-.mf-input[aria-invalid='true'] {
+.mf-input[aria-invalid='true'],
+.mf-select[aria-invalid='true'] {
   border-color: var(--color-error);
+  box-shadow: 0 0 0 3px rgba(197, 48, 48, 0.12);
 }
 
 

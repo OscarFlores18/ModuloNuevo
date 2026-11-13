@@ -7,14 +7,9 @@ import { CuitPipe } from '../../core/cuit.pipe';
 import {
   aniosRecientes,
   isoADmy,
-  mesAnterior,
   nombreDelMes,
-  nombreDelTrimestre,
   rangoDelAnio,
   rangoDelMes,
-  rangoDelTrimestre,
-  trimestreAnterior,
-  trimestresRecientes,
 } from '../../core/fechas';
 import { Ajustes, Cliente, PasoId, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
@@ -24,31 +19,13 @@ import { SesionService } from '../../core/services/sesion.service';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 
-type ModoPeriodo = 'mes' | 'trimestre' | 'anio' | 'rango';
+type ModoPeriodo = 'mes' | 'anio' | 'rango';
 type Operacion = 'ventas' | 'compras' | 'ambas';
 
 /** Los tres pasos (ARCA -> Xubio -> Auditoría) se hacen siempre: no se eligen ni se muestran. */
 const TODOS_LOS_PASOS: Record<PasoId, boolean> = { arca: true, xubio: true, auditoria: true };
 
-/**
- * Lo que se recuerda en este navegador (nunca la contraseña). Los Excel quedan
- * en la carpeta del servidor (CARPETA_SALIDA); cada uno elige dónde guardarlos al bajarlos.
- */
-interface Preferencias {
-  operaciones: { ventas: boolean; compras: boolean };
-  clientes: string[];
-}
-
-const CLAVE_PREFS = 'control-fct.formulario';
-
-function leerPreferencias(): Partial<Preferencias> {
-  try {
-    return JSON.parse(localStorage.getItem(CLAVE_PREFS) ?? '{}') as Partial<Preferencias>;
-  } catch {
-    return {};
-  }
-}
-
+/** Nada viene precargado: clientes, período y operaciones se eligen cada vez. */
 // --- Validadores -------------------------------------------------------------------
 
 /** Al menos un control del grupo en true (operaciones). */
@@ -79,15 +56,12 @@ export class NuevoControl {
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly sesion = inject(SesionService);
 
-  protected readonly trimestres = trimestresRecientes();
   protected readonly anios = aniosRecientes();
   protected readonly tiposPeriodo: { id: ModoPeriodo; texto: string }[] = [
     { id: 'mes', texto: 'Mes completo' },
-    { id: 'trimestre', texto: 'Trimestre' },
     { id: 'anio', texto: 'Año completo' },
     { id: 'rango', texto: 'Elegir fecha' },
   ];
-  private readonly prefs = leerPreferencias();
 
   /** La credencial de Xubio recordada en el servidor: si coincide el usuario, la clave puede ir vacía. */
   private readonly ajustes = signal<Ajustes | null>(null);
@@ -104,20 +78,19 @@ export class NuevoControl {
 
   protected readonly form = this.fb.nonNullable.group({
     /** Nombres en el orden en que se procesan. */
-    clientes: this.fb.nonNullable.control<string[]>(this.prefs.clientes ?? [], listaNoVacia),
+    clientes: this.fb.nonNullable.control<string[]>([], listaNoVacia),
     periodo: this.fb.nonNullable.group(
       {
         modo: this.fb.nonNullable.control<ModoPeriodo>('mes'),
-        mes: [mesAnterior(), Validators.required],
-        trimestre: [{ value: trimestreAnterior(), disabled: true }, Validators.required],
-        anio: [{ value: String(new Date().getFullYear() - 1), disabled: true }, Validators.required],
+        mes: ['', Validators.required],
+        anio: [{ value: '', disabled: true }, Validators.required],
         desde: [{ value: '', disabled: true }, Validators.required],
         hasta: [{ value: '', disabled: true }, Validators.required],
       },
       { validators: rangoOrdenado },
     ),
     operaciones: this.fb.nonNullable.group(
-      { ventas: this.prefs.operaciones?.ventas ?? true, compras: this.prefs.operaciones?.compras ?? false },
+      { ventas: false, compras: false },
       { validators: alMenosUno },
     ),
     xubio: this.fb.nonNullable.group({ usuario: '', clave: '', recordar: false }, { validators: this.xubioCompleto }),
@@ -164,7 +137,6 @@ export class NuevoControl {
     const p = this.valor().periodo;
     if (!p) return null;
     if (p.modo === 'mes') return rangoDelMes(p.mes ?? '');
-    if (p.modo === 'trimestre') return rangoDelTrimestre(p.trimestre ?? '');
     if (p.modo === 'anio') return rangoDelAnio(p.anio ?? '');
     const desde = isoADmy(p.desde ?? '');
     const hasta = isoADmy(p.hasta ?? '');
@@ -183,7 +155,6 @@ export class NuevoControl {
     const per = this.periodo();
     const nombres: Record<ModoPeriodo, () => string> = {
       mes: () => nombreDelMes(v.periodo?.mes ?? ''),
-      trimestre: () => nombreDelTrimestre(v.periodo?.trimestre ?? ''),
       anio: () => `año ${v.periodo?.anio}`,
       rango: () => (per ? `${per.desde} – ${per.hasta}` : ''),
     };
@@ -219,24 +190,13 @@ export class NuevoControl {
     const { periodo } = this.form.controls;
 
     // Cada tipo de período habilita solo sus campos (el resto ni se valida ni se usa).
-    const { mes, trimestre, anio, desde, hasta } = periodo.controls;
-    const campos: Record<ModoPeriodo, AbstractControl[]> = { mes: [mes], trimestre: [trimestre], anio: [anio], rango: [desde, hasta] };
+    const { mes, anio, desde, hasta } = periodo.controls;
+    const campos: Record<ModoPeriodo, AbstractControl[]> = { mes: [mes], anio: [anio], rango: [desde, hasta] };
     periodo.controls.modo.valueChanges.pipe(startWith(periodo.controls.modo.value), takeUntilDestroyed(this.destroyRef)).subscribe((modo) => {
       for (const [m, lista] of Object.entries(campos)) {
         for (const c of lista) m === modo ? c.enable({ emitEvent: false }) : c.disable({ emitEvent: false });
       }
       periodo.updateValueAndValidity();
-    });
-
-    // Lo elegido se recuerda para la próxima vez (sin contraseñas).
-    this.form.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
-      const v = this.form.getRawValue();
-      const prefs: Preferencias = { operaciones: v.operaciones, clientes: v.clientes };
-      try {
-        localStorage.setItem(CLAVE_PREFS, JSON.stringify(prefs));
-      } catch {
-        // Sin almacenamiento: no se recuerda.
-      }
     });
   }
 

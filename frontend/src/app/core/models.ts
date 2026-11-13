@@ -26,7 +26,6 @@ export interface ClienteEntrada {
 
 export interface Ajustes {
   carpeta_salida: string;
-  subcarpeta: string;
   pausa_segundos: number;
   xubio: { usuario: string; tiene_clave: boolean; recordar: boolean; del_servidor: boolean };
 }

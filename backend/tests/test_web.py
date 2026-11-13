@@ -94,7 +94,6 @@ def sin_pausa(monkeypatch):
 def test_ajustes(entorno):
     client, _ = entorno
     datos = client.get("/api/ajustes").json()
-    assert datos["subcarpeta"] == "Control de Facturas"
     assert isinstance(datos["pausa_segundos"], int)
     assert set(datos["xubio"]) == {"usuario", "tiene_clave", "recordar", "del_servidor"}
 
