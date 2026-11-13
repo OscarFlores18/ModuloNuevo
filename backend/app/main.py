@@ -1,94 +1,134 @@
-import logging
+"""Punto de entrada del backend.
+
+    uvicorn backend.app.main:app --reload --port 8000
+"""
+
+from __future__ import annotations
+
+import base64
+import secrets
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
 
-from app.api.rutas import router
-from app.core.config import settings
-from app.core.usuarios import Usuario, canjear_pase, como_yo, conectado, usuario_actual
-from app.services.clientes import ErrorClientes
-from app.services.ejecuciones import ErrorEjecucion
-
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-
-app = FastAPI(title="Control de Facturas · ARCA vs. Xubio")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "X-Usuario-Id", "X-Usuario-Nombre", "X-Usuario-Nivel", "X-Usuario-Modulos"],
-    expose_headers=["Content-Disposition", "Content-Length"],
-)
-
-app.include_router(router, prefix="/api", dependencies=[Depends(usuario_actual)])
+from .api.router import api_router
+from .core import config
+from .core.errors import BotError
+from .core.logging import configure_logging, get_logger
+from .core.storage import ClientesRepository, CredencialesXubioRepository
+from .services.jobs import JobManager
 
 
-@app.middleware("http")
-async def encabezados_de_seguridad(request: Request, siguiente):
-    respuesta = await siguiente(request)
-    respuesta.headers.setdefault("X-Content-Type-Options", "nosniff")
-    respuesta.headers.setdefault("Referrer-Policy", "no-referrer")
-    return respuesta
+def _servir_front(app: FastAPI, carpeta: Path) -> None:
+    """Sirve el build de Angular en el mismo dominio que la API (sin CORS).
 
-
-def _error(mensaje: str, estado: int, codigo: str) -> JSONResponse:
-    return JSONResponse({"detail": {"codigo": codigo, "mensaje": mensaje, "errores": []}}, status_code=estado)
-
-
-@app.exception_handler(ErrorClientes)
-def error_clientes(_: Request, e: ErrorClientes) -> JSONResponse:
-    return _error(e.mensaje, e.estado, "CLIENTES")
-
-
-@app.exception_handler(ErrorEjecucion)
-def error_ejecucion(_: Request, e: ErrorEjecucion) -> JSONResponse:
-    return _error(e.mensaje, e.estado, "EJECUCION")
-
-
-@app.get("/api/salud")
-def salud() -> dict:
-    return {"status": "ok"}
-
-
-@app.get("/api/yo")
-def yo(usuario: Usuario = Depends(usuario_actual)) -> dict:
-    return {**como_yo(usuario), "conectado": conectado()}
-
-
-class Pase(BaseModel):
-    pase: str
-
-
-@app.post("/api/sesion/entrar")
-def entrar(datos: Pase) -> dict:
-    token, vence, usuario = canjear_pase(datos.pase)
-    return {"token": token, "expira": vence, "usuario": {**usuario, "conectado": True}}
-
-
-def _servir_front(carpeta: Path) -> None:
-    """El build del front en el mismo dominio que la API (sin CORS)."""
+    El front usa `apiUrl: '/api'` en producción, así que alcanza con montar el
+    `dist` del frontend. Si no hay build, la API sigue funcionando sola.
+    """
     raiz = carpeta.resolve()
     indice = raiz / "index.html"
     if not indice.is_file():
-        logger.warning("FRONT_DIST=%s no tiene index.html: se sirve solo la API.", raiz)
+        get_logger().warning(
+            "No hay build del frontend en %s: se sirve solo la API.", raiz
+        )
         return
 
     @app.get("/{ruta:path}", include_in_schema=False)
     def front(ruta: str) -> FileResponse:
         if ruta == "api" or ruta.startswith("api/"):
-            raise HTTPException(404)
+            raise HTTPException(status_code=404)
         archivo = (raiz / ruta).resolve()
         if ruta and archivo.is_file() and archivo.is_relative_to(raiz):
-            return FileResponse(archivo, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+            return FileResponse(archivo)
         return FileResponse(indice, headers={"Cache-Control": "no-cache"})
 
 
-if settings.FRONT_DIST and Path(settings.FRONT_DIST).is_dir():
-    _servir_front(Path(settings.FRONT_DIST))
+def _proteger(app: FastAPI) -> None:
+    """Autenticación básica opcional (`MODULONUEVO_BASIC_AUTH=usuario:clave`).
+
+    En modo local no hay autenticación. Para un despliegue público conviene
+    definirla: el frontend y la API piden usuario y clave una sola vez.
+    """
+
+    if not config.BASIC_AUTH:
+        return
+
+    @app.middleware("http")
+    async def _auth(request: Request, call_next):
+        # El health check de Render tiene que quedar abierto.
+        if request.url.path == "/health":
+            return await call_next(request)
+        cabecera = request.headers.get("authorization", "")
+        if cabecera.startswith("Basic "):
+            try:
+                credenciales = base64.b64decode(cabecera[6:], validate=True).decode(
+                    "utf-8"
+                )
+            except Exception:
+                credenciales = ""
+            if secrets.compare_digest(credenciales, config.BASIC_AUTH):
+                return await call_next(request)
+        return Response(
+            status_code=401,
+            content="Autenticación requerida",
+            headers={"WWW-Authenticate": 'Basic realm="Control de Facturas"'},
+        )
+
+
+def create_app() -> FastAPI:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        config.ensure_dirs()
+        configure_logging(config.LOG_DIR)
+        logger = get_logger()
+        logger.info("Iniciando backend. data=%s output=%s", config.DATA_DIR, config.OUTPUT_DIR)
+
+        clientes = ClientesRepository(config.CONFIG_PATH, config.XUBIO_CRED_PATH)
+        credenciales_xubio = CredencialesXubioRepository(config.XUBIO_CRED_PATH)
+        manager = JobManager(clientes, credenciales_xubio, base_salida=config.OUTPUT_DIR)
+
+        app.state.clientes = clientes
+        app.state.credenciales_xubio = credenciales_xubio
+        app.state.jobs = manager
+        manager.start()
+
+        try:
+            yield
+        finally:
+            logger.info("Deteniendo backend...")
+            manager.stop()
+
+    app = FastAPI(
+        title="Control de Facturas - Backend",
+        description="Migración a web del motor de bots y auditoría.",
+        version="1.0.0",
+        lifespan=lifespan,
+        docs_url=None,     # Desactiva /docs (Swagger)
+        redoc_url=None,    # Desactiva /redoc
+        openapi_url=None,  # Desactiva /openapi.json
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins(),
+        # Cualquier puerto de localhost en desarrollo (ng serve elige uno libre).
+        allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.exception_handler(BotError)
+    async def _bot_error(_: Request, exc: BotError) -> JSONResponse:
+        return JSONResponse(status_code=400, content=exc.to_dict())
+
+    _proteger(app)
+    app.include_router(api_router)
+    _servir_front(app, config.FRONT_DIST)
+    return app
+
+
+app = create_app()

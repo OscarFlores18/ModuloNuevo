@@ -1,142 +1,148 @@
-"""La API con bots simulados: no abre Chrome ni toca el config.json real."""
+from __future__ import annotations
 
-import json
 import time
-from types import SimpleNamespace
 
-import pytest
-from fastapi.testclient import TestClient
-
-from app import motor
-from app.core.config import settings
-from app.main import app
-from app.services import ejecuciones
+from backend.app.core.models import JobProgress, JobResult
 
 
-@pytest.fixture
-def entorno(tmp_path, monkeypatch):
-    config = tmp_path / "config.json"
-    config.write_text(json.dumps({"clientes": {
-        "Beta SA": {"arca": {"cuit_login": "20111111112", "clave": "secreta", "cuit_representado": "30222222223"},
-                    "xubio": {"url": "https://xubio.com/x"}, "agip": {"clave": "otra"}},
-        "alfa srl": {"arca": {}, "xubio": {}},
-    }}), encoding="utf-8")
-    salida = tmp_path / "salida"
-    salida.mkdir()
-    monkeypatch.setattr(settings, "CONFIG_CLIENTES", config)
-    monkeypatch.setattr(settings, "CREDENCIALES_XUBIO", tmp_path / "xubio.json")
-    monkeypatch.setattr(settings, "CARPETA_SALIDA", salida)
-    monkeypatch.setattr(settings, "PAUSA_ENTRE_CLIENTES_S", 1)
-    monkeypatch.setattr(settings, "XUBIO_USUARIO", "")
-    monkeypatch.setattr(settings, "XUBIO_CLAVE", "")
-    ejecuciones._ejecuciones.clear()
-    ejecuciones._orden.clear()
-
-    def arca(cuit, clave, repres, desde, hasta, tipo, cliente, carpeta, **_):
-        print(f"   -> ARCA {tipo} {cliente}")
-        (carpeta and open(f"{carpeta}/Mis comprobantes - {tipo} - {cliente}.xlsx", "w").close())
-
-    def xubio(usuario, clave, cliente, url, *a):
-        print("      [ERROR]: Falló extracción Xubio Ventas: captcha")
-
-    def cruce(cliente, operacion, *a):
-        raise Exception("No se encontró el archivo de Xubio esperado")
-
-    falsos = motor.Bots(arca=SimpleNamespace(ejecutar_extraccion=arca), xubio=SimpleNamespace(ejecutar_extraccion=xubio),
-                        auditor=SimpleNamespace(procesar_cruce=cruce))
-    monkeypatch.setattr(motor, "cargar", lambda: falsos)
-    return SimpleNamespace(config=config, salida=salida, cliente=TestClient(app))
+def _job_valido(**cambios):
+    datos = {
+        "clientes": ["Acme"],
+        "fecha_desde": "01/03/2025",
+        "fecha_hasta": "31/03/2025",
+        "ventas": True,
+        "compras": False,
+        "pasos": ["arca"],
+    }
+    datos.update(cambios)
+    return datos
 
 
-def esperar(c, ej_id, hasta=("finalizada", "cancelada", "error"), segundos=10):
-    fin = time.time() + segundos
-    while time.time() < fin:
-        d = c.get(f"/api/ejecuciones/{ej_id}").json()
-        if d["estado"] in hasta:
-            return d
+def test_health(entorno):
+    client, _ = entorno
+    respuesta = client.get("/health")
+    assert respuesta.status_code == 200
+    assert respuesta.json()["status"] == "ok"
+
+
+def test_crud_clientes(entorno):
+    client, _ = entorno
+
+    assert client.get("/api/clientes").json() == []
+
+    alta = client.post(
+        "/api/clientes",
+        json={
+            "nombre": "Acme",
+            "arca": {"cuit_login": "20", "clave": "x", "cuit_representado": "21"},
+        },
+    )
+    assert alta.status_code == 201, alta.text
+    assert alta.json()["nombre"] == "Acme"
+    assert alta.json()["arca"]["tiene_clave"] is True
+    assert "clave" not in alta.json()["arca"]
+
+    listado = client.get("/api/clientes").json()
+    assert [c["nombre"] for c in listado] == ["Acme"]
+
+    editado = client.put(
+        "/api/clientes/Acme",
+        json={
+            "nombre": "Acme",
+            "arca": {"cuit_login": "20", "clave": "", "cuit_representado": "21"},
+        },
+    )
+    assert editado.status_code == 200
+    # Una clave vacía al editar conserva la que había.
+    assert editado.json()["arca"]["tiene_clave"] is True
+
+    renombrado = client.post("/api/clientes/Acme/renombrar", json={"nuevo": "Acme 2"})
+    assert renombrado.status_code == 200
+    assert client.get("/api/clientes/Acme").status_code == 404
+
+    assert client.delete("/api/clientes/Acme 2").status_code == 204
+    assert client.get("/api/clientes").json() == []
+
+
+def test_conserva_claves_extra(entorno):
+    client, _ = entorno
+    client.post(
+        "/api/clientes",
+        json={"nombre": "Acme", "arca": {"cuit_login": "20"}, "agip": {"numero": "123"}},
+    )
+    datos = client.get("/api/clientes/Acme").json()
+    assert datos["agip"] == {"numero": "123"}
+
+
+def test_credenciales_no_devuelven_password(entorno):
+    client, _ = entorno
+
+    respuesta = client.put(
+        "/api/xubio/credenciales",
+        json={"user": "operador", "pass": "super-secreta", "recordar": True},
+    )
+    assert respuesta.status_code == 200
+    assert respuesta.json() == {
+        "user": "operador",
+        "recordar": True,
+        "tiene_pass": True,
+    }
+
+    guardadas = client.get("/api/xubio/credenciales").json()
+    assert "super-secreta" not in str(guardadas)
+
+
+def test_job_con_cliente_inexistente_da_400(entorno):
+    client, _ = entorno
+    respuesta = client.post("/api/jobs", json=_job_valido(clientes=["NoExiste"]))
+    assert respuesta.status_code == 400
+
+
+def test_job_con_fecha_invalida_da_422(cliente_demo):
+    respuesta = cliente_demo.post(
+        "/api/jobs", json=_job_valido(fecha_desde="2025-03-01")
+    )
+    assert respuesta.status_code == 422
+
+
+def test_job_completa_y_expone_archivos(cliente_demo, monkeypatch, tmp_path):
+    archivo = tmp_path / "salidas" / "AUX - Control de facturas.xlsx"
+    archivo.parent.mkdir(parents=True, exist_ok=True)
+    archivo.write_bytes(b"contenido-xlsx")
+
+    def fake_ejecutar(**kwargs):
+        kwargs["log"]("      [OK] archivo de prueba")
+        kwargs["on_progreso"](
+            JobProgress(actual=1, total=1, cliente="Acme", paso="fin")
+        )
+        return JobResult(archivos=[str(archivo)])
+
+    monkeypatch.setattr(
+        "backend.app.services.jobs.ejecutar_control_facturas", fake_ejecutar
+    )
+
+    alta = cliente_demo.post("/api/jobs", json=_job_valido())
+    assert alta.status_code == 201, alta.text
+    job_id = alta.json()["id"]
+
+    estado = None
+    for _ in range(100):
+        estado = cliente_demo.get(f"/api/jobs/{job_id}").json()
+        if estado["status"] in {"succeeded", "failed", "partial", "cancelled"}:
+            break
         time.sleep(0.05)
-    raise AssertionError(f"quedó en {d['estado']}")
 
+    assert estado is not None
+    assert estado["status"] == "succeeded"
+    assert estado["progress"]["actual"] == 1
+    assert [a["nombre"] for a in estado["files"]] == [archivo.name]
+    assert "ruta" not in estado["files"][0]
 
-def test_clientes_no_exponen_la_clave_y_conservan_lo_demas(entorno):
-    c = entorno.cliente
-    lista = c.get("/api/clientes").json()
-    assert [x["nombre"] for x in lista] == ["alfa srl", "Beta SA"]
-    assert lista[1]["arca"]["tiene_clave"] is True
-    assert "secreta" not in json.dumps(lista)
-    assert "Clave fiscal" in lista[0]["faltantes"]
+    logs = cliente_demo.get(f"/api/jobs/{job_id}/logs").json()
+    assert any("archivo de prueba" in entrada["message"] for entrada in logs)
 
-    r = c.put("/api/clientes/Beta SA", json={"nombre": "Beta S.A.", "arca": {"cuit_login": "20-11111111-2", "clave": "", "cuit_representado": "30222222223"}, "xubio": {"url": "https://xubio.com/y"}})
-    assert r.status_code == 200, r.text
-    guardado = json.loads(entorno.config.read_text(encoding="utf-8"))["clientes"]
-    assert "Beta SA" not in guardado
-    assert guardado["Beta S.A."]["arca"]["clave"] == "secreta"  # vacía = se deja la que había
-    assert guardado["Beta S.A."]["agip"] == {"clave": "otra"}
+    descarga = cliente_demo.get(f"/api/jobs/{job_id}/files/{archivo.name}")
+    assert descarga.status_code == 200
+    assert descarga.content == b"contenido-xlsx"
 
-    assert c.post("/api/clientes", json={"nombre": "ALFA SRL"}).status_code == 409
-    assert c.post("/api/clientes", json={"nombre": "Gama", "arca": {"cuit_login": "123"}}).status_code == 422
-    assert c.delete("/api/clientes/alfa srl").status_code == 204
-
-
-def test_empleado_no_edita_clientes(entorno):
-    r = entorno.cliente.post("/api/clientes", json={"nombre": "X"},
-                             headers={"X-Usuario-Id": "u", "X-Usuario-Nivel": "10", "X-Usuario-Modulos": "Impuestos/Control de facturas"})
-    assert r.status_code == 403
-
-
-def test_ejecucion_completa_con_pausa_y_estados(entorno):
-    c = entorno.cliente
-    r = c.post("/api/ejecuciones", json={"clientes": ["Beta SA", "alfa srl"], "desde": "01/10/2026", "hasta": "31/10/2026",
-                                         "ventas": True, "compras": False, "xubio": {"usuario": "yo@x.com", "clave": "k"}})
-    assert r.status_code == 201, r.text
-    ej = r.json()
-    assert [p["id"] for p in ej["detalle_clientes"][0]["pasos"]] == ["arca_ventas", "xubio", "auditoria_ventas"]
-
-    # Otra mientras corre: no.
-    assert c.post("/api/ejecuciones", json={"clientes": ["Beta SA"], "desde": "01/10/2026", "hasta": "31/10/2026"}).status_code == 409
-
-    d = esperar(c, ej["id"], hasta=("esperando",))
-    assert d["pausa"]["cliente"] == "Beta SA"
-    c.post(f"/api/ejecuciones/{ej['id']}/respuesta", json={"accion": "no_preguntar"})
-
-    d = esperar(c, ej["id"])
-    assert d["estado"] == "finalizada"
-    beta = d["detalle_clientes"][0]
-    assert [p["estado"] for p in beta["pasos"]] == ["ok", "aviso", "error"]
-    assert beta["estado"] == "con_errores"
-    assert beta["carpeta"].endswith("102026\\Control de Facturas") or beta["carpeta"].endswith("102026/Control de Facturas")
-    assert beta["archivos"][0]["tipo"] == "arca"
-
-    archivo = c.get(f"/api/ejecuciones/{ej['id']}/clientes/0/archivos/{beta['archivos'][0]['nombre']}")
-    assert archivo.status_code == 200
-    assert c.get(f"/api/ejecuciones/{ej['id']}/clientes/0/archivos/..%2F..%2Fconfig.json").status_code == 404
-
-    # El log se pide incremental.
-    total = d["log_total"]
-    assert c.get(f"/api/ejecuciones/{ej['id']}?log_desde={total}").json()["log"] == []
-    # Sin emojis y con tipos.
-    assert any(l["tipo"] == "error" for l in d["log"])
-
-
-def test_cancelar_en_la_pausa(entorno):
-    c = entorno.cliente
-    ej = c.post("/api/ejecuciones", json={"clientes": ["Beta SA", "alfa srl"], "desde": "01/10/2026", "hasta": "31/10/2026",
-                                          "pasos": {"arca": True, "xubio": False, "auditoria": False}}).json()
-    esperar(c, ej["id"], hasta=("esperando",))
-    c.post(f"/api/ejecuciones/{ej['id']}/cancelar")
-    d = esperar(c, ej["id"])
-    assert d["estado"] == "cancelada"
-    assert d["detalle_clientes"][1]["estado"] == "cancelado"
-
-
-def test_validaciones(entorno):
-    c = entorno.cliente
-    base = {"clientes": ["Beta SA"], "desde": "01/10/2026", "hasta": "31/10/2026"}
-    assert c.post("/api/ejecuciones", json={**base, "clientes": []}).status_code == 422
-    assert c.post("/api/ejecuciones", json={**base, "desde": "2026-10-01"}).status_code == 422
-    assert c.post("/api/ejecuciones", json={**base, "hasta": "01/09/2026"}).status_code == 422
-    assert c.post("/api/ejecuciones", json={**base, "ventas": False, "compras": False}).status_code == 422
-    # Xubio sin credenciales.
-    r = c.post("/api/ejecuciones", json=base)
-    assert r.status_code == 422 and "Xubio" in r.json()["detail"]["mensaje"]
-    assert c.post("/api/ejecuciones", json={**base, "carpeta": "Z:/no/existe/123"}).status_code == 422
+    assert cliente_demo.get(f"/api/jobs/{job_id}/files/otro.xlsx").status_code == 404

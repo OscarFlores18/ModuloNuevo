@@ -1,0 +1,6 @@
+# Versiones verificadas en este equipo (Python 3.15.2 / Windows)
+customtkinter==6.0.0
+pandas==3.1.1
+numpy==2.5.4
+openpyxl==3.1.5
+playwright==1.65.1

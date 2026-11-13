@@ -8,6 +8,10 @@ de una vez, ver claude/diagnostico-bug-fecha-anual.md), alcanza con
 corregir este único archivo en vez de dos copias que pueden desalinearse.
 """
 
+from typing import Callable
+
+from ..core.errors import EmpresaNoEncontrada
+
 
 def crear_matar_popup(page):
     """
@@ -26,8 +30,9 @@ def crear_matar_popup(page):
     return matar_popup
 
 
-def login_xubio(page, usuario, password, matar_popup):
+def login_xubio(page, usuario, password, matar_popup, log: Callable[[str], None] = print):
     """ Login completo contra connect.visma.com / Xubio. """
+    log(f"   -> Iniciando sesión en Xubio con el usuario {usuario}...")
     page.goto("https://connect.visma.com/?returnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fredirect_uri%3Dhttps%253A%252F%252Fxubio.com%252FNXV%252FvismaConnect%252Fcallback%26response_type%3Dcode%2520id_token%26scope%3Dopenid%2520email%26response_mode%3Dform_post%26client_id%3Dxubio%26state%3Dxubio%26nonce%3D6890436f8d7e8befea5fd4302e574b5d")
     try:
         boton_cookies = page.wait_for_selector("#onetrust-accept-btn-handler", timeout=5000)
@@ -59,7 +64,7 @@ def login_xubio(page, usuario, password, matar_popup):
     matar_popup()
 
 
-def cambiar_empresa(page, nombre_cliente, matar_popup):
+def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None] = print):
     """
     Verifica la empresa activa en Xubio y, si no coincide con nombre_cliente,
     la cambia usando el buscador "Buscar Empresa" del selector de compañía
@@ -86,8 +91,10 @@ def cambiar_empresa(page, nombre_cliente, matar_popup):
         or empresa_actual.lower() in nombre_cliente.lower()
     )
     if ya_esta_correcta:
+        log(f"   -> La empresa activa ya es '{empresa_actual}'.")
         return
 
+    log(f"   -> Cambiando de empresa: '{empresa_actual}' -> '{nombre_cliente}'...")
     matar_popup()
 
     # 2) Abrir el selector de compañía.
@@ -135,16 +142,17 @@ def cambiar_empresa(page, nombre_cliente, matar_popup):
         objetivo = filtrar_y_ubicar(nombre_cliente.split()[0])
 
     if objetivo is None:
-        raise Exception(
+        raise EmpresaNoEncontrada(
             f"No se encontró la empresa '{nombre_cliente}' en el buscador de compañías de "
-            f"Xubio. Verificar que el nombre en config.json coincida con el nombre real en Xubio."
+            f"Xubio. Verificar que el nombre en config.json coincida con el nombre real en Xubio.",
+            detalle={"cliente": nombre_cliente, "empresa_actual": empresa_actual},
         )
 
     try:
         objetivo.click(timeout=4000)
-    except:
+    except Exception:
         # Si falla, es porque el popup interceptó el click en ese preciso milisegundo
-        print("      [AVISO]: Popup interceptó el click. Matando y reintentando...")
+        log("      [AVISO]: Popup interceptó el click. Matando y reintentando...")
         matar_popup()
         objetivo.click(timeout=10000)
 

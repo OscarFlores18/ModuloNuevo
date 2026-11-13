@@ -1,6 +1,24 @@
+# Entornos
+.venv/
+venv/
 __pycache__/
 *.pyc
-# Claves fiscales de los clientes y la cuenta de Xubio: nunca a git.
+
+# Credenciales y configuración local (contienen datos fiscales en texto plano)
 config.json
 xubio_credenciales.json
+
+# Datos y salidas del backend
+backend/data/
+backend/logs/
+backend/salidas/
+
+# Salidas de las corridas
+*.xlsx
+*.csv
 debug_log.txt
+
+# Tests y herramientas
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

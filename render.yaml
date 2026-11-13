@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: control-de-facturas
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Los bots abren Chromium headless dentro del contenedor.
+      - key: MODULONUEVO_HEADLESS
+        value: "1"
+      - key: MODULONUEVO_CHROME_CHANNEL
+        value: ""
+      # Disco efímero: config.json, salidas y logs se pierden en cada deploy.
+      # Para conservarlos, montar un disco de Render en /data.
+      - key: MODULONUEVO_DATA_DIR
+        value: /data
+      - key: MODULONUEVO_OUTPUT_DIR
+        value: /data/salidas
+      - key: MODULONUEVO_LOG_DIR
+        value: /data/logs
+      # Usuario:clave para proteger el despliegue. Dejarlo vacío en el panel
+      # para que quede sin autenticación (solo para pruebas internas).
+      - key: MODULONUEVO_BASIC_AUTH
+        sync: false
