@@ -916,36 +916,6 @@ input[type='checkbox'] {
   filter: brightness(1.15);
 }
 
-/* --- Pasos fijos del control (se hacen siempre los tres) -------------------- */
-
-.mf-pasos {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-height: 42px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.mf-pasos-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 14px 5px 6px;
-  border: 1px solid rgba(37, 99, 235, 0.3);
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.08);
-  color: var(--color-acento-texto);
-  font-size: 0.95rem;
-  font-weight: 700;
-}
-
-.mf-pasos-flecha {
-  color: var(--color-tenue);
-}
-
 /* --- Entrada suave de las pantallas ---------------------------------------- */
 
 .mf-main > * {

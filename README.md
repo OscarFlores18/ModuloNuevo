@@ -53,17 +53,18 @@ Usa los puertos 8002/4210 para poder tenerlo abierto junto al módulo de Retenci
 
 ## Pantallas
 
-1. **Nuevo control** — en cuatro pasos numerados:
+1. **Nuevo control** — clientes, período, Ventas / Compras y la cuenta de Xubio:
    1. *Clientes*: «Disponibles» a la izquierda (buscador por nombre o CUIT), «A procesar» a la
       derecha, en el orden en que se van a procesar (se puede reordenar).
    2. *Período*: mes completo (por defecto el mes anterior) u otro rango de fechas.
-   3. *Qué controlar*: Ventas / Compras y los pasos ARCA → Xubio → Auditoría.
-   4. *Cuenta de Xubio y carpeta de salida* (en la computadora del servidor).
+   3. *Operaciones*: Ventas / Compras. Los pasos ARCA → Xubio → Auditoría se hacen siempre.
+   4. *Cuenta de Xubio*. Los Excel se generan en la carpeta del servidor (`CARPETA_SALIDA`).
 
    A la derecha, un resumen con lo que va a pasar y por qué todavía no se puede ejecutar.
 2. **Ejecuciones** — tarjetas de resumen (estado, procesados, con errores, archivos, duración),
    la tabla de clientes y, abajo, el detalle del cliente elegido: sus pasos, sus errores y los
-   Excel para bajar. Después, el registro de los bots. Entre cliente y
+   Excel para descargar: «Descargar» abre el diálogo para elegir la carpeta
+   (en Chrome/Edge; «Descargar todos» guarda todos en una carpeta elegida). Después, el registro de los bots. Entre cliente y
    cliente aparece la pausa con cuenta regresiva: *Continuar ahora*, *No preguntar más* o
    *Cancelar todo* (sin respuesta, sigue sola). Abajo, las últimas ejecuciones.
 3. **Clientes** — tarjetas (completos, con datos faltantes, sin clave), tabla con buscador y

@@ -3,6 +3,7 @@ import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { duracion, tamanoLegible } from '../../core/fechas';
 import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, estaActiva, mensajeDeError } from '../../core/models';
+import { guardarComo, guardarEnCarpeta } from '../../core/guardar-archivo';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
@@ -190,32 +191,34 @@ export class EjecucionPantalla {
     });
   }
 
+  /** Abre «Guardar como» para elegir la carpeta y después baja el archivo del servidor. */
   protected async descargar(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
-      const blob = await this.api.archivo(e.id, c.indice, archivo.nombre);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = archivo.nombre;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      if (await guardarComo(archivo.nombre, () => this.api.archivo(e.id, c.indice, archivo.nombre))) this.toast.ok('Archivo guardado', archivo.nombre);
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudo bajar ${archivo.nombre} de ${c.nombre}.`));
+      this.errorDescarga.set(mensajeDeError(err, `No se pudo descargar ${archivo.nombre} de ${c.nombre}.`));
     } finally {
       this.descargando.set(null);
     }
   }
 
-  protected async copiar(texto: string): Promise<void> {
+  /** Todos los archivos del cliente a una carpeta elegida en el diálogo. */
+  protected async descargarTodos(c: ClienteVista): Promise<void> {
+    const e = this.ej();
+    if (!e) return;
+    this.descargando.set(`${c.indice}/*`);
+    this.errorDescarga.set(null);
     try {
-      await navigator.clipboard.writeText(texto);
-      this.toast.ok('Ruta copiada', texto);
-    } catch {
-      this.toast.aviso('No se pudo copiar la ruta', texto);
+      const n = await guardarEnCarpeta(c.archivos.map((a) => ({ nombre: a.nombre, obtener: () => this.api.archivo(e.id, c.indice, a.nombre) })));
+      if (n !== null) this.toast.ok('Archivos guardados', `${n} archivo(s) de ${c.nombre}`);
+    } catch (err) {
+      this.errorDescarga.set(mensajeDeError(err, `No se pudieron descargar los archivos de ${c.nombre}.`));
+    } finally {
+      this.descargando.set(null);
     }
   }
 }

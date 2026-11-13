@@ -69,7 +69,7 @@
     </div>
   </section>
 
-  <!-- Período y operaciones (los pasos son fijos: solo se informan) -->
+  <!-- Período y operaciones -->
   <section class="mf-panel !py-3" aria-label="Parámetros">
     <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
       <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
@@ -97,21 +97,12 @@
         </div>
       </fieldset>
 
-      <div>
-        <div class="mf-campo-etiqueta">Se hacen siempre los 3 pasos</div>
-        <ol class="mf-pasos" aria-label="Pasos del control: se hacen siempre los tres">
-          @for (p of pasosInfo; track p.id; let n = $index) {
-            @if (n) { <li class="mf-pasos-flecha" aria-hidden="true">→</li> }
-            <li class="mf-pasos-item" [title]="p.detalle"><span class="mf-paso" aria-hidden="true">{{ n + 1 }}</span>{{ p.titulo }}</li>
-          }
-        </ol>
-      </div>
     </div>
   </section>
 
-  <!-- Xubio y carpeta -->
-  <section class="mf-panel !py-3" aria-label="Destino">
-    <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]">
+  <!-- Xubio -->
+  <section class="mf-panel !py-3" aria-label="Cuenta de Xubio">
+    <div class="grid gap-3 md:grid-cols-2">
       <ng-container formGroupName="xubio">
           <label class="mf-campo">
             <span>Usuario Xubio</span>
@@ -123,10 +114,6 @@
               [placeholder]="guardadaXubio() ? 'Guardada' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
           </label>
       </ng-container>
-      <label class="mf-campo">
-        <span>Carpeta de salida</span>
-        <input class="mf-input mono" type="text" formControlName="carpeta" spellcheck="false" [title]="ejemploCarpeta()" [attr.aria-invalid]="invalido('carpeta')" />
-      </label>
     </div>
     <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar cuenta de Xubio en el servidor</label>
   </section>

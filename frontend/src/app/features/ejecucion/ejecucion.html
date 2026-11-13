@@ -116,18 +116,18 @@
                 <div class="mt-3">
                   <button type="button" class="mf-btn mf-btn-suave" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
                     <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
-                    {{ carpetaAbierta(c.nombre) ? 'Cerrar Carpeta de Archivos' : 'Abrir Carpeta de Archivos' }}
+                    {{ carpetaAbierta(c.nombre) ? 'Ocultar archivos' : 'Ver archivos (' + c.archivos.length + ')' }}
                   </button>
 
                   @if (carpetaAbierta(c.nombre)) {
                     @if (errorDescarga(); as err) { <app-alerta class="mt-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
                     <div class="ej-carpeta">
-                      @if (c.carpeta) {
-                        <div class="ej-carpeta-ruta">
-                          <span class="mono min-w-0 flex-1 break-all">{{ c.carpeta }}</span>
-                          <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="copiar(c.carpeta)">Copiar ruta</button>
-                        </div>
-                      }
+                      <div class="ej-carpeta-ruta">
+                        <span class="mf-tenue min-w-0 flex-1">Al descargar, elegís la carpeta donde guardarlo.</span>
+                        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'">
+                          {{ descargando() === c.indice + '/*' ? 'Descargando…' : 'Descargar todos' }}
+                        </button>
+                      </div>
                       <ul class="ej-archivos">
                         @for (a of c.archivos; track a.nombre) {
                           @let clave = c.indice + '/' + a.nombre;
@@ -135,8 +135,8 @@
                             <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
                             <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
                             <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
-                            <button type="button" class="mf-btn mf-btn-chico" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Bajar ' + a.nombre">
-                              {{ descargando() === clave ? 'Bajando…' : 'Bajar' }}
+                            <button type="button" class="mf-btn mf-btn-chico" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
+                              {{ descargando() === clave ? 'Descargando…' : 'Descargar' }}
                             </button>
                           </li>
                         }

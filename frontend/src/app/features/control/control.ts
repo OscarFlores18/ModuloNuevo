@@ -4,7 +4,7 @@ import { AbstractControl, FormBuilder, ReactiveFormsModule, ValidationErrors, Va
 import { Router, RouterLink } from '@angular/router';
 import { startWith } from 'rxjs';
 import { CuitPipe } from '../../core/cuit.pipe';
-import { carpetaDelPeriodo, isoADmy, mesAnterior, nombreDelMes, rangoDelMes } from '../../core/fechas';
+import { isoADmy, mesAnterior, nombreDelMes, rangoDelMes } from '../../core/fechas';
 import { Ajustes, Cliente, PasoId, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
@@ -14,18 +14,12 @@ import { ToastService } from '../../core/ui/toast';
 
 type ModoPeriodo = 'mes' | 'rango';
 
-export const PASOS: { id: PasoId; titulo: string; detalle: string }[] = [
-  { id: 'arca', titulo: 'ARCA', detalle: 'Baja Mis Comprobantes (Excel)' },
-  { id: 'xubio', titulo: 'Xubio', detalle: 'Baja el Libro IVA' },
-  { id: 'auditoria', titulo: 'Auditoría', detalle: 'Cruza ARCA contra Xubio' },
-];
-
-/** Los tres pasos se hacen siempre: no se eligen. */
+/** Los tres pasos (ARCA -> Xubio -> Auditoría) se hacen siempre: no se eligen ni se muestran. */
 const TODOS_LOS_PASOS: Record<PasoId, boolean> = { arca: true, xubio: true, auditoria: true };
 
 /**
- * Lo que se recuerda en este navegador. Ni la contraseña ni la carpeta: la
- * carpeta arranca siempre en la del servidor (CARPETA_SALIDA).
+ * Lo que se recuerda en este navegador (nunca la contraseña). Los Excel quedan
+ * en la carpeta del servidor (CARPETA_SALIDA); cada uno elige dónde guardarlos al bajarlos.
  */
 interface Preferencias {
   operaciones: { ventas: boolean; compras: boolean };
@@ -72,7 +66,6 @@ export class NuevoControl {
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly sesion = inject(SesionService);
 
-  protected readonly pasosInfo = PASOS;
   protected readonly nombreDelMes = nombreDelMes;
   private readonly prefs = leerPreferencias();
 
@@ -106,7 +99,6 @@ export class NuevoControl {
       { validators: alMenosUno },
     ),
     xubio: this.fb.nonNullable.group({ usuario: '', clave: '', recordar: false }, { validators: this.xubioCompleto }),
-    carpeta: ['', Validators.required],
   });
 
   /** Buscador de clientes: fuera del form, no viaja al backend. */
@@ -149,21 +141,13 @@ export class NuevoControl {
     return !!a?.tiene_clave && (this.valor().xubio?.usuario ?? '').trim() === a.usuario;
   });
 
-  protected readonly ejemploCarpeta = computed(() => {
-    const base = (this.valor().carpeta ?? '').trim().replace(/[\\/]+$/, '') || '<carpeta>';
-    const sep = base.includes('/') && !base.includes('\\') ? '/' : '\\';
-    const cliente = this.elegidos()[0]?.nombre ?? '<Cliente>';
-    return [base, cliente, carpetaDelPeriodo(this.periodo()?.desde ?? ''), this.ajustes()?.subcarpeta ?? 'Control de Facturas'].join(sep);
-  });
-
   /** Una línea para la barra de abajo: qué se va a ejecutar. */
   protected readonly resumen = computed(() => {
     const v = this.valor();
     const ops = [v.operaciones?.ventas && 'Ventas', v.operaciones?.compras && 'Compras'].filter(Boolean).join(' + ');
-    const pasos = PASOS.map((p) => p.titulo).join(' → ');
     const per = this.periodo();
     const periodo = !per ? '' : v.periodo?.modo === 'mes' ? nombreDelMes(v.periodo.mes ?? '') : `${per.desde} – ${per.hasta}`;
-    return [ops, pasos, periodo].filter(Boolean).join(' · ');
+    return [ops, periodo].filter(Boolean).join(' · ');
   });
 
   protected readonly intentado = signal(false);
@@ -201,7 +185,7 @@ export class NuevoControl {
       periodo.updateValueAndValidity();
     });
 
-    // Lo elegido se recuerda para la próxima vez (sin contraseñas ni carpeta).
+    // Lo elegido se recuerda para la próxima vez (sin contraseñas).
     this.form.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       const v = this.form.getRawValue();
       const prefs: Preferencias = { operaciones: v.operaciones, clientes: v.clientes };
@@ -217,7 +201,7 @@ export class NuevoControl {
     try {
       const a = await this.api.ajustes();
       this.ajustes.set(a);
-      this.form.patchValue({ carpeta: a.carpeta_salida, xubio: { usuario: a.xubio.usuario, recordar: a.xubio.recordar } });
+      this.form.patchValue({ xubio: { usuario: a.xubio.usuario, recordar: a.xubio.recordar } });
       // La clave guardada cambia lo que valida Xubio.
       this.form.controls.xubio.updateValueAndValidity();
     } catch (e) {
@@ -285,7 +269,6 @@ export class NuevoControl {
     else if (f.periodo.invalid) p.push('completá el período');
     if (f.operaciones.invalid) p.push('elegí Ventas, Compras o las dos');
     if (f.xubio.invalid) p.push('faltan usuario y/o contraseña de Xubio');
-    if (f.carpeta.invalid) p.push('falta la carpeta de salida');
     return p;
   }
 
@@ -312,7 +295,7 @@ export class NuevoControl {
         ventas: v.operaciones.ventas,
         compras: v.operaciones.compras,
         pasos: TODOS_LOS_PASOS,
-        carpeta: v.carpeta.trim(),
+        carpeta: '',
         xubio: { usuario: v.xubio.usuario.trim(), clave: v.xubio.clave, recordar: v.xubio.recordar },
       });
       this.form.controls.xubio.controls.clave.reset('');
