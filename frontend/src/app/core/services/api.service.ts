@@ -51,7 +51,7 @@ export class ApiService {
   cancelar(id: string): Promise<ResumenEjecucion> {
     return firstValueFrom(this.http.post<ResumenEjecucion>(`${this.url}/ejecuciones/${id}/cancelar`, {}));
   }
-  /** El servidor abre la ventana para elegir carpeta y copia ahí los archivos (en Cliente/mmaaaa/Control de Facturas). */
+  /** El servidor abre la ventana para elegir carpeta y copia ahí los archivos (ver ResultadoExportar). */
   exportar(id: string, indice: number): Promise<ResultadoExportar> {
     return firstValueFrom(this.http.post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}));
   }
@@ -66,6 +66,10 @@ export class ApiService {
   }
 }
 
-export type ResultadoExportar =
-  | { cancelado: true }
-  | { cancelado?: false; carpeta: string; copiados: string[]; fallas: { nombre: string; motivo: string }[] };
+/** `elegida`: false si se cerró la ventana y se creó la carpeta del cliente en Descargas. */
+export interface ResultadoExportar {
+  carpeta: string;
+  elegida: boolean;
+  copiados: string[];
+  fallas: { nombre: string; motivo: string }[];
+}

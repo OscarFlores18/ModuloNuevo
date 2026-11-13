@@ -1,4 +1,4 @@
-"""«Descargar todos»: el servidor copia los archivos a <elegida>/<Cliente>/<mmaaaa>/Control de Facturas."""
+"""«Descargar todos»: a <elegida>/<mmaaaa>/Control de Facturas o, sin elegir, a Descargas/<Cliente>/..."""
 
 from __future__ import annotations
 
@@ -25,34 +25,41 @@ def _ejecucion(tmp_path):
     return ej
 
 
-def test_copia_con_el_formato_de_la_app_de_escritorio(entorno, tmp_path, monkeypatch):
+def test_carpeta_elegida_recibe_solo_las_subcarpetas(entorno, tmp_path, monkeypatch):
+    """Se elige la carpeta del cliente que ya existe: adentro van mmaaaa/Control de Facturas."""
     client, _ = entorno
     _ejecucion(tmp_path)
-    destino = tmp_path / "elegida"
-    destino.mkdir()
+    destino = tmp_path / "Clientes" / "Cliente SA"
+    destino.mkdir(parents=True)
     monkeypatch.setattr(dialogos, "elegir_carpeta", lambda *a, **k: destino)
 
     r = client.post("/api/ejecuciones/exp123/clientes/0/exportar")
 
     assert r.status_code == 200, r.text
     datos = r.json()
-    # El punto final del nombre se saca: Windows no admite carpetas que terminen en punto.
-    carpeta = destino / "Cliente SA" / "102026" / "Control de Facturas"
-    assert datos["carpeta"] == str(carpeta)
+    carpeta = destino / "102026" / "Control de Facturas"
+    assert datos["carpeta"] == str(carpeta) and datos["elegida"] is True
     assert sorted(p.name for p in carpeta.iterdir()) == sorted(datos["copiados"])
     assert len(datos["copiados"]) == 3 and datos["fallas"] == []
     assert (carpeta / "IVA VENTAS - X.xlsx").read_bytes() == b"IVA VENTAS - X.xlsx"
 
 
-def test_cerrar_la_ventana_no_copia_nada(entorno, tmp_path, monkeypatch):
+def test_sin_elegir_se_crea_la_carpeta_del_cliente_en_descargas(entorno, tmp_path, monkeypatch):
     client, _ = entorno
     _ejecucion(tmp_path)
+    casa = tmp_path / "casa"
+    (casa / "Downloads").mkdir(parents=True)
+    monkeypatch.setattr(srv.Path, "home", classmethod(lambda cls: casa))
     monkeypatch.setattr(dialogos, "elegir_carpeta", lambda *a, **k: None)
 
     r = client.post("/api/ejecuciones/exp123/clientes/0/exportar")
 
-    assert r.status_code == 200
-    assert r.json() == {"cancelado": True}
+    assert r.status_code == 200, r.text
+    datos = r.json()
+    # El punto final del nombre se saca: Windows no admite carpetas que terminen en punto.
+    carpeta = casa / "Downloads" / "Cliente SA" / "102026" / "Control de Facturas"
+    assert datos["carpeta"] == str(carpeta) and datos["elegida"] is False
+    assert len(list(carpeta.iterdir())) == 3
 
 
 def test_un_archivo_bloqueado_no_frena_a_los_demas(entorno, tmp_path, monkeypatch):

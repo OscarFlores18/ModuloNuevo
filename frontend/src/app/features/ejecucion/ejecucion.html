@@ -123,7 +123,7 @@
                     @if (errorDescarga(); as err) { <app-alerta class="mt-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
                     <div class="ej-carpeta">
                       <div class="ej-carpeta-ruta">
-                        <span class="mf-tenue min-w-0 flex-1">Descargar todos: elegís una carpeta y ahí se guardan en Cliente / mmaaaa / Control de Facturas.</span>
+                        <span class="mf-tenue min-w-0 flex-1">Descargar todos: elegí la carpeta del cliente y adentro se crea mmaaaa / Control de Facturas. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.</span>
                         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'">
                           {{ descargando() === c.indice + '/*' ? 'Descargando…' : 'Descargar todos' }}
                         </button>

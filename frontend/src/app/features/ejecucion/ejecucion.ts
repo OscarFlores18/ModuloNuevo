@@ -205,7 +205,10 @@ export class EjecucionPantalla {
     }
   }
 
-  /** El servidor (esta misma PC) abre la ventana para elegir carpeta y copia ahí los archivos en Cliente/mmaaaa/Control de Facturas. */
+  /**
+   * El servidor (esta misma PC) abre la ventana para elegir carpeta. Elegida: adentro van
+   * mmaaaa/Control de Facturas. Cerrada sin elegir: se crea Descargas/Cliente/mmaaaa/Control de Facturas.
+   */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
     const e = this.ej();
     if (!e) return;
@@ -213,8 +216,8 @@ export class EjecucionPantalla {
     this.errorDescarga.set(null);
     try {
       const r = await this.api.exportar(e.id, c.indice);
-      if (r.cancelado) return;
-      if (r.copiados.length) this.toast.ok('Archivos guardados', `${r.copiados.length} archivo(s) en ${r.carpeta}`);
+      const donde = r.elegida ? r.carpeta : `${r.carpeta} (no elegiste carpeta: se creó en Descargas)`;
+      if (r.copiados.length) this.toast.ok('Archivos guardados', `${r.copiados.length} ${r.copiados.length === 1 ? 'archivo' : 'archivos'} en ${donde}`);
       if (r.fallas.length) this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
     } catch (err) {
       this.errorDescarga.set(mensajeDeError(err, `No se pudieron guardar los archivos de ${c.nombre}.`));
