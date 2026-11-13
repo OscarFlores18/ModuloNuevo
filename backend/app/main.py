@@ -92,7 +92,7 @@ def create_app() -> FastAPI:
         return JSONResponse(status_code=400, content=exc.to_dict())
 
     app.include_router(api_router)
-    # _servir_front(app, config.FRONT_DIST)  # Comentado para mantener backend y frontend separados
+    _servir_front(app, config.FRONT_DIST)
     return app
 
 
