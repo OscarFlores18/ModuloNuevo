@@ -19,6 +19,7 @@ from .core import config
 from .core.errors import BotError
 from .core.logging import configure_logging, get_logger
 from .core.storage import ClientesRepository, CredencialesXubioRepository
+from .services.credenciales import ServicioCredenciales
 from .services.jobs import JobManager
 
 
@@ -88,7 +89,18 @@ def create_app() -> FastAPI:
 
         clientes = ClientesRepository(config.CONFIG_PATH, config.XUBIO_CRED_PATH)
         credenciales_xubio = CredencialesXubioRepository(config.XUBIO_CRED_PATH)
-        manager = JobManager(clientes, credenciales_xubio, base_salida=config.OUTPUT_DIR)
+        servicio_credenciales = ServicioCredenciales(clientes, credenciales_xubio)
+        migradas = servicio_credenciales.migrar()
+        if migradas:
+            logger.info(
+                "Se cifraron %s credenciales que estaban en texto plano.", migradas
+            )
+        manager = JobManager(
+            clientes,
+            credenciales_xubio,
+            base_salida=config.OUTPUT_DIR,
+            servicio=servicio_credenciales,
+        )
 
         app.state.clientes = clientes
         app.state.credenciales_xubio = credenciales_xubio

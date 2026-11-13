@@ -33,6 +33,7 @@ from ..core import config
 from ..core.errors import BotError, SesionVencida
 from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
+from .credenciales import ServicioCredenciales
 
 MAX_HISTORIAL = 20
 MAX_LINEAS_LOG = 5000
@@ -253,7 +254,7 @@ def iniciar(
     nombres = [n for n in dict.fromkeys(pedido.get("clientes") or []) if n]
     if not nombres:
         raise ErrorEjecucion("Elegí al menos un cliente.", 422)
-    config_clientes = clientes_repo.listar()
+    config_clientes = clientes_repo.listar_publico()
     desconocidos = [n for n in nombres if n not in config_clientes]
     if desconocidos:
         raise ErrorEjecucion(
@@ -287,17 +288,22 @@ def iniciar(
             f"La carpeta «{carpeta}» no existe en la computadora del servidor.", 422
         )
 
+    servicio = ServicioCredenciales(clientes_repo, credenciales_repo)
     xubio_usuario = xubio_clave = ""
     if pasos["xubio"]:
         x = pedido.get("xubio") or {}
         try:
-            xubio_usuario, xubio_clave = credenciales_repo.resolver_para_job(
-                (x.get("usuario") or "").strip(), x.get("clave") or ""
+            credenciales_xubio = servicio.xubio(
+                (x.get("usuario") or "").strip(),
+                x.get("clave") or "",
+                recordar=bool(x.get("recordar")),
             )
         except BotError as exc:
             raise ErrorEjecucion(exc.mensaje, 422) from exc
-        if x.get("recordar"):
-            credenciales_repo.guardar(xubio_usuario, xubio_clave, True)
+        xubio_usuario, xubio_clave = (
+            credenciales_xubio.usuario,
+            credenciales_xubio.clave,
+        )
 
     parametros = {
         "desde": desde.strftime("%d/%m/%Y"),
@@ -327,7 +333,7 @@ def iniciar(
 
     hilo = threading.Thread(
         target=_correr,
-        args=(ej, xubio_clave, clientes_repo),
+        args=(ej, xubio_clave, servicio),
         name=f"control-{ej.id}",
         daemon=True,
     )
@@ -434,12 +440,11 @@ def _pausa(ej: Ejecucion, cliente: str) -> str:
     return ej._respuesta or "continuar"
 
 
-def _correr(ej: Ejecucion, xubio_clave: str, clientes_repo: ClientesRepository) -> None:
+def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> None:
     p = ej.parametros
     _, mes, anio = p["desde"].split("/")
     gestor = GestorSesiones(log=ej.registrar)
     try:
-        clientes = clientes_repo.listar()
         ej.registrar("[INICIO] CONTROL DE FACTURAS")
         ej.registrar(
             f" Período {p['desde']} al {p['hasta']} · "
@@ -453,11 +458,13 @@ def _correr(ej: Ejecucion, xubio_clave: str, clientes_repo: ClientesRepository) 
             cli.estado = "en_curso"
             ej.registrar(f"[{indice + 1}/{len(ej.clientes)}] PROCESANDO: {cli.nombre}")
 
-            datos = clientes.get(cli.nombre, {})
-            arca = datos.get("arca") or {}
-            cuit_login = str(arca.get("cuit_login") or "").strip()
-            clave_arca = str(arca.get("clave") or "")
-            cuit_repres = str(arca.get("cuit_representado") or "").strip()
+            if any(paso.id.startswith("arca_") for paso in cli.pasos):
+                cred = servicio.arca(cli.nombre)
+                cuit_login = cred.cuit_login
+                clave_arca = cred.clave
+                cuit_repres = cred.cuit_representado
+            else:
+                cuit_login = clave_arca = cuit_repres = ""
 
             carpeta = carpeta_cliente(Path(p["carpeta"]), cli.nombre, mes, anio)
             cli.carpeta = str(carpeta)

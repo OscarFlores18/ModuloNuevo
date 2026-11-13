@@ -7,6 +7,8 @@ a una máquina concreta (requisito de la migración a sitio web).
     MODULONUEVO_OUTPUT_DIR  -> carpeta base por defecto de las salidas
     MODULONUEVO_LOG_DIR     -> logs del backend
     MODULONUEVO_CORS        -> orígenes permitidos, separados por coma
+    MODULONUEVO_MASTER_KEY  -> secreto para cifrar credenciales en reposo. Si
+                               no se define, se genera DATA_DIR/fernet.key
 """
 
 from __future__ import annotations

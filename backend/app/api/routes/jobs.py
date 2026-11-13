@@ -34,7 +34,7 @@ def crear_job(
     manager: JobManager = Depends(get_jobs),
     clientes: ClientesRepository = Depends(get_clientes),
 ) -> JobResumen:
-    desconocidos = [c for c in body.clientes if clientes.obtener(c) is None]
+    desconocidos = [c for c in body.clientes if clientes.obtener_publico(c) is None]
     if desconocidos:
         raise HTTPException(
             status_code=400,

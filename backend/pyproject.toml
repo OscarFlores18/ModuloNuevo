@@ -7,6 +7,8 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
     "pydantic-settings>=2.2.1",
+    # Cifrado en reposo de las credenciales (Fernet).
+    "cryptography>=42.0.0",
     # Los bots de la raíz del proyecto (bot_arca, bot_xubio, auditor_fo).
     # Usan el Chrome instalado (channel="chrome"): no hace falta `playwright install`.
     "playwright>=1.40.0",
