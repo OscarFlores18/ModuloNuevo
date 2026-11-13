@@ -31,7 +31,7 @@ from ..auditor import procesar_cruce
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
-from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente
+from ..core.paths import carpeta_cliente
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from .credenciales import ServicioCredenciales
 
@@ -365,13 +365,19 @@ def cancelar(ej: Ejecucion) -> None:
 # --- El recorrido ---------------------------------------------------------------
 
 
-def listar_archivos(carpeta: Path) -> list[dict]:
+def listar_archivos(carpeta: Path, desde_ts: float | None = None) -> list[dict]:
+    """Los Excel/CSV de la carpeta. Con `desde_ts`, solo los escritos desde ese
+    momento: la carpeta <Cliente>/<mmaaaa> la comparten todos los controles de ese
+    mes, y sin el filtro se mezclaban archivos de otros controles (otras fechas,
+    o Compras en un control de solo Ventas)."""
     if not carpeta.is_dir():
         return []
     archivos = []
     for a in sorted(carpeta.iterdir(), key=lambda x: x.name.casefold()):
-        if a.is_file() and a.suffix.lower() in (".xlsx", ".xls", ".csv"):
+        if a.is_file() and a.suffix.lower() in (".xlsx", ".xls", ".csv") and not a.name.startswith("~$"):
             st = a.stat()
+            if desde_ts is not None and st.st_mtime < desde_ts - 1:
+                continue
             tipo = (
                 "auditoria"
                 if a.name.startswith("AUX - ")
@@ -468,6 +474,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
 
             carpeta = carpeta_cliente(Path(p["carpeta"]), cli.nombre, mes, anio)
             cli.carpeta = str(carpeta)
+            inicio_cliente = time.time()
             ej.registrar(f" -> Carpeta: {carpeta}")
 
             servicio_arca = None
@@ -561,7 +568,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             ),
                         )
 
-                    cli.archivos = listar_archivos(carpeta)
+                    cli.archivos = listar_archivos(carpeta, inicio_cliente)
             finally:
                 if servicio_arca is not None:
                     try:
@@ -569,7 +576,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                     except Exception:
                         pass
 
-            cli.archivos = listar_archivos(carpeta)
+            cli.archivos = listar_archivos(carpeta, inicio_cliente)
             cli.estado = (
                 "con_errores"
                 if any(x.estado in ("error", "aviso") for x in cli.pasos)
@@ -619,6 +626,8 @@ def ruta_archivo(ej: Ejecucion, indice: int, nombre: str) -> Path:
     """Un archivo generado para un cliente, sin salir de su carpeta."""
     if not 0 <= indice < len(ej.clientes) or not ej.clientes[indice].carpeta:
         raise ErrorEjecucion("Ese cliente no tiene carpeta en esta ejecución.", 404)
+    if nombre not in {a["nombre"] for a in ej.clientes[indice].archivos}:
+        raise ErrorEjecucion("Ese archivo no es de esta ejecución.", 404)
     carpeta = Path(ej.clientes[indice].carpeta).resolve()
     archivo = (carpeta / nombre).resolve()
     if not archivo.is_relative_to(carpeta) or not archivo.is_file():
@@ -645,10 +654,28 @@ def archivos_del_cliente(ej: Ejecucion, indice: int) -> tuple[Path, list[dict]]:
     if not 0 <= indice < len(ej.clientes) or not ej.clientes[indice].carpeta:
         raise ErrorEjecucion("Ese cliente no tiene carpeta en esta ejecución.", 404)
     origen = Path(ej.clientes[indice].carpeta)
-    archivos = listar_archivos(origen)
+    # Solo los de este control (no todo lo que haya en la carpeta del mes).
+    archivos = [a for a in ej.clientes[indice].archivos if (origen / a["nombre"]).is_file()]
     if not archivos:
         raise ErrorEjecucion("Ese cliente no tiene archivos generados.", 404)
     return origen, archivos
+
+
+def operacion_de(nombre: str) -> str | None:
+    """«Ventas» o «Compras» según el archivo; None si no se sabe."""
+    n = nombre.casefold()
+    if " emitidos " in n or n.startswith("iva ventas") or "facturas ventas" in n:
+        return "Ventas"
+    if " recibidos " in n or n.startswith("iva compras") or "facturas compras" in n:
+        return "Compras"
+    return None
+
+
+def _misma_carpeta(a: Path, b: Path) -> bool:
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
 
 
 def exportar_archivos(
@@ -657,32 +684,43 @@ def exportar_archivos(
     """Copia los archivos del cliente con el formato de la app de escritorio y DRLiqui.
 
     - Con carpeta elegida (por ejemplo, la del cliente que ya existe):
-      `<elegida>/<mmaaaa>/Control de Facturas/`.
+      `<elegida>/<mmaaaa>/`.
     - Sin carpeta elegida: se crea la del cliente en Descargas:
-      `<Descargas>/<Cliente>/<mmaaaa>/Control de Facturas/`.
+      `<Descargas>/<Cliente>/<mmaaaa>/`. Si vuelve Descargas misma (la ventana abre
+      ahí y se tocó «Seleccionar carpeta» sin entrar a ninguna) cuenta como sin elegir.
+    - Si el control fue de Ventas y Compras, adentro de <mmaaaa> van `Ventas/` y `Compras/`.
 
     Si uno no se puede copiar (por ejemplo, ya existe y está abierto en Excel),
     los demás se copian igual y ese queda en `fallas`.
     """
     origen, archivos = archivos_del_cliente(ej, indice)
     _, mes, anio = ej.parametros["desde"].split("/")
+    base = Path(base_por_defecto or Path.home() / "Downloads")
+    if destino is not None and _misma_carpeta(destino, base):
+        destino = None
     try:
         if destino is not None:
             if not Path(destino).is_dir():
                 raise ErrorEjecucion(f"La carpeta «{destino}» no existe.", 422)
-            carpeta = Path(destino) / f"{mes}{anio}" / SUBCARPETA_CONTROL
+            carpeta = Path(destino) / f"{mes}{anio}"
             carpeta.mkdir(parents=True, exist_ok=True)
         else:
-            base = Path(base_por_defecto or Path.home() / "Downloads")
             carpeta = carpeta_cliente(base, ej.clientes[indice].nombre, mes, anio)
     except OSError as exc:
         raise ErrorEjecucion(f"No se pudo crear la carpeta para los archivos: {exc}", 422) from exc
 
+    # Con Ventas y Compras en el mismo control, cada una en su subcarpeta.
+    separar = bool(ej.parametros.get("ventas")) and bool(ej.parametros.get("compras"))
+
     copiados: list[str] = []
     fallas: list[dict] = []
     for a in archivos:
+        destino_archivo = carpeta
+        if separar and (op := operacion_de(a["nombre"])):
+            destino_archivo = carpeta / op
         try:
-            shutil.copy2(origen / a["nombre"], carpeta / a["nombre"])
+            destino_archivo.mkdir(exist_ok=True)
+            shutil.copy2(origen / a["nombre"], destino_archivo / a["nombre"])
             copiados.append(a["nombre"])
         except PermissionError:
             fallas.append({"nombre": a["nombre"], "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})

@@ -207,7 +207,7 @@ export class EjecucionPantalla {
 
   /**
    * El servidor (esta misma PC) abre la ventana para elegir carpeta. Elegida: adentro van
-   * mmaaaa/Control de Facturas. Cerrada sin elegir: se crea Descargas/Cliente/mmaaaa/Control de Facturas.
+   * mmaaaa con los archivos. Cerrada sin elegir: se crea Descargas/Cliente/mmaaaa.
    */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
     const e = this.ej();

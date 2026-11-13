@@ -372,12 +372,11 @@ Credenciales del operador (no del cliente):
 <base>/
 └── <Cliente>/
     └── <MMAAAA>/
-        └── Control de Facturas/
-            ├── Mis comprobantes - Emitidos - <Cliente> - <MM-AA> al <MM-AA>.xlsx
-            ├── Mis comprobantes - Recibidos - <Cliente> - <MM-AA> al <MM-AA>.xlsx
-            ├── IVA VENTAS - <Cliente> - <DD-MM-AAAA> al <DD-MM-AAAA>.xlsx
-            ├── IVA COMPRAS - <Cliente> - <DD-MM-AAAA> al <DD-MM-AAAA>.xlsx
-            └── AUX - Control de facturas <Ventas|Compras> con AFIP - <MM-AA> - <Cliente>.xlsx
+        ├── Mis comprobantes - Emitidos - <Cliente> - <MM-AA> al <MM-AA>.xlsx
+        ├── Mis comprobantes - Recibidos - <Cliente> - <MM-AA> al <MM-AA>.xlsx
+        ├── IVA VENTAS - <Cliente> - <DD-MM-AAAA> al <DD-MM-AAAA>.xlsx
+        ├── IVA COMPRAS - <Cliente> - <DD-MM-AAAA> al <DD-MM-AAAA>.xlsx
+        └── AUX - Control de facturas <Ventas|Compras> con AFIP - <MM-AA> - <Cliente>.xlsx
 ```
 
 - En el backend, `<base>` es `MODULONUEVO_OUTPUT_DIR` o `carpeta_salida` del job.

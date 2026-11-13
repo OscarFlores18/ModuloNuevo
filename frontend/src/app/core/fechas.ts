@@ -18,12 +18,6 @@ export function isoADmy(iso: string): string {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : '';
 }
 
-/** El mes anterior al de hoy, como lo usa <input type="month">: lo habitual es controlar el mes cerrado. */
-export function mesAnterior(hoy = new Date()): string {
-  const d = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
-  return `${d.getFullYear()}-${dos(d.getMonth() + 1)}`;
-}
-
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 /** '2026-10' -> 'octubre 2026' */
@@ -32,47 +26,10 @@ export function nombreDelMes(mes: string): string {
   return m ? `${MESES[Number(m[2]) - 1]} ${m[1]}` : '';
 }
 
-/** Último día del período, sin pasar de hoy: un trimestre o año en curso se controla hasta hoy. */
+/** Último día del período, sin pasar de hoy: un año en curso se controla hasta hoy. */
 function hastaSinPasarHoy(fin: Date, hoy: Date): string {
   const f = fin > hoy ? hoy : fin;
   return `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()}`;
-}
-
-const ORDINAL = ['1er', '2do', '3er', '4to'];
-
-/** '2026-3' -> {desde: '01/07/2026', hasta: '30/09/2026'} (el 3er trimestre). */
-export function rangoDelTrimestre(valor: string, hoy = new Date()): { desde: string; hasta: string } | null {
-  const m = /^(\d{4})-([1-4])$/.exec(valor);
-  if (!m) return null;
-  const anio = Number(m[1]);
-  const t = Number(m[2]);
-  return { desde: `01/${dos(t * 3 - 2)}/${anio}`, hasta: hastaSinPasarHoy(new Date(anio, t * 3, 0), hoy) };
-}
-
-/** '2026-3' -> '3er trimestre 2026' */
-export function nombreDelTrimestre(valor: string): string {
-  const m = /^(\d{4})-([1-4])$/.exec(valor);
-  return m ? `${ORDINAL[Number(m[2]) - 1]} trimestre ${m[1]}` : '';
-}
-
-/** Los trimestres ya empezados de los últimos tres años, el más reciente primero. */
-export function trimestresRecientes(hoy = new Date()): { valor: string; texto: string }[] {
-  const actual = Math.floor(hoy.getMonth() / 3) + 1;
-  const lista: { valor: string; texto: string }[] = [];
-  for (let anio = hoy.getFullYear(); anio >= hoy.getFullYear() - 2; anio--) {
-    for (let t = anio === hoy.getFullYear() ? actual : 4; t >= 1; t--) {
-      const meses = `${MESES[t * 3 - 3].slice(0, 3)}–${MESES[t * 3 - 1].slice(0, 3)}`;
-      const enCurso = anio === hoy.getFullYear() && t === actual ? ' · en curso' : '';
-      lista.push({ valor: `${anio}-${t}`, texto: `${ORDINAL[t - 1]} trimestre ${anio} (${meses})${enCurso}` });
-    }
-  }
-  return lista;
-}
-
-/** El último trimestre cerrado: lo habitual es controlar un período terminado. */
-export function trimestreAnterior(hoy = new Date()): string {
-  const t = Math.floor(hoy.getMonth() / 3);
-  return t === 0 ? `${hoy.getFullYear() - 1}-4` : `${hoy.getFullYear()}-${t}`;
 }
 
 /** '2025' -> {desde: '01/01/2025', hasta: '31/12/2025'} */

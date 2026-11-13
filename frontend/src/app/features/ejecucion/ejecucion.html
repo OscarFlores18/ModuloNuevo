@@ -77,7 +77,8 @@
     <ul class="ej-clientes">
       @for (c of clientes(); track c.nombre) {
         <li>
-          <details class="ej-cliente" [class.ej-cliente-error]="c.conError">
+          <!-- Abierto al aparecer; si se cierra, queda cerrado aunque la pantalla se actualice -->
+          <details class="ej-cliente" open [class.ej-cliente-error]="c.conError">
             <summary>
               <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
               <span class="ej-cliente-nombre" [title]="c.nombre">{{ c.nombre }}</span>
@@ -123,7 +124,7 @@
                     @if (errorDescarga(); as err) { <app-alerta class="mt-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
                     <div class="ej-carpeta">
                       <div class="ej-carpeta-ruta">
-                        <span class="mf-tenue min-w-0 flex-1">Descargar todos: elegí la carpeta del cliente y adentro se crea mmaaaa / Control de Facturas. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.</span>
+                        <span class="mf-tenue min-w-0 flex-1">Descargar todos: elegí la carpeta del cliente y adentro se crea la del período (mmaaaa) con los archivos. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.</span>
                         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'">
                           {{ descargando() === c.indice + '/*' ? 'Descargando…' : 'Descargar todos' }}
                         </button>
