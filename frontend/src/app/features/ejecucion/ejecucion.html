@@ -1,14 +1,4 @@
 @let e = ej();
-<app-encabezado titulo="Ejecución del control"
-  [bajada]="e ? 'Período ' + e.periodo + ' · iniciada por ' + e.usuario : 'El progreso de cada cliente, lo que dicen los bots y los Excel que se generan.'">
-  @if (e && activa()) {
-    <button type="button" class="mf-btn mf-btn-peligro" (click)="confirmarCancelar.set(true)" [disabled]="e.cancelar_pedido">
-      {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar control' }}
-    </button>
-  } @else {
-    <a routerLink="/control" class="mf-btn">Nuevo control</a>
-  }
-</app-encabezado>
 
 @if (store.error(); as err) { <app-alerta nivel="error" titulo="No se pudo consultar la ejecución." [mensajes]="[err]" /> }
 
@@ -16,26 +6,62 @@
   @if (!store.error() && !store.historial().length) {
     <div class="mf-aviso">
       <strong>Todavía no se ejecutó ningún control.</strong>
-      <p>Elegí los clientes y el período en <a routerLink="/control" class="mf-btn-link">Nuevo control</a> y tocá <em>Ejecutar control</em>.</p>
+      <p><a routerLink="/control" class="mf-btn mt-2">Nuevo control</a></p>
     </div>
   }
 } @else {
-  <!-- Pausa entre clientes -->
-  @if (e.pausa; as p) {
-    <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-4" role="alertdialog" aria-labelledby="t-pausa" aria-describedby="d-pausa">
-      <div class="relative flex h-12 w-12 shrink-0 items-center justify-center" aria-hidden="true">
-        <svg class="absolute inset-0 h-12 w-12 -rotate-90" viewBox="0 0 36 36">
-          <circle cx="18" cy="18" r="16" fill="none" stroke="var(--color-borde)" stroke-width="3" />
-          <circle cx="18" cy="18" r="16" fill="none" stroke="var(--color-aviso)" stroke-width="3" stroke-linecap="round"
-            class="transition-[stroke-dashoffset] duration-1000 ease-linear" stroke-dasharray="100.5" [attr.stroke-dashoffset]="100.5 * (1 - segundosPausa() / p.segundos)" />
-        </svg>
-        <span class="mono font-bold">{{ segundosPausa() }}</span>
+  @let ins = insigniaEjecucion[e.estado];
+
+  <!-- 1. Estado global -->
+  <section class="mf-panel mf-panel-acento" aria-labelledby="t-ejecucion">
+    <header class="flex flex-wrap items-center justify-between gap-3">
+      <div class="min-w-0">
+        <h2 id="t-ejecucion" class="m-0 text-xl font-bold">Ejecución del Control</h2>
+        <p class="m-0 mt-0.5 font-semibold">Período {{ e.periodo }}</p>
       </div>
+      @if (activa()) {
+        <button type="button" class="mf-btn mf-btn-rojo" (click)="confirmarCancelar.set(true)" [disabled]="e.cancelar_pedido">
+          {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar Control' }}
+        </button>
+      } @else {
+        <a routerLink="/control" class="mf-btn">Nuevo control</a>
+      }
+    </header>
+
+    <dl class="ej-kpis">
+      <div class="ej-kpi">
+        <dt>Estado</dt>
+        <dd><span [class]="ins.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="ins.latido" aria-hidden="true"></span>{{ ins.texto }}</span></dd>
+      </div>
+      <div class="ej-kpi">
+        <dt>Progreso</dt>
+        <dd>{{ procesados() }} <small>de {{ e.clientes }} clientes</small></dd>
+      </div>
+      <div class="ej-kpi" [class.ej-kpi-error]="errores() > 0">
+        <dt>Errores</dt>
+        <dd>{{ errores() }}</dd>
+      </div>
+      <div class="ej-kpi">
+        <dt>Duración</dt>
+        <dd class="tabular-nums" role="timer">{{ duracion() || '—' }}</dd>
+      </div>
+    </dl>
+
+    <div class="mf-barra mt-4" role="progressbar" [attr.aria-valuenow]="progreso()" aria-valuemin="0" aria-valuemax="100" aria-label="Avance del control">
+      <div class="mf-barra-relleno" [style.width.%]="progreso()"
+        [style.background]="e.estado === 'error' ? 'var(--color-error)' : e.estado === 'cancelada' ? 'var(--color-tenue)' : e.estado === 'finalizada' ? (errores() ? 'var(--color-aviso)' : 'var(--color-ok)') : null"></div>
+    </div>
+  </section>
+
+  <!-- Pausa entre clientes: espera una respuesta -->
+  @if (e.pausa; as p) {
+    <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-4" role="alertdialog" aria-labelledby="t-pausa">
+      <span class="mono flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-aviso text-lg font-bold" aria-hidden="true">{{ segundosPausa() }}</span>
       <div class="min-w-0 flex-1">
-        <strong id="t-pausa">Terminó {{ p.cliente }}.</strong>
-        <p id="d-pausa">
-          @if (siguienteCliente(); as s) { Sigue con <strong>{{ s }}</strong> en {{ segundosPausa() }} s si no respondés. } @else { Sigue en {{ segundosPausa() }} s. }
-        </p>
+        <strong id="t-pausa">
+          Terminó {{ p.cliente }}.
+          @if (siguienteCliente(); as s) { Sigue {{ s }} en {{ segundosPausa() }} s. } @else { Sigue en {{ segundosPausa() }} s. }
+        </strong>
       </div>
       <div class="flex flex-wrap gap-2">
         <button type="button" class="mf-btn" (click)="store.responder('continuar')">Continuar ahora</button>
@@ -45,223 +71,112 @@
     </section>
   }
 
-  <!-- Tarjetas -->
-  @let ins = insigniaEjecucion[e.estado];
-  <section class="mf-cards" aria-label="Resumen">
-    <article class="mf-card">
-      <span class="mf-card-num"><span [class]="ins.clase" class="!text-sm"><span class="mf-punto" [class.mf-latido]="ins.latido" aria-hidden="true"></span>{{ ins.texto }}</span></span>
-      <span class="mf-card-etiq">Estado</span>
-    </article>
-    <article class="mf-card">
-      <span class="mf-card-num">{{ procesados() }} <span class="mf-tenue text-base">de {{ e.clientes }}</span></span>
-      <span class="mf-card-etiq">Clientes procesados</span>
-    </article>
-    <article class="mf-card" [class.mf-card-alerta]="conErrores() > 0">
-      <span class="mf-card-num">{{ conErrores() }}</span>
-      <span class="mf-card-etiq">Con errores</span>
-    </article>
-    <article class="mf-card" [class.mf-card-ok]="archivosTotales() > 0">
-      <span class="mf-card-num">{{ archivosTotales() }}</span>
-      <span class="mf-card-etiq">Archivos generados</span>
-    </article>
-    <article class="mf-card">
-      <span class="mf-card-num">{{ duracionTotal() || '—' }}</span>
-      <span class="mf-card-etiq">Duración</span>
-    </article>
-  </section>
+  <!-- 2. Clientes -->
+  <section aria-labelledby="t-clientes-ej">
+    <h2 id="t-clientes-ej" class="m-0 mb-2 text-lg font-bold">Clientes</h2>
+    <ul class="ej-clientes">
+      @for (c of clientes(); track c.nombre) {
+        <li>
+          <details class="ej-cliente" [class.ej-cliente-error]="c.conError">
+            <summary>
+              <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+              <span class="ej-cliente-nombre" [title]="c.nombre">{{ c.nombre }}</span>
+              <span [class]="c.insignia.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="c.insignia.latido" aria-hidden="true"></span>{{ c.insignia.texto }}</span>
+              <span class="mf-barra ej-cliente-barra" role="progressbar" [attr.aria-valuenow]="c.avance" aria-valuemin="0" aria-valuemax="100" [attr.aria-label]="'Avance de ' + c.nombre">
+                <span class="mf-barra-relleno block" [style.width.%]="c.avance" [style.background]="c.conError ? 'var(--color-error)' : c.avance === 100 ? 'var(--color-ok)' : null"></span>
+              </span>
+            </summary>
 
-  <div>
-    <div class="mf-barra" role="progressbar" [attr.aria-valuenow]="progreso()" aria-valuemin="0" aria-valuemax="100" aria-label="Avance">
-      <div class="mf-barra-relleno" [style.width.%]="progreso()"
-        [style.background]="e.estado === 'error' ? 'var(--color-error)' : e.estado === 'cancelada' ? 'var(--color-tenue)' : e.estado === 'finalizada' ? (conErrores() ? 'var(--color-aviso)' : 'var(--color-ok)') : null"></div>
-    </div>
-    <p class="mf-ayuda mb-0 mt-1.5">
-      @if (activa()) {
-        Los bots trabajan en Chrome, en la computadora del servidor. Si ARCA pide doble factor o Xubio un captcha, completalo en esa ventana.
-      } @else if (e.mensaje) {
-        {{ e.mensaje }}
-      }
-    </p>
-  </div>
+            <!-- 3. Detalle: línea de tiempo -->
+            <div class="ej-cliente-cuerpo">
+              <ol class="ej-stepper" [attr.aria-label]="'Pasos de ' + c.nombre">
+                @for (et of c.etapas; track et.id; let n = $index) {
+                  <li class="ej-etapa" [attr.data-estado]="et.estado">
+                    <span class="ej-etapa-icono" aria-hidden="true">
+                      @switch (et.estado) {
+                        @case ('ok') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg> }
+                        @case ('error') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg> }
+                        @case ('procesando') { <span class="ej-spinner"></span> }
+                        @case ('aviso') { ! }
+                        @case ('omitido') { – }
+                        @default { {{ n + 1 }} }
+                      }
+                    </span>
+                    <span class="ej-etapa-nombre">{{ et.titulo }}</span>
+                    <span class="ej-etapa-estado">{{ textoEtapa[et.estado] }}</span>
+                  </li>
+                }
+              </ol>
 
-  <!-- Clientes -->
-  <section class="mf-panel" aria-labelledby="t-clientes-ej">
-    <div class="mf-panel-titulo">
-      <h2 id="t-clientes-ej">Clientes</h2>
-      <span class="mf-sub">Tocá una fila para ver sus pasos y archivos.</span>
-      @if (e.parametros) {
-        <div class="mf-filtros">
-          <span class="mf-chip"><b>Operaciones</b>{{ e.parametros.ventas && e.parametros.compras ? 'Ventas y Compras' : e.parametros.ventas ? 'Ventas' : 'Compras' }}</span>
-          @if (!e.preguntar && activa()) { <span class="mf-chip">Sin pausas entre clientes</span> }
-        </div>
-      }
-    </div>
-    <div class="mf-scroll">
-      <table class="mf-tabla">
-        <thead>
-          <tr>
-            <th class="num">#</th>
-            <th>Cliente</th>
-            <th>Estado</th>
-            <th>Pasos</th>
-            <th class="num">Archivos</th>
-          </tr>
-        </thead>
-        <tbody>
-          @for (c of e.detalle_clientes; track c.nombre; let i = $index) {
-            @let ic = insigniaCliente[c.estado];
-            <tr class="mf-fila" [class.mf-fila-activa]="i === indiceDetalle()" (click)="elegido.set(i)">
-              <td class="num mf-tenue">{{ i + 1 }}</td>
-              <td>
-                <button type="button" class="font-semibold text-texto" style="background:none;border:0;padding:0;font:inherit;cursor:pointer" [attr.aria-pressed]="i === indiceDetalle()">{{ c.nombre }}</button>
-              </td>
-              <td><span [class]="ic.clase"><span class="mf-punto" [class.mf-latido]="ic.latido" aria-hidden="true"></span>{{ ic.texto }}</span></td>
-              <td>
-                <span class="flex gap-1">
-                  @for (p of c.pasos; track p.id) {
-                    @let ip = insigniaPaso[p.estado];
-                    <span [class]="ip.clase" [class.mf-latido]="ip.latido" [title]="p.etiqueta + ': ' + ip.texto">{{ ip.icono }} {{ p.etiqueta }}</span>
-                  }
-                </span>
-              </td>
-              <td class="num">{{ c.archivos.length || '—' }}</td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <!-- Detalle del cliente elegido -->
-  @if (detalle(); as c) {
-    @let i = indiceDetalle();
-    <section class="mf-panel" aria-labelledby="t-detalle">
-      <div class="mf-panel-titulo">
-        <h2 id="t-detalle">{{ c.nombre }}</h2>
-        <span [class]="insigniaCliente[c.estado].clase">{{ insigniaCliente[c.estado].texto }}</span>
-        <span class="mf-sub">{{ c.pasos.length }} paso(s) · {{ c.archivos.length }} archivo(s)</span>
-      </div>
-
-      @for (p of c.pasos; track p.id) {
-        @if (p.mensaje && (p.estado === 'error' || p.estado === 'aviso')) {
-          <app-alerta class="mb-2" [nivel]="p.estado === 'error' ? 'error' : 'aviso'" [titulo]="p.etiqueta + (p.estado === 'error' ? ': error.' : ': terminó con avisos.')" [mensajes]="[p.mensaje]" />
-        }
-      }
-
-      @if (c.carpeta) {
-        <div class="mf-chips">
-          <button type="button" class="mf-chip max-w-full cursor-pointer text-left text-texto" (click)="copiar(c.carpeta)" title="Copiar la ruta">
-            <b>Carpeta</b><span class="mono break-all">{{ c.carpeta }}</span>
-          </button>
-        </div>
-      }
-
-      <h3>Pasos</h3>
-      <div class="mf-scroll">
-        <table class="mf-tabla">
-          <thead>
-            <tr><th>Paso</th><th>Estado</th><th class="num">Duración</th></tr>
-          </thead>
-          <tbody>
-            @for (p of c.pasos; track p.id) {
-              @let ip = insigniaPaso[p.estado];
-              <tr>
-                <td>{{ p.etiqueta }}</td>
-                <td><span [class]="ip.clase"><span class="mf-punto" [class.mf-latido]="ip.latido" aria-hidden="true"></span>{{ ip.texto }}</span></td>
-                <td class="num">{{ p.inicio ? duracionPaso(p.inicio, p.fin) : '—' }}</td>
-              </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-
-      <h3>Archivos</h3>
-      @if (errorDescarga(); as err) { <app-alerta class="mb-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
-      @if (!c.archivos.length) {
-        <p class="mf-tenue m-0 text-sm">Todavía no hay archivos en la carpeta de este cliente.</p>
-      } @else {
-        <div class="mf-scroll">
-          <table class="mf-tabla">
-            <thead>
-              <tr><th>Tipo</th><th>Archivo</th><th class="num">Tamaño</th><th>Modificado</th><th></th></tr>
-            </thead>
-            <tbody>
-              @for (a of c.archivos; track a.nombre) {
-                <tr>
-                  <td><span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span></td>
-                  <td class="max-w-[28rem] truncate" [title]="a.nombre">{{ a.nombre }}</td>
-                  <td class="num">{{ tamanoLegible(a.tamano) }}</td>
-                  <td class="mono mf-tenue">{{ a.modificado | date: 'dd/MM HH:mm' }}</td>
-                  <td class="num">
-                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargar(i, c, a)" [disabled]="descargando() === i + '/' + a.nombre" [attr.aria-label]="'Bajar ' + a.nombre">
-                      {{ descargando() === i + '/' + a.nombre ? 'Bajando…' : 'Bajar' }}
-                    </button>
-                  </td>
-                </tr>
+              @for (p of c.problemas; track p.titulo) {
+                <app-alerta class="mt-3" [nivel]="p.nivel" [titulo]="p.titulo" [mensajes]="[p.mensaje]" />
               }
-            </tbody>
-          </table>
-        </div>
-      }
-    </section>
-  }
 
-  <!-- Registro -->
-  <section class="mf-panel" aria-labelledby="t-registro">
-    <div class="mf-panel-titulo">
-      <h2 id="t-registro">Registro de los bots</h2>
-      <span class="mf-sub">También queda en <code>debug_log.txt</code>, en la carpeta de salida.</span>
-      <div class="mf-filtros">
-        <label class="mf-check">
-          <input type="checkbox" [checked]="soloProblemas()" (change)="soloProblemas.set($any($event.target).checked)" />
-          Solo errores y avisos
-        </label>
-      </div>
-    </div>
-    <ol #consola (scroll)="alDesplazar($event)" class="mono m-0 h-80 list-none overflow-y-auto rounded-lg border border-borde bg-panel-alt px-3 py-2 text-xs leading-relaxed" aria-live="polite" aria-label="Registro">
-      @for (l of lineas(); track $index) {
-        <li class="flex gap-3">
-          <time class="mf-tenue shrink-0" [attr.datetime]="l.cuando">{{ hora(l.cuando) }}</time>
-          <span class="min-w-0 break-words whitespace-pre-wrap"
-            [style.color]="l.tipo === 'error' ? 'var(--color-error-texto)' : l.tipo === 'aviso' ? 'var(--color-aviso-texto)' : l.tipo === 'ok' ? 'var(--color-ok-texto)' : null">{{ l.texto }}</span>
+              @if (c.archivos.length) {
+                <div class="mt-3">
+                  <button type="button" class="mf-btn mf-btn-suave" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
+                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                    {{ carpetaAbierta(c.nombre) ? 'Cerrar Carpeta de Archivos' : 'Abrir Carpeta de Archivos' }}
+                  </button>
+
+                  @if (carpetaAbierta(c.nombre)) {
+                    @if (errorDescarga(); as err) { <app-alerta class="mt-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
+                    <div class="ej-carpeta">
+                      @if (c.carpeta) {
+                        <div class="ej-carpeta-ruta">
+                          <span class="mono min-w-0 flex-1 break-all">{{ c.carpeta }}</span>
+                          <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="copiar(c.carpeta)">Copiar ruta</button>
+                        </div>
+                      }
+                      <ul class="ej-archivos">
+                        @for (a of c.archivos; track a.nombre) {
+                          @let clave = c.indice + '/' + a.nombre;
+                          <li>
+                            <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
+                            <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
+                            <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
+                            <button type="button" class="mf-btn mf-btn-chico" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Bajar ' + a.nombre">
+                              {{ descargando() === clave ? 'Bajando…' : 'Bajar' }}
+                            </button>
+                          </li>
+                        }
+                      </ul>
+                    </div>
+                  }
+                </div>
+              }
+            </div>
+          </details>
         </li>
-      } @empty {
-        <li class="mf-tenue">{{ soloProblemas() ? 'Sin errores ni avisos.' : 'Esperando al primer mensaje…' }}</li>
       }
-    </ol>
+    </ul>
   </section>
 
-  <app-confirm-modal [(abierto)]="confirmarCancelar" titulo="¿Cancelar el control?" textoConfirmar="Sí, cancelar" textoCancelar="Seguir" [peligro]="true" (confirmado)="store.cancelar()">
-    El paso que se está haciendo <strong class="text-texto">termina igual</strong> (el bot no se puede cortar a mitad); después se frena y los clientes que faltan quedan sin hacer.
+  <app-confirm-modal [(abierto)]="confirmarCancelar" titulo="¿Cancelar el control?" textoConfirmar="Sí, cancelar" textoCancelar="Seguir" [peligro]="true" (confirmado)="cancelar()">
+    El paso que se está haciendo <strong class="text-texto">termina igual</strong>; después se frena y los clientes que faltan quedan sin hacer.
   </app-confirm-modal>
 }
 
-<!-- Historial -->
+<!-- Historial: plegado -->
 @if (store.historial().length > (e ? 1 : 0)) {
-  <section class="mf-panel" aria-labelledby="t-historial">
-    <div class="mf-panel-titulo">
-      <h2 id="t-historial">Ejecuciones recientes</h2>
-      <span class="mf-sub">Las últimas 20, mientras el servidor está prendido.</span>
-    </div>
-    <div class="mf-scroll">
-      <table class="mf-tabla">
-        <thead>
-          <tr><th>Inicio</th><th>Período</th><th class="num">Clientes</th><th class="num">Con errores</th><th>Usuario</th><th>Estado</th></tr>
-        </thead>
-        <tbody>
-          @for (h of store.historial(); track h.id) {
-            @let hi = insigniaEjecucion[h.estado];
-            <tr class="mf-fila" [class.mf-fila-activa]="h.id === e?.id" [routerLink]="['/ejecuciones', h.id]">
-              <td class="mono"><a [routerLink]="['/ejecuciones', h.id]" class="text-texto no-underline">{{ h.creada | date: 'dd/MM HH:mm' }}</a></td>
-              <td class="mono">{{ h.periodo }}</td>
-              <td class="num">{{ h.clientes }}</td>
-              <td class="num">{{ h.totales.con_errores || '—' }}</td>
-              <td>{{ h.usuario }}</td>
-              <td><span [class]="hi.clase">{{ hi.texto }}</span></td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    </div>
-  </section>
+  <details class="ej-plegable">
+    <summary>
+      <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+      <span class="flex-1">Ejecuciones recientes</span>
+      <span class="mf-badge">{{ store.historial().length }}</span>
+    </summary>
+    <ul class="ej-historial">
+      @for (h of store.historial(); track h.id) {
+        @let hi = insigniaEjecucion[h.estado];
+        <li>
+          <a [routerLink]="['/ejecuciones', h.id]" class="mf-item" [class.mf-item-elegido]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null">
+            <span class="mono w-28 shrink-0">{{ h.creada | date: 'dd/MM HH:mm' }}</span>
+            <span class="min-w-0 flex-1 truncate font-semibold">{{ h.periodo }} · {{ h.clientes }} {{ h.clientes === 1 ? 'cliente' : 'clientes' }}</span>
+            @if (h.totales.con_errores) { <span class="mf-badge mf-badge-error">{{ h.totales.con_errores }} con errores</span> }
+            <span [class]="hi.clase">{{ hi.texto }}</span>
+          </a>
+        </li>
+      }
+    </ul>
+  </details>
 }

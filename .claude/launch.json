@@ -4,36 +4,13 @@
     {
       "name": "frontend",
       "runtimeExecutable": "npm",
-<<<<<<< HEAD
-      "runtimeArgs": ["--prefix", "ModuloNuevo-main/frontend", "start"],
-=======
-      "runtimeArgs": [
-        "--prefix",
-        "frontend",
-        "start"
-      ],
->>>>>>> bf04864a7c6617f20d5151fa3d9042426c1e496e
+      "runtimeArgs": ["--prefix", "frontend", "start"],
       "port": 4210
     },
     {
       "name": "backend",
       "runtimeExecutable": "uv",
-<<<<<<< HEAD
-      "runtimeArgs": ["run", "--directory", "ModuloNuevo-main/backend", "uvicorn", "app.main:app", "--port", "8002", "--reload", "--reload-dir", "app"],
-=======
-      "runtimeArgs": [
-        "run",
-        "--directory",
-        "backend",
-        "uvicorn",
-        "app.main:app",
-        "--port",
-        "8002",
-        "--reload",
-        "--reload-dir",
-        "app"
-      ],
->>>>>>> bf04864a7c6617f20d5151fa3d9042426c1e496e
+      "runtimeArgs": ["run", "--directory", "backend", "uvicorn", "app.main:app", "--port", "8002", "--reload", "--reload-dir", "app"],
       "port": 8002,
       "autoPort": false
     }

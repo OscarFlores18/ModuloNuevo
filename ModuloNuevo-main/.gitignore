@@ -1,6 +1,0 @@
-__pycache__/
-*.pyc
-# Claves fiscales de los clientes y la cuenta de Xubio: nunca a git.
-config.json
-xubio_credenciales.json
-debug_log.txt

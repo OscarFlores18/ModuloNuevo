@@ -1,50 +1,122 @@
-import { Component, DestroyRef, ElementRef, computed, effect, inject, input, signal, untracked, viewChild } from '@angular/core';
+import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { duracion, tamanoLegible } from '../../core/fechas';
-import { ArchivoGenerado, ClienteEjecucion, estaActiva, mensajeDeError } from '../../core/models';
+import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, estaActiva, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { ConfirmModal } from '../../core/ui/confirm-modal';
-import { Encabezado } from '../../core/ui/encabezado';
-import { ETIQUETA_ARCHIVO, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, INSIGNIA_PASO } from './ejecucion.reglas';
+import { ToastService } from '../../core/ui/toast';
+import { ETIQUETA_ARCHIVO, Etapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
+
+/** Un paso que terminó mal o con avisos: lo único que se muestra del detalle si algo falló. */
+interface Problema {
+  nivel: 'error' | 'aviso';
+  titulo: string;
+  mensaje: string;
+}
+
+/** Lo que pinta cada acordeón: el cliente ya resumido en etapas, avance y problemas. */
+interface ClienteVista {
+  indice: number;
+  nombre: string;
+  insignia: Insignia;
+  etapas: Etapa[];
+  avance: number;
+  conError: boolean;
+  problemas: Problema[];
+  carpeta: string;
+  archivos: ArchivoGenerado[];
+  origen: ClienteEjecucion;
+}
+
+function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
+  return pasos
+    .filter((p) => p.estado === 'error' || (p.estado === 'aviso' && !!p.mensaje))
+    .map((p) => ({
+      nivel: p.estado === 'error' ? ('error' as const) : ('aviso' as const),
+      titulo: `${p.etiqueta}: ${p.estado === 'error' ? 'error' : 'terminó con avisos'}.`,
+      mensaje: p.mensaje || 'El bot no informó el motivo.',
+    }));
+}
 
 /**
- * El progreso de un control: la pausa entre clientes, cada cliente con sus pasos
- * y sus archivos, y el registro de lo que van diciendo los bots.
+ * El monitoreo de un control: estado global, un acordeón por cliente con su
+ * línea de tiempo (ARCA -> Xubio -> Auditoría) y, plegado al final, el historial.
+ * El registro técnico de los bots no se muestra: queda en debug_log.txt.
  *
- * Sin id en la dirección muestra la ejecución en curso (o la última) y el historial.
+ * Los datos llegan del `EjecucionStore`, que consulta al backend cada poco más
+ * de un segundo mientras el control está activo. Sin id en la dirección se
+ * muestra la ejecución en curso o, si no hay, la última.
  */
 @Component({
   selector: 'app-ejecucion',
-  imports: [RouterLink, DatePipe, Alerta, ConfirmModal, Encabezado],
+  imports: [RouterLink, DatePipe, Alerta, ConfirmModal],
   templateUrl: './ejecucion.html',
 })
 export class EjecucionPantalla {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
+  private readonly toast = inject(ToastService);
   protected readonly store = inject(EjecucionStore);
 
   /** De la ruta /ejecuciones/:id. */
   readonly id = input<string>();
 
   protected readonly insigniaEjecucion = INSIGNIA_EJECUCION;
-  protected readonly insigniaCliente = INSIGNIA_CLIENTE;
-  protected readonly insigniaPaso = INSIGNIA_PASO;
   protected readonly etiquetaArchivo = ETIQUETA_ARCHIVO;
+  protected readonly textoEtapa = TEXTO_ETAPA;
   protected readonly tamanoLegible = tamanoLegible;
 
   protected readonly confirmarCancelar = signal(false);
-  protected readonly soloProblemas = signal(false);
   protected readonly descargando = signal<string | null>(null);
   protected readonly errorDescarga = signal<string | null>(null);
-
-  /** Reloj de la pantalla: la cuenta regresiva de la pausa y las duraciones en vivo. */
-  protected readonly ahora = signal(Date.now());
+  /** Clientes con la lista de archivos desplegada (por nombre). */
+  private readonly carpetasAbiertas = signal<ReadonlySet<string>>(new Set());
 
   protected readonly ej = this.store.actual;
   protected readonly activa = computed(() => estaActiva(this.ej()?.estado));
+
+  // --- Cronómetro --------------------------------------------------------------------
+
+  /** Avanza una vez por segundo solo mientras el control está activo. */
+  private readonly ahora = signal(Date.now());
+
+  /** Desde `creada` (backend) hasta `terminada` o, si sigue corriendo, hasta ahora. */
+  protected readonly duracion = computed(() => {
+    const e = this.ej();
+    return e ? duracion(e.creada, e.terminada, this.ahora()) : '';
+  });
+
+  // --- KPIs --------------------------------------------------------------------------
+
+  /** Los que llegaron al final (los cancelados no cuentan). */
+  protected readonly procesados = computed(() => this.ej()?.detalle_clientes.filter((c) => c.estado === 'ok' || c.estado === 'con_errores').length ?? 0);
+
+  /** Pasos que fallaron, sumando todos los clientes. */
+  protected readonly errores = computed(
+    () => this.ej()?.detalle_clientes.reduce((n, c) => n + c.pasos.filter((p) => p.estado === 'error').length, 0) ?? 0,
+  );
+
+  protected readonly progreso = computed(() => avanceDe(this.ej()?.detalle_clientes.flatMap((c) => c.pasos) ?? []));
+
+  protected readonly clientes = computed<ClienteVista[]>(() =>
+    (this.ej()?.detalle_clientes ?? []).map((c, indice) => ({
+      indice,
+      nombre: c.nombre,
+      insignia: INSIGNIA_CLIENTE[c.estado],
+      etapas: etapasDe(c.pasos),
+      avance: avanceDe(c.pasos),
+      conError: c.estado === 'con_errores',
+      problemas: problemasDe(c.pasos),
+      carpeta: c.carpeta,
+      archivos: c.archivos,
+      origen: c,
+    })),
+  );
+
+  // --- Pausa entre clientes ----------------------------------------------------------
 
   protected readonly segundosPausa = computed(() => {
     const p = this.ej()?.pausa;
@@ -57,63 +129,26 @@ export class EjecucionPantalla {
     return e.detalle_clientes[i + 1]?.nombre ?? null;
   });
 
-  /** Los que llegaron al final (los cancelados no cuentan). */
-  protected readonly procesados = computed(() => this.ej()?.detalle_clientes.filter((c) => c.estado === 'ok' || c.estado === 'con_errores').length ?? 0);
-  protected readonly progreso = computed(() => {
-    const e = this.ej();
-    if (!e) return 0;
-    const pasos = e.detalle_clientes.flatMap((c) => c.pasos);
-    if (!pasos.length) return 0;
-    const hechos = pasos.filter((p) => p.estado !== 'pendiente' && p.estado !== 'en_curso').length;
-    const enCurso = pasos.some((p) => p.estado === 'en_curso') ? 0.5 : 0;
-    return Math.round(((hechos + enCurso) / pasos.length) * 100);
-  });
-
-  /** El cliente que se ve en detalle. Sin elegir, sigue al que se está procesando. */
-  protected readonly elegido = signal<number | null>(null);
-  protected readonly indiceDetalle = computed(() => {
-    const e = this.ej();
-    if (!e?.detalle_clientes.length) return -1;
-    const elegido = this.elegido();
-    if (elegido !== null && elegido < e.detalle_clientes.length) return elegido;
-    if (e.cliente_actual >= 0) return e.cliente_actual;
-    const conError = e.detalle_clientes.findIndex((c) => c.estado === 'con_errores');
-    return conError >= 0 ? conError : 0;
-  });
-  protected readonly detalle = computed(() => this.ej()?.detalle_clientes[this.indiceDetalle()] ?? null);
-
-  protected readonly conErrores = computed(() => this.ej()?.detalle_clientes.filter((c) => c.estado === 'con_errores').length ?? 0);
-  protected readonly archivosTotales = computed(() => this.ej()?.detalle_clientes.reduce((n, c) => n + c.archivos.length, 0) ?? 0);
-
-  protected readonly lineas = computed(() => {
-    const log = this.store.log();
-    return this.soloProblemas() ? log.filter((l) => l.tipo === 'error' || l.tipo === 'aviso') : log;
-  });
-
-  private readonly consola = viewChild<ElementRef<HTMLElement>>('consola');
-  /** El registro baja solo mientras se está mirando el final. */
-  private pegadoAbajo = true;
-
   constructor() {
-    const reloj = setInterval(() => this.ahora.set(Date.now()), 1000);
-    inject(DestroyRef).onDestroy(() => clearInterval(reloj));
-
     void this.store.cargarHistorial();
+
+    // El reloj corre solo con el control activo: al finalizar, el cronómetro queda quieto.
+    effect((alLimpiar) => {
+      if (!this.activa()) return;
+      this.ahora.set(Date.now());
+      const reloj = setInterval(() => this.ahora.set(Date.now()), 1000);
+      alLimpiar(() => clearInterval(reloj));
+    });
 
     effect(() => {
       const id = this.id();
       untracked(() => void this.abrir(id));
     });
-
-    effect(() => {
-      this.lineas();
-      const el = this.consola()?.nativeElement;
-      if (el && this.pegadoAbajo) queueMicrotask(() => (el.scrollTop = el.scrollHeight));
-    });
   }
 
   private async abrir(id: string | undefined): Promise<void> {
-    this.elegido.set(null);
+    this.carpetasAbiertas.set(new Set());
+    this.errorDescarga.set(null);
     if (id) {
       this.store.seguir(id);
       return;
@@ -129,32 +164,39 @@ export class EjecucionPantalla {
     }
   }
 
-  protected alDesplazar(evento: Event): void {
-    const el = evento.target as HTMLElement;
-    this.pegadoAbajo = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  // --- Cancelar ----------------------------------------------------------------------
+
+  /** Se llama recién después de confirmar en el diálogo. */
+  protected async cancelar(): Promise<void> {
+    await this.store.cancelar();
+    if (this.ej()?.cancelar_pedido) {
+      this.toast.aviso('Cancelación pedida', 'El paso en curso termina y después el control se frena.');
+    } else {
+      this.toast.error('No se pudo cancelar el control', this.store.error() ?? undefined);
+    }
   }
 
-  protected duracionPaso(inicio: string | null, fin: string | null): string {
-    return duracion(inicio, fin, this.ahora());
+  // --- Archivos ----------------------------------------------------------------------
+
+  protected carpetaAbierta(nombre: string): boolean {
+    return this.carpetasAbiertas().has(nombre);
   }
 
-  protected duracionTotal(): string {
-    const e = this.ej();
-    return e ? duracion(e.creada, e.terminada, this.ahora()) : '';
+  protected alternarCarpeta(nombre: string): void {
+    this.carpetasAbiertas.update((abiertas) => {
+      const s = new Set(abiertas);
+      if (!s.delete(nombre)) s.add(nombre);
+      return s;
+    });
   }
 
-  protected hora(iso: string): string {
-    return iso.slice(11, 19);
-  }
-
-  protected async descargar(indice: number, cliente: ClienteEjecucion, archivo: ArchivoGenerado): Promise<void> {
+  protected async descargar(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
     const e = this.ej();
     if (!e) return;
-    const clave = `${indice}/${archivo.nombre}`;
-    this.descargando.set(clave);
+    this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
-      const blob = await this.api.archivo(e.id, indice, archivo.nombre);
+      const blob = await this.api.archivo(e.id, c.indice, archivo.nombre);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -162,7 +204,7 @@ export class EjecucionPantalla {
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudo bajar ${archivo.nombre} de ${cliente.nombre}.`));
+      this.errorDescarga.set(mensajeDeError(err, `No se pudo bajar ${archivo.nombre} de ${c.nombre}.`));
     } finally {
       this.descargando.set(null);
     }
@@ -171,8 +213,9 @@ export class EjecucionPantalla {
   protected async copiar(texto: string): Promise<void> {
     try {
       await navigator.clipboard.writeText(texto);
+      this.toast.ok('Ruta copiada', texto);
     } catch {
-      // Sin permiso de portapapeles: no pasa nada.
+      this.toast.aviso('No se pudo copiar la ruta', texto);
     }
   }
 }

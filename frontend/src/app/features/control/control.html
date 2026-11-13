@@ -69,7 +69,7 @@
     </div>
   </section>
 
-  <!-- Período, operaciones y pasos: una sola franja -->
+  <!-- Período y operaciones (los pasos son fijos: solo se informan) -->
   <section class="mf-panel !py-3" aria-label="Parámetros">
     <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
       <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
@@ -91,28 +91,28 @@
 
       <fieldset class="m-0 border-0 p-0" formGroupName="operaciones">
         <legend class="mf-campo-etiqueta">Operaciones</legend>
-        <div class="flex h-[34px] items-center gap-4" [class.mf-grupo-invalido]="invalido('operaciones')">
+        <div class="flex h-[42px] items-center gap-4" [class.mf-grupo-invalido]="invalido('operaciones')">
           <label class="mf-check !text-texto"><input type="checkbox" formControlName="ventas" />Ventas</label>
           <label class="mf-check !text-texto"><input type="checkbox" formControlName="compras" />Compras</label>
         </div>
       </fieldset>
 
-      <fieldset class="m-0 border-0 p-0" formGroupName="pasos">
-        <legend class="mf-campo-etiqueta">Pasos</legend>
-        <div class="flex h-[34px] items-center gap-4" [class.mf-grupo-invalido]="invalido('pasos')">
+      <div>
+        <div class="mf-campo-etiqueta">Se hacen siempre los 3 pasos</div>
+        <ol class="mf-pasos" aria-label="Pasos del control: se hacen siempre los tres">
           @for (p of pasosInfo; track p.id; let n = $index) {
-            <label class="mf-check !text-texto" [title]="p.detalle"><input type="checkbox" [formControlName]="p.id" />{{ n + 1 }}. {{ p.titulo }}</label>
+            @if (n) { <li class="mf-pasos-flecha" aria-hidden="true">→</li> }
+            <li class="mf-pasos-item" [title]="p.detalle"><span class="mf-paso" aria-hidden="true">{{ n + 1 }}</span>{{ p.titulo }}</li>
           }
-        </div>
-      </fieldset>
+        </ol>
+      </div>
     </div>
   </section>
 
-  <!-- Xubio (solo con el paso de Xubio) y carpeta -->
+  <!-- Xubio y carpeta -->
   <section class="mf-panel !py-3" aria-label="Destino">
-    <div class="grid gap-3" [class]="usaXubio() ? 'lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]' : ''">
-      @if (usaXubio()) {
-        <ng-container formGroupName="xubio">
+    <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.6fr)]">
+      <ng-container formGroupName="xubio">
           <label class="mf-campo">
             <span>Usuario Xubio</span>
             <input class="mf-input" type="email" formControlName="usuario" autocomplete="username" [attr.aria-invalid]="invalido('xubio')" />
@@ -122,16 +122,13 @@
             <input class="mf-input" type="password" formControlName="clave" autocomplete="current-password"
               [placeholder]="guardadaXubio() ? 'Guardada' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
           </label>
-        </ng-container>
-      }
+      </ng-container>
       <label class="mf-campo">
         <span>Carpeta de salida</span>
         <input class="mf-input mono" type="text" formControlName="carpeta" spellcheck="false" [title]="ejemploCarpeta()" [attr.aria-invalid]="invalido('carpeta')" />
       </label>
     </div>
-    @if (usaXubio()) {
-      <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar cuenta de Xubio en el servidor</label>
-    }
+    <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar cuenta de Xubio en el servidor</label>
   </section>
 
   <!-- Acción -->

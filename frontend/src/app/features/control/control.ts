@@ -20,13 +20,15 @@ export const PASOS: { id: PasoId; titulo: string; detalle: string }[] = [
   { id: 'auditoria', titulo: 'Auditoría', detalle: 'Cruza ARCA contra Xubio' },
 ];
 
+/** Los tres pasos se hacen siempre: no se eligen. */
+const TODOS_LOS_PASOS: Record<PasoId, boolean> = { arca: true, xubio: true, auditoria: true };
+
 /**
  * Lo que se recuerda en este navegador. Ni la contraseña ni la carpeta: la
  * carpeta arranca siempre en la del servidor (CARPETA_SALIDA).
  */
 interface Preferencias {
   operaciones: { ventas: boolean; compras: boolean };
-  pasos: Record<PasoId, boolean>;
   clientes: string[];
 }
 
@@ -42,7 +44,7 @@ function leerPreferencias(): Partial<Preferencias> {
 
 // --- Validadores -------------------------------------------------------------------
 
-/** Al menos un control del grupo en true (operaciones, pasos). */
+/** Al menos un control del grupo en true (operaciones). */
 const alMenosUno: ValidatorFn = (g: AbstractControl): ValidationErrors | null =>
   Object.values(g.value ?? {}).some(Boolean) ? null : { ninguno: true };
 
@@ -103,10 +105,6 @@ export class NuevoControl {
       { ventas: this.prefs.operaciones?.ventas ?? true, compras: this.prefs.operaciones?.compras ?? false },
       { validators: alMenosUno },
     ),
-    pasos: this.fb.nonNullable.group(
-      { arca: true, xubio: true, auditoria: true, ...this.prefs.pasos },
-      { validators: alMenosUno },
-    ),
     xubio: this.fb.nonNullable.group({ usuario: '', clave: '', recordar: false }, { validators: this.xubioCompleto }),
     carpeta: ['', Validators.required],
   });
@@ -120,7 +118,6 @@ export class NuevoControl {
   private readonly textoBusqueda = toSignal(this.busqueda.valueChanges, { initialValue: '' });
 
   protected readonly modo = computed(() => this.valor().periodo?.modo ?? 'mes');
-  protected readonly usaXubio = computed(() => !!this.valor().pasos?.xubio);
   protected readonly seleccion = computed(() => this.valor().clientes ?? []);
 
   protected readonly disponibles = computed(() => {
@@ -163,7 +160,7 @@ export class NuevoControl {
   protected readonly resumen = computed(() => {
     const v = this.valor();
     const ops = [v.operaciones?.ventas && 'Ventas', v.operaciones?.compras && 'Compras'].filter(Boolean).join(' + ');
-    const pasos = PASOS.filter((p) => v.pasos?.[p.id]).map((p) => p.titulo).join(' → ');
+    const pasos = PASOS.map((p) => p.titulo).join(' → ');
     const per = this.periodo();
     const periodo = !per ? '' : v.periodo?.modo === 'mes' ? nombreDelMes(v.periodo.mes ?? '') : `${per.desde} – ${per.hasta}`;
     return [ops, pasos, periodo].filter(Boolean).join(' · ');
@@ -194,7 +191,7 @@ export class NuevoControl {
 
   /** Las dependencias entre campos, con valueChanges: habilitar = mostrar y validar. */
   private reaccionarACambios(): void {
-    const { periodo, pasos, xubio } = this.form.controls;
+    const { periodo } = this.form.controls;
 
     // Mes completo: solo «mes». Otro rango: solo «desde» y «hasta».
     periodo.controls.modo.valueChanges.pipe(startWith(periodo.controls.modo.value), takeUntilDestroyed(this.destroyRef)).subscribe((modo) => {
@@ -204,16 +201,10 @@ export class NuevoControl {
       periodo.updateValueAndValidity();
     });
 
-    // Sin el paso de Xubio, sus credenciales no se piden ni se validan.
-    pasos.controls.xubio.valueChanges.pipe(startWith(pasos.controls.xubio.value), takeUntilDestroyed(this.destroyRef)).subscribe((usa) => {
-      usa ? xubio.enable({ emitEvent: false }) : xubio.disable({ emitEvent: false });
-      this.form.updateValueAndValidity();
-    });
-
     // Lo elegido se recuerda para la próxima vez (sin contraseñas ni carpeta).
     this.form.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       const v = this.form.getRawValue();
-      const prefs: Preferencias = { operaciones: v.operaciones, pasos: v.pasos, clientes: v.clientes };
+      const prefs: Preferencias = { operaciones: v.operaciones, clientes: v.clientes };
       try {
         localStorage.setItem(CLAVE_PREFS, JSON.stringify(prefs));
       } catch {
@@ -293,8 +284,7 @@ export class NuevoControl {
     if (f.periodo.hasError('rangoInvertido')) p.push('«Hasta» es anterior a «Desde»');
     else if (f.periodo.invalid) p.push('completá el período');
     if (f.operaciones.invalid) p.push('elegí Ventas, Compras o las dos');
-    if (f.pasos.invalid) p.push('elegí al menos un paso');
-    if (f.xubio.enabled && f.xubio.invalid) p.push('faltan usuario y/o contraseña de Xubio');
+    if (f.xubio.invalid) p.push('faltan usuario y/o contraseña de Xubio');
     if (f.carpeta.invalid) p.push('falta la carpeta de salida');
     return p;
   }
@@ -310,8 +300,7 @@ export class NuevoControl {
     }
 
     // Los clientes con datos incompletos no frenan: el bot los marca con error. Se avisa igual.
-    const pasos = this.form.controls.pasos.getRawValue();
-    const incompletos = this.elegidos().filter((c) => c.faltantes.some((f) => (f === 'URL de Xubio' ? pasos.xubio : pasos.arca)));
+    const incompletos = this.elegidos().filter((c) => c.faltantes.length);
     if (incompletos.length) this.toast.aviso('Clientes con datos incompletos', incompletos.map((c) => c.nombre).join(', '));
 
     const v = this.form.getRawValue();
@@ -322,7 +311,7 @@ export class NuevoControl {
         hasta: periodo.hasta,
         ventas: v.operaciones.ventas,
         compras: v.operaciones.compras,
-        pasos: v.pasos,
+        pasos: TODOS_LOS_PASOS,
         carpeta: v.carpeta.trim(),
         xubio: { usuario: v.xubio.usuario.trim(), clave: v.xubio.clave, recordar: v.xubio.recordar },
       });
