@@ -1,0 +1,26 @@
+[project]
+name = "api-control-fct"
+version = "0.1.0"
+description = "Control de facturas (compras y ventas): ARCA Mis Comprobantes contra los libros IVA de Xubio"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic-settings>=2.2.1",
+    # Los bots de la raíz del proyecto (bot_arca, bot_xubio, auditor_fo).
+    # Usan el Chrome instalado (channel="chrome"): no hace falta `playwright install`.
+    "playwright>=1.40.0",
+    "pandas>=2.2.0",
+    "numpy>=1.26.0",
+    "openpyxl>=3.1.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "httpx>=0.27.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,14 @@
+{
+    "clientes": {
+        "piccinini sa": {
+            "arca": {
+                "cuit_login": "20235102162",
+                "clave": "Estudio0305",
+                "cuit_representado": "30710809883 "
+            },
+            "xubio": {
+                "url": "https://xubio.com/NXV/home"
+            }
+        }
+    }
+}
