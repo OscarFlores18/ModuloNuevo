@@ -3,7 +3,7 @@ import { DatePipe } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { duracion, tamanoLegible } from '../../core/fechas';
 import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, estaActiva, mensajeDeError } from '../../core/models';
-import { descargarArchivo } from '../../core/guardar-archivo';
+import { guardarComo } from '../../core/guardar-archivo';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
@@ -191,35 +191,48 @@ export class EjecucionPantalla {
     });
   }
 
-  /** Baja el archivo del servidor y lo entrega como descarga del navegador. */
+  /** «Guardar como» para un archivo: se elige dónde y después se baja del servidor. */
   protected async descargar(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
-      descargarArchivo(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
-      this.toast.ok('Archivo descargado', archivo.nombre);
+      const r = await guardarComo(archivo.nombre, () => this.api.archivo(e.id, c.indice, archivo.nombre));
+      if (r === 'guardado') this.toast.ok('Archivo guardado', archivo.nombre);
+      if (r === 'sin-permiso') this.errorDescarga.set('El navegador no abrió el diálogo. Volvé a hacer clic en Descargar.');
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudo descargar ${archivo.nombre} de ${c.nombre}.`));
+      console.error(`No se pudo guardar ${archivo.nombre}`, err);
+      this.errorDescarga.set(motivoFalla(archivo.nombre, err));
     } finally {
       this.descargando.set(null);
     }
   }
 
-  /** Todos los archivos del cliente, uno detrás del otro. */
+  /** El servidor (esta misma PC) abre la ventana para elegir carpeta y copia ahí los archivos en Cliente/mmaaaa/Control de Facturas. */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/*`);
     this.errorDescarga.set(null);
     try {
-      for (const a of c.archivos) descargarArchivo(a.nombre, await this.api.archivo(e.id, c.indice, a.nombre));
-      this.toast.ok('Archivos descargados', `${c.archivos.length} archivo(s) de ${c.nombre}`);
+      const r = await this.api.exportar(e.id, c.indice);
+      if (r.cancelado) return;
+      if (r.copiados.length) this.toast.ok('Archivos guardados', `${r.copiados.length} archivo(s) en ${r.carpeta}`);
+      if (r.fallas.length) this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudieron descargar los archivos de ${c.nombre}.`));
+      this.errorDescarga.set(mensajeDeError(err, `No se pudieron guardar los archivos de ${c.nombre}.`));
     } finally {
       this.descargando.set(null);
     }
   }
+}
+
+/** Por qué no se pudo guardar, en palabras: lo más común es que esté abierto en Excel. */
+function motivoFalla(nombre: string, err: unknown): string {
+  if (err instanceof DOMException && ['NoModificationAllowedError', 'InvalidStateError', 'InvalidModificationError'].includes(err.name)) {
+    return `No se pudo guardar «${nombre}»: ya existe un archivo con ese nombre y está abierto (¿en Excel?). Cerralo y volvé a descargar.`;
+  }
+  if (err instanceof DOMException) return `No se pudo guardar «${nombre}» en la carpeta elegida (${err.message || err.name}).`;
+  return mensajeDeError(err, `No se pudo bajar «${nombre}» del servidor.`);
 }

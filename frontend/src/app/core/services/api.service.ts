@@ -51,6 +51,10 @@ export class ApiService {
   cancelar(id: string): Promise<ResumenEjecucion> {
     return firstValueFrom(this.http.post<ResumenEjecucion>(`${this.url}/ejecuciones/${id}/cancelar`, {}));
   }
+  /** El servidor abre la ventana para elegir carpeta y copia ahí los archivos (en Cliente/mmaaaa/Control de Facturas). */
+  exportar(id: string, indice: number): Promise<ResultadoExportar> {
+    return firstValueFrom(this.http.post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}));
+  }
   /** El archivo como Blob (la descarga lleva el encabezado de sesión, no sirve un <a href>). */
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(
@@ -58,3 +62,7 @@ export class ApiService {
     );
   }
 }
+
+export type ResultadoExportar =
+  | { cancelado: true }
+  | { cancelado?: false; carpeta: string; copiados: string[]; fallas: { nombre: string; motivo: string }[] };

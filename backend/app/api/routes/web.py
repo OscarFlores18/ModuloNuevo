@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...core import config
+from ...core import config, dialogos
 from ...core.paths import SUBCARPETA_CONTROL
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
@@ -349,6 +349,20 @@ def descargar_archivo_ejecucion(
     except ejecuciones_srv.ErrorEjecucion as exc:
         raise _http_error(exc) from exc
     return FileResponse(archivo, filename=archivo.name)
+
+
+@router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/exportar")
+def exportar_archivos_ejecucion(ejecucion_id: str, indice: int) -> dict:
+    """Abre en la PC del servidor la ventana para elegir carpeta y copia ahí los
+    archivos del cliente en `<Cliente>/<mmaaaa>/Control de Facturas`."""
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        destino = dialogos.elegir_carpeta()
+        if destino is None:
+            return {"cancelado": True}
+        return ejecuciones_srv.exportar_archivos(ej, indice, destino)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
 
 
 # --- Identidad -----------------------------------------------------------------

@@ -19,6 +19,7 @@ computadora del servidor (doble factor de ARCA, captcha de Xubio).
 from __future__ import annotations
 
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -616,3 +617,39 @@ def ruta_archivo(ej: Ejecucion, indice: int, nombre: str) -> Path:
     if not archivo.is_relative_to(carpeta) or not archivo.is_file():
         raise ErrorEjecucion("No se encontró el archivo.", 404)
     return archivo
+
+
+def exportar_archivos(ej: Ejecucion, indice: int, destino: Path) -> dict:
+    """Copia los archivos del cliente a `<destino>/<Cliente>/<mmaaaa>/Control de Facturas/`,
+    el mismo formato de la app de escritorio y de DRLiqui.
+
+    Si uno no se puede copiar (por ejemplo, ya existe y está abierto en Excel),
+    los demás se copian igual y ese queda en `fallas`.
+    """
+    if not 0 <= indice < len(ej.clientes) or not ej.clientes[indice].carpeta:
+        raise ErrorEjecucion("Ese cliente no tiene carpeta en esta ejecución.", 404)
+    origen = Path(ej.clientes[indice].carpeta)
+    archivos = listar_archivos(origen)
+    if not archivos:
+        raise ErrorEjecucion("Ese cliente no tiene archivos generados.", 404)
+    if not Path(destino).is_dir():
+        raise ErrorEjecucion(f"La carpeta «{destino}» no existe.", 422)
+
+    _, mes, anio = ej.parametros["desde"].split("/")
+    try:
+        carpeta = carpeta_cliente(Path(destino), ej.clientes[indice].nombre, mes, anio)
+    except OSError as exc:
+        raise ErrorEjecucion(f"No se pudo crear la carpeta en «{destino}»: {exc}", 422) from exc
+
+    copiados: list[str] = []
+    fallas: list[dict] = []
+    for a in archivos:
+        try:
+            shutil.copy2(origen / a["nombre"], carpeta / a["nombre"])
+            copiados.append(a["nombre"])
+        except PermissionError:
+            fallas.append({"nombre": a["nombre"], "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})
+        except OSError as exc:
+            fallas.append({"nombre": a["nombre"], "motivo": str(exc)})
+    return {"carpeta": str(carpeta), "copiados": copiados, "fallas": fallas}
+
