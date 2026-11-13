@@ -16,6 +16,7 @@ from typing import Callable
 
 from playwright.sync_api import Page, sync_playwright
 
+from ..core import config
 from ..core.errors import TimeoutDescarga
 from ..core.models import BotResult
 from .xubio_common import cambiar_empresa, crear_matar_popup, login_xubio
@@ -173,7 +174,10 @@ class SesionXubio:
             return self
         self._pw = sync_playwright().start()
         try:
-            self._browser = self._pw.chromium.launch(headless=False, channel="chrome")
+            opciones: dict[str, object] = {"headless": config.PLAYWRIGHT_HEADLESS}
+            if config.PLAYWRIGHT_CHANNEL:
+                opciones["channel"] = config.PLAYWRIGHT_CHANNEL
+            self._browser = self._pw.chromium.launch(**opciones)
             self._context = self._browser.new_context(accept_downloads=True)
             self._page = self._context.new_page()
             self._matar_popup = crear_matar_popup(self._page)

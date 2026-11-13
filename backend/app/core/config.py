@@ -39,6 +39,23 @@ PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "15"))
 ARCA_PING_MIN = int(os.getenv("MODULONUEVO_ARCA_PING_MIN", "9"))
 ARCA_RENOVAR_MIN = int(os.getenv("MODULONUEVO_ARCA_RENOVAR_MIN", "50"))
 
+# Navegador de los bots. Por defecto abre el Chrome visible del sistema, como
+# la app de escritorio. En servidores sin pantalla (Docker/Render) se usa
+# MODULONUEVO_HEADLESS=1 y MODULONUEVO_CHROME_CHANNEL vacío para lanzar el
+# Chromium que instala Playwright.
+PLAYWRIGHT_HEADLESS = os.getenv("MODULONUEVO_HEADLESS", "").strip().lower() in (
+    "1",
+    "true",
+    "si",
+    "sí",
+    "yes",
+)
+PLAYWRIGHT_CHANNEL = (os.getenv("MODULONUEVO_CHROME_CHANNEL", "chrome") or "").strip() or None
+
+# Protección opcional para despliegues públicos: "usuario:clave".
+# Vacío = sin autenticación (modo local).
+BASIC_AUTH = os.getenv("MODULONUEVO_BASIC_AUTH", "").strip()
+
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:4200",
     "http://127.0.0.1:4200",

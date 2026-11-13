@@ -1,14 +1,16 @@
 """Punto de entrada del backend.
 
-    uvicorn backend.app.main:app --reload --port 8002
+    uvicorn backend.app.main:app --reload --port 8000
 """
 
 from __future__ import annotations
 
+import base64
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -42,6 +44,38 @@ def _servir_front(app: FastAPI, carpeta: Path) -> None:
         if ruta and archivo.is_file() and archivo.is_relative_to(raiz):
             return FileResponse(archivo)
         return FileResponse(indice, headers={"Cache-Control": "no-cache"})
+
+
+def _proteger(app: FastAPI) -> None:
+    """Autenticación básica opcional (`MODULONUEVO_BASIC_AUTH=usuario:clave`).
+
+    En modo local no hay autenticación. Para un despliegue público conviene
+    definirla: el frontend y la API piden usuario y clave una sola vez.
+    """
+
+    if not config.BASIC_AUTH:
+        return
+
+    @app.middleware("http")
+    async def _auth(request: Request, call_next):
+        # El health check de Render tiene que quedar abierto.
+        if request.url.path == "/health":
+            return await call_next(request)
+        cabecera = request.headers.get("authorization", "")
+        if cabecera.startswith("Basic "):
+            try:
+                credenciales = base64.b64decode(cabecera[6:], validate=True).decode(
+                    "utf-8"
+                )
+            except Exception:
+                credenciales = ""
+            if secrets.compare_digest(credenciales, config.BASIC_AUTH):
+                return await call_next(request)
+        return Response(
+            status_code=401,
+            content="Autenticación requerida",
+            headers={"WWW-Authenticate": 'Basic realm="Control de Facturas"'},
+        )
 
 
 def create_app() -> FastAPI:
@@ -91,6 +125,7 @@ def create_app() -> FastAPI:
     async def _bot_error(_: Request, exc: BotError) -> JSONResponse:
         return JSONResponse(status_code=400, content=exc.to_dict())
 
+    _proteger(app)
     app.include_router(api_router)
     _servir_front(app, config.FRONT_DIST)
     return app

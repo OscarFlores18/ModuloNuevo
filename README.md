@@ -39,9 +39,9 @@ La clave de conciliación es `LETRA-PTOVTA-NUMERO` (ej. `A-00012-00000123`).
 
 | Requisito | Detalle |
 |---|---|
-| Sistema | Windows 10/11 |
-| Python | 3.11 o superior (verificado con **3.15.2**) |
-| Google Chrome | Instalado. Los bots abren Chrome real (`channel="chrome"`), no el Chromium de Playwright |
+| Sistema | Windows 10/11 en local; Linux en Docker/Render |
+| Python | 3.11 o superior (verificado con **3.13.17**) |
+| Google Chrome | Instalado en local. Los bots abren Chrome real (`channel="chrome"`). En Docker/Render usan el Chromium de Playwright en modo headless |
 | Tcl/Tk | Solo para la app de escritorio (`main_control.py`) |
 
 Dependencias:
@@ -54,11 +54,18 @@ Dependencias:
 ## Instalación
 
 ```powershell
-cd C:\Users\Admin\Desktop\proyectos\ModuloNuevo
+cd ModuloNuevo
 
 # 1. Entorno virtual (recomendado)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
+```
+
+En Linux/macOS:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 > Si PowerShell bloquea la activación:
@@ -72,8 +79,10 @@ pip install -r backend/requirements-dev.txt
 pip install -r requirements.txt
 ```
 
-No hace falta `python -m playwright install chromium`: los bots usan el Chrome
-del sistema. Solo si querés el Chromium empaquetado de Playwright.
+En Windows no hace falta `playwright install`: los bots usan el Chrome del
+sistema (`channel="chrome"`). En un servidor sin pantalla hay que instalar el
+Chromium de Playwright y configurar `MODULONUEVO_HEADLESS=1` con
+`MODULONUEVO_CHROME_CHANNEL` vacío (el `Dockerfile` ya lo hace).
 
 ---
 
@@ -82,16 +91,48 @@ del sistema. Solo si querés el Chromium empaquetado de Playwright.
 Desde la raíz del repositorio:
 
 ```powershell
-python -m uvicorn backend.app.main:app --port 8000
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
 - API: <http://127.0.0.1:8000>
-- Swagger: <http://127.0.0.1:8000/docs>
 - Health: <http://127.0.0.1:8000/health>
+- La documentación interactiva (`/docs`) está desactivada en `main.py`.
+
+En un servidor (Render y similares) tiene que escuchar en todas las interfaces
+y usar el puerto que da la plataforma:
+
+```bash
+uvicorn backend.app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
+```
 
 El backend usa **un único hilo de trabajo** porque los scrapers abren Chrome
 visible y no son seguros en paralelo. Los jobs se encolan y se cancelan de
 forma cooperativa entre pasos.
+
+### Frontend
+
+Para que el backend sirva la web en `/`, hay que compilar Angular una vez:
+
+```powershell
+cd frontend
+npm ci
+npm run build
+cd ..
+```
+
+El resultado queda en `frontend/dist/control-fct-frontend/browser` y el backend
+lo detecta al arrancar (si no existe, sigue sirviendo solo la API).
+
+Para desarrollar el front con recarga en caliente, en otra terminal:
+
+```powershell
+cd frontend
+npm start
+```
+
+Queda en <http://localhost:4210> y consume la API de `http://localhost:8000/api`
+(definido en `src/environments/environment.ts`). El build de producción usa
+`apiUrl: '/api'`, porque backend y front comparten dominio.
 
 ### Variables de entorno
 
@@ -105,6 +146,10 @@ forma cooperativa entre pasos.
 | `MODULONUEVO_PAUSA_S` | `15` | pausa entre clientes en la web |
 | `MODULONUEVO_ARCA_PING_MIN` | `9` | cada cuántos minutos se consulta ARCA para no perder la sesión |
 | `MODULONUEVO_ARCA_RENOVAR_MIN` | `50` | a los cuántos minutos se renueva el login de ARCA |
+| `MODULONUEVO_HEADLESS` | vacío (`0`) | `1` abre Chromium sin ventana (Docker/Render) |
+| `MODULONUEVO_CHROME_CHANNEL` | `chrome` | canal de Chromium; vacío usa el que instala Playwright |
+| `MODULONUEVO_BASIC_AUTH` | vacío | `usuario:clave` para proteger un despliegue público |
+| `PORT` | `8000` | puerto que usa el comando de arranque en Render |
 
 ### API (resumen)
 
@@ -189,6 +234,63 @@ python -m uvicorn backend.app.main:app --port 8000
 
 Abrí <http://127.0.0.1:8000>: la API queda en `/api` y el `dist` de Angular se
 sirve desde la raíz (`MODULONUEVO_FRONT_DIST`).
+
+### Docker (mismo entorno que Render)
+
+El `Dockerfile` compila Angular en una etapa Node y lo sirve desde FastAPI:
+
+```bash
+docker build -t control-facturas .
+docker run --rm -p 8000:8000 control-facturas
+```
+
+Abrí <http://127.0.0.1:8000>. La imagen ya trae Chromium para los bots en modo
+headless. Los datos (`config.json`, salidas y logs) quedan en `/data` dentro del
+contenedor; para conservarlos entre reinicios montá un volumen:
+
+```bash
+docker run --rm -p 8000:8000 -v control-datos:/data control-facturas
+```
+
+---
+
+## Desplegar en Render
+
+El repositorio incluye `render.yaml` y un `Dockerfile`, así que se puede crear
+el servicio como **Blueprint** (detecta `render.yaml`) o como **Web Service**
+con runtime **Docker** y `Dockerfile` en la raíz.
+
+Configuración que ya queda en `render.yaml`:
+
+| Ajuste | Valor |
+|---|---|
+| Health check | `/health` |
+| Arranque | `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT` |
+| Frontend | se compila en la imagen y se sirve en `/` |
+| API | `/api` en el mismo dominio (sin CORS) |
+| Navegador | Chromium headless (`MODULONUEVO_HEADLESS=1`) |
+| Datos | `/data` (efímero) |
+
+Pasos:
+
+1. Subir la rama a GitHub (Render despliega `main` por defecto).
+2. En Render: **New > Blueprint** y elegir el repositorio, o **New > Web
+   Service** con runtime Docker.
+3. Definir `MODULONUEVO_BASIC_AUTH` con `usuario:clave` en el panel. Si queda
+   vacío, la URL es pública y cualquiera puede cargar clientes y lanzar jobs.
+4. Esperar el build (instala dependencias, Chromium y compila Angular).
+5. Abrir la URL del servicio: el navegador pide usuario y clave una sola vez.
+
+Advertencias para el testeo en Render:
+
+- El disco de Render es **efímero**: cada deploy borra `config.json`, las
+  salidas y los logs. Para conservarlos hay que montar un disco en `/data`
+  (plan pago).
+- Los bots abren Chromium en el servidor. ARCA y Xubio pueden pedir doble
+  factor o captcha y bloquear IPs de datacenter: la UI y la API se pueden
+  probar en Render, pero las corridas reales conviene hacerlas en la máquina
+  con Chrome visible.
+- No cargar credenciales reales en un despliegue público de prueba.
 
 ### Cómo corre un control
 
@@ -288,12 +390,13 @@ Credenciales del operador (no del cliente):
 ## Tests
 
 ```powershell
+# dentro del entorno virtual, con las dependencias de desarrollo
 python -m pytest
 ```
 
 Los tests no abren Chrome: cubren rutas, storage, modelos, API (con un job
 simulado), el contrato web (con sesiones simuladas) y el auditor con Excel
-sintéticos de ARCA y Xubio.
+sintéticos de ARCA y Xubio. Resultado esperado: **31 passed**.
 
 ---
 
@@ -326,9 +429,12 @@ ModuloNuevo/
 │   ├── tests/
 │   ├── requirements.txt
 │   └── README.md
-├── frontend/               # Angular 22 (web)
+├── frontend/               # Angular 22 (web, base tomada de main)
 ├── main_control.py         # GUI legacy (reutiliza backend/app)
 ├── requirements.txt        # dependencias de la GUI
+├── Dockerfile              # Angular + FastAPI en una imagen (Render)
+├── render.yaml             # blueprint de Render
+├── .dockerignore
 └── README.md
 ```
 

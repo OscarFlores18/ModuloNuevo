@@ -48,12 +48,14 @@ Desde la raíz del repositorio:
 
 ```powershell
 python -m pip install -r backend/requirements-dev.txt
-python -m uvicorn backend.app.main:app --port 8000
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
 - API: http://127.0.0.1:8000
-- Swagger: http://127.0.0.1:8000/docs
 - Health: http://127.0.0.1:8000/health
+- Swagger desactivado (`docs_url=None` en `main.py`).
+
+En Render/Docker: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`.
 
 No se usa `uvicorn[standard]` a propósito: en Python 3.15 `pyyaml` todavía no
 tiene wheel y obliga a compilar. `uvicorn` base alcanza (sin `--reload`).
@@ -70,6 +72,9 @@ tiene wheel y obliga a compilar. `uvicorn` base alcanza (sin `--reload`).
 | `MODULONUEVO_PAUSA_S` | `15` | pausa entre clientes |
 | `MODULONUEVO_ARCA_PING_MIN` | `9` | cada cuántos minutos se consulta ARCA (keep-alive) |
 | `MODULONUEVO_ARCA_RENOVAR_MIN` | `50` | a los cuántos minutos se renueva el login de ARCA |
+| `MODULONUEVO_HEADLESS` | vacío (`0`) | `1` lanza Chromium sin ventana |
+| `MODULONUEVO_CHROME_CHANNEL` | `chrome` | canal de Chromium; vacío = Chromium de Playwright |
+| `MODULONUEVO_BASIC_AUTH` | vacío | `usuario:clave` para proteger un despliegue público |
 
 El formato de `config.json` es **idéntico** al de la app de escritorio, así que
 ambas pueden convivir durante la migración. Si el archivo todavía tiene la

@@ -116,10 +116,15 @@ class SesionArca:
             return self
         self._pw = sync_playwright().start()
         try:
-            self._browser = self._pw.chromium.launch(
-                headless=False, channel="chrome", args=["--start-maximized"]
+            opciones: dict[str, object] = {"headless": config.PLAYWRIGHT_HEADLESS}
+            if config.PLAYWRIGHT_CHANNEL:
+                opciones["channel"] = config.PLAYWRIGHT_CHANNEL
+            if not config.PLAYWRIGHT_HEADLESS:
+                opciones["args"] = ["--start-maximized"]
+            self._browser = self._pw.chromium.launch(**opciones)
+            self._context = self._browser.new_context(
+                no_viewport=not config.PLAYWRIGHT_HEADLESS
             )
-            self._context = self._browser.new_context(no_viewport=True)
             self._context.accept_downloads = True
             self._portal = self._context.new_page()
             self._portal.on("dialog", self._manejar_dialogo)
