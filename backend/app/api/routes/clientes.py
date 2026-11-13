@@ -23,7 +23,7 @@ def obtener_credenciales(
     return CredencialesXubioOut(
         user=datos["user"],
         recordar=datos["recordar"],
-        tiene_pass=bool(datos["pass"]),
+        tiene_pass=datos["tiene_pass"],
     )
 
 
@@ -32,9 +32,10 @@ def guardar_credenciales(
     body: CredencialesXubioIn,
     repo: CredencialesXubioRepository = Depends(get_credenciales_xubio),
 ) -> CredencialesXubioOut:
-    datos = repo.guardar(body.user, body.pass_, body.recordar)
+    repo.guardar(body.user, body.pass_, body.recordar)
+    datos = repo.obtener()
     return CredencialesXubioOut(
         user=datos["user"],
         recordar=datos["recordar"],
-        tiene_pass=bool(datos["pass"]),
+        tiene_pass=datos["tiene_pass"],
     )

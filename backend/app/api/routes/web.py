@@ -57,7 +57,7 @@ def _faltantes(datos: dict) -> list[str]:
     falta = []
     if not str(arca.get("cuit_login") or "").strip():
         falta.append("CUIT de ingreso a ARCA")
-    if not str(arca.get("clave") or "").strip():
+    if not arca.get("tiene_clave"):
         falta.append("Clave fiscal")
     if not str(arca.get("cuit_representado") or "").strip():
         falta.append("CUIT representado")
@@ -65,14 +65,14 @@ def _faltantes(datos: dict) -> list[str]:
 
 
 def _publico(nombre: str, datos: dict) -> dict:
-    """Lo que ve el front: nunca la clave fiscal."""
+    """Lo que ve el front: nunca la clave fiscal, solo el indicador."""
     arca = datos.get("arca") or {}
     salida = {
         "nombre": nombre,
         "arca": {
             "cuit_login": str(arca.get("cuit_login") or "").strip(),
             "cuit_representado": str(arca.get("cuit_representado") or "").strip(),
-            "tiene_clave": bool(str(arca.get("clave") or "").strip()),
+            "tiene_clave": bool(arca.get("tiene_clave")),
         },
         "faltantes": _faltantes(datos),
     }
@@ -87,18 +87,20 @@ def _combinar(previo: dict, body: ClienteEntrada) -> dict:
     arca_previo = previo.get("arca") or {}
 
     arca = {
-        **arca_previo,
+        # `previo` es la vista pública: no trae `clave` ni `tiene_clave`.
+        **{k: v for k, v in arca_previo.items() if k != "tiene_clave"},
         "cuit_login": _solo_digitos(body.arca.cuit_login)
         or str(arca_previo.get("cuit_login") or ""),
         "cuit_representado": _solo_digitos(body.arca.cuit_representado)
         or str(arca_previo.get("cuit_representado") or ""),
-        # Una clave vacía al editar deja la que había.
-        "clave": (body.arca.clave or "").strip()
-        or str(arca_previo.get("clave") or ""),
+        # Una clave vacía al editar deja la que había (lo resuelve el repositorio).
+        "clave": (body.arca.clave or "").strip(),
     }
     # Xubio no necesita datos por cliente: la empresa se elige por el nombre. Si hay
     # una dirección vieja en config.json (app de escritorio, DRLiqui) se deja como está.
     datos = dict(previo)
+    datos.pop("nombre", None)
+    datos.pop("faltantes", None)
     datos["arca"] = arca
     for clave, valor in (body.model_extra or {}).items():
         if clave != "xubio":
@@ -128,8 +130,8 @@ def listar_clientes(
     repo: ClientesRepository = Depends(get_clientes),
 ) -> list[dict]:
     return [
-        _publico(nombre, datos if isinstance(datos, dict) else {})
-        for nombre, datos in repo.listar().items()
+        _publico(nombre, datos)
+        for nombre, datos in repo.listar_publico().items()
     ]
 
 
@@ -139,20 +141,20 @@ def crear_cliente(
     repo: ClientesRepository = Depends(get_clientes),
 ) -> dict:
     nombre = _validar_nombre(body.nombre)
-    if repo.obtener(nombre) is not None:
+    if repo.obtener_publico(nombre) is not None:
         raise HTTPException(
             status_code=409, detail={"mensaje": f"Ya hay un cliente llamado «{nombre}»."}
         )
     datos = _combinar({}, body)
     repo.guardar(nombre, datos)
-    return _publico(nombre, datos)
+    return _publico(nombre, repo.obtener_publico(nombre) or {})
 
 
 @router.get("/clientes/{nombre}")
 def obtener_cliente(
     nombre: str, repo: ClientesRepository = Depends(get_clientes)
 ) -> dict:
-    datos = repo.obtener(nombre)
+    datos = repo.obtener_publico(nombre)
     if datos is None:
         raise HTTPException(
             status_code=404, detail={"mensaje": f"No existe el cliente «{nombre}»."}
@@ -166,7 +168,7 @@ def editar_cliente(
     body: ClienteEntrada,
     repo: ClientesRepository = Depends(get_clientes),
 ) -> dict:
-    previo = repo.obtener(nombre)
+    previo = repo.obtener_publico(nombre)
     if previo is None:
         raise HTTPException(
             status_code=404, detail={"mensaje": f"No existe el cliente «{nombre}»."}
@@ -174,14 +176,14 @@ def editar_cliente(
     nuevo = _validar_nombre(body.nombre or nombre)
     datos = _combinar(previo, body)
     if nuevo != nombre:
-        if repo.obtener(nuevo) is not None:
+        if repo.obtener_publico(nuevo) is not None:
             raise HTTPException(
                 status_code=409,
                 detail={"mensaje": f"Ya hay un cliente llamado «{nuevo}»."},
             )
         repo.renombrar(nombre, nuevo)
     repo.guardar(nuevo, datos)
-    return _publico(nuevo, datos)
+    return _publico(nuevo, repo.obtener_publico(nuevo) or {})
 
 
 @router.post("/clientes/{nombre}/renombrar")
@@ -192,10 +194,10 @@ def renombrar_cliente(
 ) -> dict:
     nuevo = _validar_nombre(body.nuevo)
     try:
-        datos = repo.renombrar(nombre, nuevo)
+        repo.renombrar(nombre, nuevo)
     except Exception as exc:
         raise HTTPException(status_code=404, detail={"mensaje": str(exc)}) from exc
-    return _publico(nuevo, datos)
+    return _publico(nuevo, repo.obtener_publico(nuevo) or {})
 
 
 @router.delete("/clientes/{nombre}", status_code=status.HTTP_204_NO_CONTENT)
@@ -221,7 +223,7 @@ def ajustes(
         "pausa_segundos": config.PAUSA_ENTRE_CLIENTES_S,
         "xubio": {
             "usuario": datos["user"],
-            "tiene_clave": bool(datos["pass"]),
+            "tiene_clave": datos["tiene_pass"],
             "recordar": datos["recordar"],
             "del_servidor": False,
         },

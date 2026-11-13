@@ -8,10 +8,18 @@ de una vez, ver claude/diagnostico-bug-fecha-anual.md), alcanza con
 corregir este único archivo en vez de dos copias que pueden desalinearse.
 """
 
-import time
-from typing import Callable
+from __future__ import annotations
 
-from ..core.errors import EmpresaNoEncontrada
+import re
+import unicodedata
+from datetime import datetime
+from difflib import SequenceMatcher, get_close_matches
+from pathlib import Path
+from typing import Callable
+from urllib.parse import urljoin
+
+from ..core import config
+from ..core.errors import EmpresaNoEncontrada, SelectorEmpresaNoDisponible
 
 
 def crear_matar_popup(page):
@@ -68,95 +76,337 @@ def login_xubio(page, usuario, password, matar_popup, log: Callable[[str], None]
     matar_popup()
 
 
+# --- Selector de compañía -----------------------------------------------------
+
+# Sufijos societarios que no aportan al comparar nombres ("ACME S.R.L." vs "Acme").
+_SUFIJOS = re.compile(r"\b(s a s|s a|sas|sa|s r l|srl|ltda|s c|sc)\b")
+
+
+def _normalizar(texto: str) -> str:
+    """Nombre comparable: minúsculas, sin acentos, sin puntuación ni sufijos."""
+    sin_acentos = "".join(
+        c
+        for c in unicodedata.normalize("NFKD", str(texto or ""))
+        if not unicodedata.combining(c)
+    )
+    base = re.sub(r"[^a-z0-9]+", " ", sin_acentos.lower())
+    base = _SUFIJOS.sub(" ", base)
+    return re.sub(r"\s+", " ", base).strip()
+
+
+def _coincide(buscado: str, candidato: str) -> bool:
+    """True si los dos nombres refieren a la misma empresa (a ojo humano)."""
+    a, b = _normalizar(buscado), _normalizar(candidato)
+    if not a or not b:
+        return False
+    if a == b or a in b or b in a:
+        return True
+    # Tolera diferencias de tipeo chicas entre config.json y Xubio.
+    return SequenceMatcher(None, a, b).ratio() >= 0.86
+
+
+def _texto_seguro(locator) -> str:
+    try:
+        return locator.inner_text(timeout=1000).strip()
+    except Exception:
+        return ""
+
+
+def _esperar_buscador(page, timeout_ms: int):
+    """El buscador del desplegable si llegó a mostrarse, o None."""
+    buscador = page.locator("#buscador-empresa")
+    try:
+        buscador.wait_for(state="visible", timeout=timeout_ms)
+    except Exception:
+        return None
+    return buscador
+
+
+def _guardar_diagnostico(page, log: Callable[[str], None]) -> None:
+    """Captura + HTML cuando el selector no abre, para poder diagnosticarlo."""
+    try:
+        carpeta = Path(config.LOG_DIR) / "diagnostico"
+        carpeta.mkdir(parents=True, exist_ok=True)
+        sello = f"{datetime.now():%Y%m%d-%H%M%S}"
+        page.screenshot(path=str(carpeta / f"xubio-selector-{sello}.png"), full_page=True)
+        (carpeta / f"xubio-selector-{sello}.html").write_text(
+            page.content(), encoding="utf-8"
+        )
+        log(f"      [INFO]: Captura y HTML del selector guardados en {carpeta}")
+    except Exception as exc:
+        log(f"      [AVISO]: No se pudo guardar el diagnóstico: {exc}")
+
+
+def _abrir_selector_compania(page, matar_popup, log: Callable[[str], None]):
+    """Abre el desplegable de compañías y devuelve el buscador ya visible.
+
+    Xubio cambió varias veces cómo se abre este menú: hay builds donde alcanza
+    con hover, otros donde hace falta click y otros donde un click de más sobre
+    un menú abierto por hover lo vuelve a cerrar. Por eso se prueba **una**
+    estrategia por vez y se verifica después de cada intento si el buscador
+    quedó visible, en vez de asumir que hover+click siempre abre.
+    """
+    contenedor = page.locator(".compania").first
+    nombre = page.locator("#resaltarCompania").first
+    fila = nombre.locator("xpath=ancestor::li[1]").first
+    icono = page.locator(".compania .fa, .compania i, .compania svg").first
+
+    def hover_y_click():
+        contenedor.hover(timeout=4000)
+        contenedor.click(timeout=4000)
+
+    estrategias = (
+        ("hover sobre la compañía activa", lambda: contenedor.hover(timeout=4000)),
+        ("click sobre la compañía activa", lambda: contenedor.click(timeout=4000)),
+        ("click sobre el nombre de la compañía", lambda: nombre.click(timeout=4000)),
+        ("hover + click sobre la compañía activa", hover_y_click),
+        ("click sobre la fila de la compañía", lambda: fila.click(timeout=4000)),
+        ("click sobre el icono del selector", lambda: icono.click(timeout=4000)),
+    )
+
+    for descripcion, accion in estrategias:
+        matar_popup()
+        try:
+            accion()
+        except Exception as exc:
+            primero = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
+            log(f"      [INFO]: No se pudo {descripcion}: {primero}")
+            continue
+        buscador = _esperar_buscador(page, 2500)
+        if buscador is not None:
+            log(f"      [INFO]: Selector de compañías abierto ({descripcion}).")
+            return buscador
+        # Se cerró o no abrió: se sale del menú antes de probar la próxima.
+        page.mouse.move(2, 2)
+        page.wait_for_timeout(300)
+
+    _guardar_diagnostico(page, log)
+    raise SelectorEmpresaNoDisponible(
+        "No se pudo abrir el selector de compañías de Xubio después de varios "
+        "intentos (hover, click y click en la fila). Puede ser que Xubio haya "
+        "cambiado el menú o que la sesión quedó a medio cargar. Se guardó una "
+        "captura y el HTML de la pantalla en logs/diagnostico: reintentá el "
+        "control y, si vuelve a pasar, revisá esos archivos.",
+        detalle={"empresa_actual": _texto_seguro(nombre), "url": page.url},
+    )
+
+
+def _nombres_companias(page, limite: int = 60) -> list[str]:
+    """Nombres que muestra el desplegable (sin filtrar), para poder avisar."""
+    opciones = page.locator("#compania-lista li.licomp a")
+    nombres: list[str] = []
+    try:
+        total = opciones.count()
+    except Exception:
+        return nombres
+    for i in range(min(total, limite)):
+        try:
+            # text_content() también funciona con el menú cerrado (inner_text no).
+            texto = (opciones.nth(i).text_content() or "").strip()
+        except Exception:
+            continue
+        if texto and texto not in nombres:
+            nombres.append(texto)
+    return nombres
+
+
+def _link_compania_en_dom(page, nombre: str):
+    """El link de la empresa dentro de ``#compania-lista``, esté visible o no.
+
+    Xubio deja la lista completa en el DOM y la muestra/oculta por CSS. Por eso
+    se puede resolver la empresa por nombre sin abrir el desplegable, que es
+    justo lo que falla cuando cambian el header (ver diagnóstico 2026-11-13:
+    hover y click no abrían el menú, pero la lista y los ``href`` estaban ahí).
+    """
+    opciones = page.locator("#compania-lista li.licomp a")
+    try:
+        total = opciones.count()
+    except Exception:
+        return None
+    for i in range(total):
+        opcion = opciones.nth(i)
+        try:
+            # text_content() funciona aunque el menú esté oculto (inner_text no).
+            texto = (opcion.text_content() or "").strip()
+        except Exception:
+            continue
+        if texto and _coincide(nombre, texto):
+            return opcion
+    return None
+
+
+def _empresa_activa(page) -> str:
+    return _texto_seguro(page.locator("#resaltarCompania").first)
+
+
+def _confirmar_cambio(
+    page, matar_popup, nombre_cliente: str, log: Callable[[str], None]
+) -> bool:
+    """Espera la recarga y confirma que la empresa activa es la pedida.
+
+    No se usa «networkidle»: Xubio casi nunca deja de pedir datos y ese wait
+    agotaba siempre su tiempo. Se consulta el nombre hasta que coincida
+    (30 s), que es además lo que tarda la recarga tras elegir la compañía.
+    """
+    matar_popup()
+    for _ in range(120):  # 120 × 250 ms
+        nueva = _empresa_activa(page)
+        if nueva and _coincide(nombre_cliente, nueva):
+            log(f"      [OK]: Empresa activa: '{nueva}'.")
+            return True
+        page.wait_for_timeout(250)
+
+    nueva = _empresa_activa(page)
+    if nueva:
+        log(
+            f"      [AVISO]: Se eligió '{nombre_cliente}' pero Xubio sigue "
+            f"mostrando '{nueva}' como empresa activa."
+        )
+    else:
+        log("      [AVISO]: Xubio tardó en mostrar la empresa nueva; se sigue igual.")
+    return False
+
+
+def _buscar_compania(page, buscador, texto: str, log: Callable[[str], None]):
+    """Filtra la lista y devuelve el link de la empresa que coincide, o None.
+
+    El filtro de Xubio es JS: se revisa la lista cada 150 ms hasta 3 s en vez
+    de esperar un tiempo fijo.
+    """
+    buscador.click()
+    buscador.fill("")
+    buscador.fill(texto)
+    opciones = page.locator("#compania-lista li.licomp a")
+    for _ in range(20):  # 20 × 150 ms
+        page.wait_for_timeout(150)
+        try:
+            total = opciones.count()
+        except Exception:
+            return None
+        for i in range(total):
+            opcion = opciones.nth(i)
+            try:
+                if not opcion.is_visible():
+                    continue
+                nombre = opcion.inner_text(timeout=500).strip()
+            except Exception:
+                continue
+            if nombre and _coincide(texto, nombre):
+                return opcion
+    return None
+
+
 def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None] = print):
     """
     Verifica la empresa activa en Xubio y, si no coincide con nombre_cliente,
-    la cambia usando el buscador "Buscar Empresa" del selector de compañía
-    (arriba a la izquierda, junto al nombre de la empresa actual).
+    la cambia. Primero resuelve la empresa por nombre dentro de
+    ``#compania-lista`` (que Xubio deja en el DOM aunque el menú esté cerrado)
+    y navega a su ``href`` ``/NXV/Relogin?tenant=...``; si eso no alcanza, cae
+    al buscador "Buscar Empresa" del desplegable.
 
-    ANTES: se clickeaba directamente `a[href="{cliente_url}"]`, matcheando
-    la URL guardada en config.json contra el href real del link en el
-    desplegable. Se cambió a búsqueda por nombre por dos motivos:
-      1) Xubio rediseñó el selector de compañía y agregó un campo de
-         búsqueda adentro del desplegable; el desplegable dejó de abrirse
-         de forma confiable solo con hover, lo que hacía que el bot se
-         quedara esperando sin avanzar (timeout esperando el click).
-      2) Una URL vieja/desactualizada en config.json para un cliente
-         puntual (ya pasó) rompe el cambio de empresa SOLO para ese
-         cliente, de forma silenciosa. Buscar por nombre no depende de que
-         esa URL siga vigente.
+    La URL sale del link vivo de la lista, no de config.json, así que una URL
+    vieja guardada no rompe el cambio. Antes se dependía de hover/click para
+    abrir el menú; cuando Xubio cambió el CSS del header, el bot quedaba
+    esperando un desplegable que nunca aparecía (diagnóstico 2026-11-13).
+
+    Si la empresa no aparece, el error incluye la lista de empresas que Xubio
+    está mostrando: casi siempre el problema es que el nombre del cliente en la
+    app no coincide con el nombre real de la compañía en Xubio.
     """
     # 1) Leer la empresa actualmente activa
     page.wait_for_selector('#resaltarCompania', state="visible", timeout=30000)
-    empresa_actual = page.locator('#resaltarCompania').first.inner_text().strip()
+    empresa_actual = _texto_seguro(page.locator('#resaltarCompania').first)
 
-    ya_esta_correcta = (
-        nombre_cliente.lower() in empresa_actual.lower()
-        or empresa_actual.lower() in nombre_cliente.lower()
-    )
-    if ya_esta_correcta:
+    if _coincide(nombre_cliente, empresa_actual):
         log(f"   -> La empresa activa ya es '{empresa_actual}'.")
         return
 
     log(f"   -> Cambiando de empresa: '{empresa_actual}' -> '{nombre_cliente}'...")
     matar_popup()
 
-    # 2) Abrir el selector de compañía.
-    # Se combina hover + click porque no se puede confirmar de antemano si
-    # Xubio lo dejó como CSS :hover puro o si ahora requiere click (por el
-    # campo de búsqueda interactivo que agregó adentro del desplegable).
-    # Hacer ambos cubre los dos casos sin efectos secundarios: el link
-    # #resaltarCompania no tiene href propio, así que un click de más no
-    # dispara ninguna navegación.
-    selector_compania = page.locator('.compania').first
-    selector_compania.hover()
-    selector_compania.click()
+    # 2) Camino directo: la lista de compañías ya está en el DOM aunque el menú
+    #    esté cerrado. Ir al href /NXV/Relogin?tenant=... evita depender de que
+    #    el desplegable se abra, que es lo que se rompe cuando Xubio cambia el
+    #    CSS del header (hover/click no abren el menú pero la lista sigue ahí).
+    enlace = _link_compania_en_dom(page, nombre_cliente)
+    if enlace is not None:
+        try:
+            href = enlace.get_attribute("href")
+        except Exception:
+            href = None
+        if href:
+            destino = urljoin(page.url, href)
+            log(f"      [INFO]: Cambiando por el link de la lista ({destino}).")
+            try:
+                page.goto(destino)
+            except Exception as exc:
+                primero = (
+                    str(exc).splitlines()[0][:140]
+                    if str(exc)
+                    else type(exc).__name__
+                )
+                log(f"      [AVISO]: No se pudo abrir el link de la empresa: {primero}")
+            else:
+                if _confirmar_cambio(page, matar_popup, nombre_cliente, log):
+                    return
+                log(
+                    "      [AVISO]: El link no dejó la empresa esperada; "
+                    "se prueba el menú."
+                )
 
-    buscador = page.locator('#buscador-empresa')
-    try:
-        buscador.wait_for(state="visible", timeout=8000)
-    except:
-        # Reintento: por si el primer click no llegó a abrir el desplegable
-        # (por ejemplo, el popup promocional interceptó el click)
-        matar_popup()
-        selector_compania.hover()
-        selector_compania.click()
-        buscador.wait_for(state="visible", timeout=10000)
+    # 3) Abrir el selector de compañía (ver _abrir_selector_compania).
+    buscador = _abrir_selector_compania(page, matar_popup, log)
 
-    # 3) Filtrar por nombre y ubicar el resultado en la lista filtrada.
+    # La lista completa se lee antes de filtrar: sirve para el mensaje de error.
+    disponibles = _nombres_companias(page)
+
+    # 4) Filtrar por nombre y ubicar el resultado en la lista filtrada.
     # Si el nombre completo no trae resultados (diferencias de puntuación,
-    # mayúsculas o espacios contra el nombre mostrado en Xubio), se
-    # reintenta filtrando solo por la primera palabra del nombre.
-    def filtrar_y_ubicar(texto_busqueda):
-        buscador.click()
-        buscador.fill("")
-        buscador.fill(texto_busqueda)
-        opciones = page.locator('#compania-lista li.licomp a')
-        # El filtro de Xubio es JS: se revisa la lista cada 150 ms hasta 3 s en vez de esperar fijo.
-        for _ in range(20):
-            page.wait_for_timeout(150)
-            for i in range(opciones.count()):
-                opcion = opciones.nth(i)
-                try:
-                    texto = opcion.inner_text(timeout=500).strip()
-                except Exception:
-                    continue
-                if texto and (nombre_cliente.lower() in texto.lower() or texto.lower() in nombre_cliente.lower()):
-                    return opcion
-        return None
-
-    objetivo = filtrar_y_ubicar(nombre_cliente)
+    # mayúsculas o espacios contra el nombre mostrado en Xubio), más abajo se
+    # reintenta filtrando solo por la primera palabra.
+    objetivo = _buscar_compania(page, buscador, nombre_cliente, log)
     if objetivo is None:
-        objetivo = filtrar_y_ubicar(nombre_cliente.split()[0])
+        # Reintento: el nombre en Xubio puede estar abreviado o tener el
+        # nombre de fantasía adelante ("Estudio: PICCININI...").
+        normalizado = _normalizar(nombre_cliente)
+        primera = normalizado.split(" ")[0] if normalizado else ""
+        if primera and primera != normalizado:
+            log(f"      [INFO]: Sin resultados con el nombre completo, se busca por '{primera}'.")
+            objetivo = _buscar_compania(page, buscador, primera, log)
 
     if objetivo is None:
+        normalizados = {_normalizar(n): n for n in disponibles}
+        parecidas = [
+            normalizados[p]
+            for p in get_close_matches(
+                _normalizar(nombre_cliente), list(normalizados), n=3, cutoff=0.5
+            )
+        ]
+        mensaje = (
+            f"No se encontró la empresa '{nombre_cliente}' en el selector de "
+            "compañías de Xubio."
+        )
+        if disponibles:
+            mensaje += " Empresas visibles: " + ", ".join(disponibles[:15]) + "."
+        if parecidas:
+            mensaje += " ¿Quisiste decir '" + "' o '".join(parecidas) + "'?"
+        mensaje += (
+            " El nombre del cliente en la app tiene que coincidir con el nombre "
+            "de la compañía en Xubio."
+        )
+        log(
+            "      [INFO]: Empresas visibles en Xubio: "
+            + (", ".join(disponibles[:15]) or "ninguna")
+        )
         raise EmpresaNoEncontrada(
-            f"No se encontró la empresa '{nombre_cliente}' en el buscador de compañías de "
-            f"Xubio. Verificar que el nombre en config.json coincida con el nombre real en Xubio.",
-            detalle={"cliente": nombre_cliente, "empresa_actual": empresa_actual},
+            mensaje,
+            detalle={
+                "cliente": nombre_cliente,
+                "empresa_actual": empresa_actual,
+                "disponibles": disponibles[:40],
+            },
         )
 
-    texto_objetivo = objetivo.inner_text().strip().lower()
     try:
         objetivo.click(timeout=4000)
     except Exception:
@@ -165,18 +415,5 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
         matar_popup()
         objetivo.click(timeout=10000)
 
-    # 4) Esperar a que la barra muestre la nueva empresa (en vez de «red tranquila» + 2 s fijos,
-    # que en Xubio casi siempre agotaba los 15 s porque la página nunca deja de pedir datos).
-    # Se pregunta desde acá (no con wait_for_function) porque elegir empresa recarga la página.
-    limite = time.monotonic() + 30
-    while time.monotonic() < limite:
-        try:
-            actual = page.locator('#resaltarCompania').first.inner_text(timeout=1000).strip().lower()
-            if actual and (texto_objetivo in actual or actual in texto_objetivo):
-                break
-        except Exception:
-            pass
-        page.wait_for_timeout(250)
-    else:
-        log("      [AVISO]: Xubio tardó en mostrar la empresa nueva; se sigue igual.")
-    matar_popup()
+    # 5) Esperar a que cargue la nueva empresa y confirmar que cambió
+    _confirmar_cambio(page, matar_popup, nombre_cliente, log)

@@ -33,6 +33,7 @@ from ..core.models import (
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from ..bots.sesiones import GestorSesiones
 from .control_facturas import ejecutar_control_facturas
+from .credenciales import ServicioCredenciales
 
 
 def _ahora() -> datetime:
@@ -45,9 +46,13 @@ class JobManager:
         clientes: ClientesRepository,
         credenciales_xubio: CredencialesXubioRepository,
         base_salida: Path | None = None,
+        servicio: ServicioCredenciales | None = None,
     ):
         self._clientes = clientes
         self._credenciales_xubio = credenciales_xubio
+        self._servicio = servicio or ServicioCredenciales(
+            clientes, credenciales_xubio
+        )
         self._base_salida = Path(base_salida) if base_salida else config.OUTPUT_DIR
         self._jobs: dict[str, Job] = {}
         self._cancelaciones: dict[str, threading.Event] = {}
@@ -192,8 +197,12 @@ class JobManager:
                 raise Cancelado("Cancelado antes de iniciar.")
 
             if "xubio" in job.request.pasos:
-                usuario, clave = self._credenciales_xubio.resolver_para_job(
+                credenciales_xubio = self._servicio.xubio(
                     job.request.xubio_user, job.request.xubio_pass
+                )
+                usuario, clave = (
+                    credenciales_xubio.usuario,
+                    credenciales_xubio.clave,
                 )
             else:
                 usuario = clave = ""
@@ -207,7 +216,7 @@ class JobManager:
 
             resultado = ejecutar_control_facturas(
                 request=job.request,
-                clientes=self._clientes.listar(),
+                clientes=self._clientes.listar_publico(),
                 xubio_user=usuario,
                 xubio_pass=clave,
                 base_salida=base,
@@ -215,6 +224,7 @@ class JobManager:
                 cancelado=cancelacion.is_set,
                 on_progreso=on_progreso,
                 sesiones=sesiones,
+                credenciales=self._servicio,
             )
 
             with self._lock:

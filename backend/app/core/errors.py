@@ -28,6 +28,16 @@ class ConfigInvalida(BotError):
     code = "config_invalida"
 
 
+class CredencialInvalida(BotError):
+    """No se pudo descifrar una credencial guardada.
+
+    El mensaje nunca incluye el valor cifrado ni la clave maestra: solo indica
+    qué credencial falló y qué revisar.
+    """
+
+    code = "credencial_invalida"
+
+
 class LoginError(BotError):
     code = "login_error"
 
@@ -40,6 +50,12 @@ class SesionVencida(BotError):
 
 class EmpresaNoEncontrada(BotError):
     code = "empresa_no_encontrada"
+
+
+class SelectorEmpresaNoDisponible(BotError):
+    """No se pudo abrir el desplegable de compañías de Xubio."""
+
+    code = "selector_empresa_no_disponible"
 
 
 class TimeoutDescarga(BotError):

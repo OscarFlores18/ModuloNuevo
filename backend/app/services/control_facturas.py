@@ -25,6 +25,7 @@ from ..bots.sesiones import GestorSesiones
 from ..core.errors import BotError, Cancelado, ConfigInvalida, SesionVencida
 from ..core.models import JobError, JobProgress, JobRequest, JobResult
 from ..core.paths import carpeta_cliente
+from .credenciales import ProveedorCredenciales
 
 Log = Callable[[str], None]
 CanceladoFn = Callable[[], bool]
@@ -141,15 +142,21 @@ def ejecutar_control_facturas(
     cancelado: CanceladoFn = lambda: False,
     on_progreso: ProgresoFn | None = None,
     sesiones: GestorSesiones | None = None,
+    credenciales: ProveedorCredenciales | None = None,
 ) -> JobResult:
     """Ejecuta el pipeline completo y devuelve qué se generó y qué falló.
 
-    `clientes` es el mapa nombre -> datos de `config.json` (solo lectura).
-    `base_salida` es la carpeta raíz elegida por el usuario.
+    `clientes` es el mapa nombre -> datos públicos de `config.json` (solo
+    lectura, sin secretos). `base_salida` es la carpeta raíz elegida por el
+    usuario.
+
+    `credenciales`, cuando se pasa, es el servicio interno que descifra la
+    clave de ARCA en el momento de usarla. Si no se pasa, se mantiene el
+    comportamiento histórico de leer `clientes[...]["arca"]["clave"]` (tests y
+    app de escritorio).
 
     Si se pasa `sesiones`, se reutilizan las sesiones de ARCA/Xubio del job (un
-    solo login por credencial). Si no, se mantiene el comportamiento histórico
-    de abrir una sesión por llamada (app de escritorio y tests).
+    solo login por credencial).
     """
     resultado = JobResult()
     total = len(request.clientes)
@@ -183,16 +190,33 @@ def ejecutar_control_facturas(
             continue
 
         datos_arca = datos.get("arca", {}) or {}
-        cuit_login = datos_arca.get("cuit_login", "")
-        clave_arca = datos_arca.get("clave", "")
-        cuit_repres = datos_arca.get("cuit_representado", "")
+        error_credenciales: BotError | None = None
+        if credenciales is not None and "arca" in pasos:
+            try:
+                cred = credenciales.arca(cliente)
+            except BotError as exc:
+                # El mensaje del error no contiene la clave ni el dato cifrado.
+                log(f" [ERROR] Credenciales de ARCA: {exc}")
+                resultado.errores.append(_error(exc, cliente, "arca"))
+                error_credenciales = exc
+                cuit_login = clave_arca = cuit_repres = ""
+            else:
+                cuit_login = cred.cuit_login
+                clave_arca = cred.clave
+                cuit_repres = cred.cuit_representado
+        elif "arca" in pasos:
+            cuit_login = datos_arca.get("cuit_login", "")
+            clave_arca = datos_arca.get("clave", "")
+            cuit_repres = datos_arca.get("cuit_representado", "")
+        else:
+            cuit_login = clave_arca = cuit_repres = ""
         url_xubio = (datos.get("xubio", {}) or {}).get("url", "")
 
         carpeta_final = carpeta_cliente(base_salida, cliente, mes, anio)
         log(f" -> Directorio Destino: {carpeta_final}")
 
         # -- 1. ARCA -------------------------------------------------------
-        if "arca" in pasos:
+        if "arca" in pasos and error_credenciales is None:
             if on_progreso:
                 on_progreso(
                     JobProgress(actual=index - 1, total=total, cliente=cliente, paso="arca")
