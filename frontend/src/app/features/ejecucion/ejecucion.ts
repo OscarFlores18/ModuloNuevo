@@ -8,7 +8,7 @@ import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { ConfirmModal } from '../../core/ui/confirm-modal';
 import { Encabezado } from '../../core/ui/encabezado';
-import { ETIQUETA_ARCHIVO, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, INSIGNIA_PASO } from './ejecucion.reglas';
+import { ESTILO_PASO, ETIQUETA_ARCHIVO, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION } from './ejecucion.reglas';
 
 /**
  * El progreso de un control: la pausa entre clientes, cada cliente con sus pasos
@@ -31,7 +31,7 @@ export class EjecucionPantalla {
 
   protected readonly insigniaEjecucion = INSIGNIA_EJECUCION;
   protected readonly insigniaCliente = INSIGNIA_CLIENTE;
-  protected readonly insigniaPaso = INSIGNIA_PASO;
+  protected readonly estiloPaso = ESTILO_PASO;
   protected readonly etiquetaArchivo = ETIQUETA_ARCHIVO;
   protected readonly tamanoLegible = tamanoLegible;
 
@@ -69,20 +69,6 @@ export class EjecucionPantalla {
     return Math.round(((hechos + enCurso) / pasos.length) * 100);
   });
 
-  /** El cliente que se ve en detalle. Sin elegir, sigue al que se está procesando. */
-  protected readonly elegido = signal<number | null>(null);
-  protected readonly indiceDetalle = computed(() => {
-    const e = this.ej();
-    if (!e?.detalle_clientes.length) return -1;
-    const elegido = this.elegido();
-    if (elegido !== null && elegido < e.detalle_clientes.length) return elegido;
-    if (e.cliente_actual >= 0) return e.cliente_actual;
-    const conError = e.detalle_clientes.findIndex((c) => c.estado === 'con_errores');
-    return conError >= 0 ? conError : 0;
-  });
-  protected readonly detalle = computed(() => this.ej()?.detalle_clientes[this.indiceDetalle()] ?? null);
-
-  protected readonly conErrores = computed(() => this.ej()?.detalle_clientes.filter((c) => c.estado === 'con_errores').length ?? 0);
   protected readonly archivosTotales = computed(() => this.ej()?.detalle_clientes.reduce((n, c) => n + c.archivos.length, 0) ?? 0);
 
   protected readonly lineas = computed(() => {
@@ -113,7 +99,6 @@ export class EjecucionPantalla {
   }
 
   private async abrir(id: string | undefined): Promise<void> {
-    this.elegido.set(null);
     if (id) {
       this.store.seguir(id);
       return;
@@ -165,14 +150,6 @@ export class EjecucionPantalla {
       this.errorDescarga.set(mensajeDeError(err, `No se pudo bajar ${archivo.nombre} de ${cliente.nombre}.`));
     } finally {
       this.descargando.set(null);
-    }
-  }
-
-  protected async copiar(texto: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(texto);
-    } catch {
-      // Sin permiso de portapapeles: no pasa nada.
     }
   }
 }

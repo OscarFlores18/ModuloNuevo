@@ -1,7 +1,7 @@
 import { HttpClient, HttpErrorResponse, HttpInterceptorFn } from '@angular/common/http';
 import { Injectable, PLATFORM_ID, computed, inject, signal } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { firstValueFrom, timeout } from 'rxjs';
+import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { Rol, Usuario } from '../models';
 
@@ -34,12 +34,6 @@ export const USUARIOS_DE_PRUEBA: readonly UsuarioDePrueba[] = [
   { id: 'prueba-admin', nombre: 'Administrador de prueba', roles: ['supervisor'], nivel: '100', nivel_nombre: 'Administrador', modulos: ['*'] },
   { id: 'prueba-usuario', nombre: 'Usuario de prueba', roles: ['empleado'], nivel: '10', nivel_nombre: 'Usuario', modulos: [MODULO_CONTROL] },
 ];
-
-/**
- * La app espera esta respuesta antes de pintar la primera pantalla: si el backend
- * no contesta, a los 5 s se sigue igual (las pantallas avisan el error).
- */
-const ESPERA_MS = 5000;
 
 const CLAVE = 'control-fct.usuario_prueba';
 const CLAVE_TOKEN = 'control-fct.sesion';
@@ -107,7 +101,7 @@ export class SesionService {
     const pase = this.sacarPaseDeLaDireccion();
     if (pase) {
       try {
-        const r = await firstValueFrom(this.http.post<Token & { usuario: Usuario }>(`${environment.apiUrl}/sesion/entrar`, { pase }).pipe(timeout(ESPERA_MS)));
+        const r = await firstValueFrom(this.http.post<Token & { usuario: Usuario }>(`${environment.apiUrl}/sesion/entrar`, { pase }));
         this.guardarToken({ token: r.token, expira: r.expira });
       } catch (e) {
         this.guardarToken(null);
@@ -117,7 +111,7 @@ export class SesionService {
       }
     }
     try {
-      this.usuario.set(await firstValueFrom(this.http.get<Usuario>(`${environment.apiUrl}/yo`).pipe(timeout(ESPERA_MS))));
+      this.usuario.set(await firstValueFrom(this.http.get<Usuario>(`${environment.apiUrl}/yo`)));
       this.sinSesion.set(null);
     } catch (e) {
       if (e instanceof HttpErrorResponse && (e.status === 401 || e.status === 403)) {

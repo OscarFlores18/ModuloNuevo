@@ -42,7 +42,6 @@ export interface PedidoEjecucion {
   ventas: boolean;
   compras: boolean;
   pasos: Record<PasoId, boolean>;
-  carpeta: string;
   xubio: { usuario: string; clave: string; recordar: boolean };
 }
 
