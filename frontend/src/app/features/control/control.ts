@@ -4,7 +4,18 @@ import { AbstractControl, FormBuilder, ReactiveFormsModule, ValidationErrors, Va
 import { Router, RouterLink } from '@angular/router';
 import { startWith } from 'rxjs';
 import { CuitPipe } from '../../core/cuit.pipe';
-import { isoADmy, mesAnterior, nombreDelMes, rangoDelMes } from '../../core/fechas';
+import {
+  aniosRecientes,
+  isoADmy,
+  mesAnterior,
+  nombreDelMes,
+  nombreDelTrimestre,
+  rangoDelAnio,
+  rangoDelMes,
+  rangoDelTrimestre,
+  trimestreAnterior,
+  trimestresRecientes,
+} from '../../core/fechas';
 import { Ajustes, Cliente, PasoId, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
@@ -12,7 +23,8 @@ import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { SesionService } from '../../core/services/sesion.service';
 import { ToastService } from '../../core/ui/toast';
 
-type ModoPeriodo = 'mes' | 'rango';
+type ModoPeriodo = 'mes' | 'trimestre' | 'anio' | 'rango';
+type Operacion = 'ventas' | 'compras' | 'ambas';
 
 /** Los tres pasos (ARCA -> Xubio -> Auditoría) se hacen siempre: no se eligen ni se muestran. */
 const TODOS_LOS_PASOS: Record<PasoId, boolean> = { arca: true, xubio: true, auditoria: true };
@@ -66,7 +78,14 @@ export class NuevoControl {
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly sesion = inject(SesionService);
 
-  protected readonly nombreDelMes = nombreDelMes;
+  protected readonly trimestres = trimestresRecientes();
+  protected readonly anios = aniosRecientes();
+  protected readonly tiposPeriodo: { id: ModoPeriodo; texto: string }[] = [
+    { id: 'mes', texto: 'Mes completo' },
+    { id: 'trimestre', texto: 'Trimestre' },
+    { id: 'anio', texto: 'Año completo' },
+    { id: 'rango', texto: 'Elegir fecha' },
+  ];
   private readonly prefs = leerPreferencias();
 
   /** La credencial de Xubio recordada en el servidor: si coincide el usuario, la clave puede ir vacía. */
@@ -89,6 +108,8 @@ export class NuevoControl {
       {
         modo: this.fb.nonNullable.control<ModoPeriodo>('mes'),
         mes: [mesAnterior(), Validators.required],
+        trimestre: [{ value: trimestreAnterior(), disabled: true }, Validators.required],
+        anio: [{ value: String(new Date().getFullYear() - 1), disabled: true }, Validators.required],
         desde: [{ value: '', disabled: true }, Validators.required],
         hasta: [{ value: '', disabled: true }, Validators.required],
       },
@@ -110,6 +131,17 @@ export class NuevoControl {
   private readonly textoBusqueda = toSignal(this.busqueda.valueChanges, { initialValue: '' });
 
   protected readonly modo = computed(() => this.valor().periodo?.modo ?? 'mes');
+  protected readonly opcionesOperaciones: { id: Operacion; texto: string }[] = [
+    { id: 'ventas', texto: 'Ventas' },
+    { id: 'compras', texto: 'Compras' },
+    { id: 'ambas', texto: 'Las dos' },
+  ];
+
+  /** Lo elegido en Operaciones, como una sola opción (null si no hay ninguna). */
+  protected readonly operacion = computed<Operacion | null>(() => {
+    const o = this.valor().operaciones;
+    return o?.ventas && o?.compras ? 'ambas' : o?.ventas ? 'ventas' : o?.compras ? 'compras' : null;
+  });
   protected readonly seleccion = computed(() => this.valor().clientes ?? []);
 
   protected readonly disponibles = computed(() => {
@@ -131,6 +163,8 @@ export class NuevoControl {
     const p = this.valor().periodo;
     if (!p) return null;
     if (p.modo === 'mes') return rangoDelMes(p.mes ?? '');
+    if (p.modo === 'trimestre') return rangoDelTrimestre(p.trimestre ?? '');
+    if (p.modo === 'anio') return rangoDelAnio(p.anio ?? '');
     const desde = isoADmy(p.desde ?? '');
     const hasta = isoADmy(p.hasta ?? '');
     return desde && hasta ? { desde, hasta } : null;
@@ -146,7 +180,13 @@ export class NuevoControl {
     const v = this.valor();
     const ops = [v.operaciones?.ventas && 'Ventas', v.operaciones?.compras && 'Compras'].filter(Boolean).join(' + ');
     const per = this.periodo();
-    const periodo = !per ? '' : v.periodo?.modo === 'mes' ? nombreDelMes(v.periodo.mes ?? '') : `${per.desde} – ${per.hasta}`;
+    const nombres: Record<ModoPeriodo, () => string> = {
+      mes: () => nombreDelMes(v.periodo?.mes ?? ''),
+      trimestre: () => nombreDelTrimestre(v.periodo?.trimestre ?? ''),
+      anio: () => `año ${v.periodo?.anio}`,
+      rango: () => (per ? `${per.desde} – ${per.hasta}` : ''),
+    };
+    const periodo = per ? nombres[v.periodo?.modo ?? 'mes']() : '';
     return [ops, periodo].filter(Boolean).join(' · ');
   });
 
@@ -177,11 +217,13 @@ export class NuevoControl {
   private reaccionarACambios(): void {
     const { periodo } = this.form.controls;
 
-    // Mes completo: solo «mes». Otro rango: solo «desde» y «hasta».
+    // Cada tipo de período habilita solo sus campos (el resto ni se valida ni se usa).
+    const { mes, trimestre, anio, desde, hasta } = periodo.controls;
+    const campos: Record<ModoPeriodo, AbstractControl[]> = { mes: [mes], trimestre: [trimestre], anio: [anio], rango: [desde, hasta] };
     periodo.controls.modo.valueChanges.pipe(startWith(periodo.controls.modo.value), takeUntilDestroyed(this.destroyRef)).subscribe((modo) => {
-      const rango = modo === 'rango';
-      for (const c of [periodo.controls.desde, periodo.controls.hasta]) rango ? c.enable({ emitEvent: false }) : c.disable({ emitEvent: false });
-      rango ? periodo.controls.mes.disable({ emitEvent: false }) : periodo.controls.mes.enable({ emitEvent: false });
+      for (const [m, lista] of Object.entries(campos)) {
+        for (const c of lista) m === modo ? c.enable({ emitEvent: false }) : c.disable({ emitEvent: false });
+      }
       periodo.updateValueAndValidity();
     });
 
@@ -207,6 +249,12 @@ export class NuevoControl {
     } catch (e) {
       this.toast.error('No se pudo hablar con el servidor', mensajeDeError(e, 'No se cargaron los ajustes.'));
     }
+  }
+
+  protected elegirOperacion(o: Operacion): void {
+    const g = this.form.controls.operaciones;
+    g.setValue({ ventas: o !== 'compras', compras: o !== 'ventas' });
+    g.markAsDirty();
   }
 
   // --- Clientes ----------------------------------------------------------------------

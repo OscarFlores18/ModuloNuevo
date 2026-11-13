@@ -76,11 +76,20 @@
         <legend class="mf-campo-etiqueta">Período</legend>
         <div class="flex flex-wrap items-center gap-2">
           <div class="mf-segmentado" role="radiogroup" aria-label="Tipo de período">
-            <label [class.activo]="modo() === 'mes'"><input type="radio" formControlName="modo" value="mes" class="sr-only" />Mes completo</label>
-            <label [class.activo]="modo() === 'rango'"><input type="radio" formControlName="modo" value="rango" class="sr-only" />Otro rango</label>
+            @for (t of tiposPeriodo; track t.id) {
+              <label [class.activo]="modo() === t.id"><input type="radio" formControlName="modo" [value]="t.id" class="sr-only" />{{ t.texto }}</label>
+            }
           </div>
           @if (modo() === 'mes') {
             <input class="mf-input !w-44" type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
+          } @else if (modo() === 'trimestre') {
+            <select class="mf-select !w-auto" formControlName="trimestre" aria-label="Trimestre" [attr.aria-invalid]="invalido('periodo.trimestre')">
+              @for (t of trimestres; track t.valor) { <option [value]="t.valor">{{ t.texto }}</option> }
+            </select>
+          } @else if (modo() === 'anio') {
+            <select class="mf-select !w-28" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
+              @for (a of anios; track a) { <option [value]="a">{{ a }}</option> }
+            </select>
           } @else {
             <input class="mf-input !w-40" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
             <span class="mf-tenue">a</span>
@@ -89,11 +98,14 @@
         </div>
       </fieldset>
 
-      <fieldset class="m-0 border-0 p-0" formGroupName="operaciones">
+      <fieldset class="m-0 border-0 p-0">
         <legend class="mf-campo-etiqueta">Operaciones</legend>
-        <div class="flex h-[42px] items-center gap-4" [class.mf-grupo-invalido]="invalido('operaciones')">
-          <label class="mf-check !text-texto"><input type="checkbox" formControlName="ventas" />Ventas</label>
-          <label class="mf-check !text-texto"><input type="checkbox" formControlName="compras" />Compras</label>
+        <div class="mf-segmentado" [class.mf-segmentado-invalido]="invalido('operaciones')" role="radiogroup" aria-label="Operaciones a controlar">
+          @for (o of opcionesOperaciones; track o.id) {
+            <label [class.activo]="operacion() === o.id">
+              <input type="radio" name="operaciones" class="sr-only" [checked]="operacion() === o.id" (change)="elegirOperacion(o.id)" />{{ o.texto }}
+            </label>
+          }
         </div>
       </fieldset>
 
