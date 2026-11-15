@@ -5,9 +5,9 @@ description = "Control de facturas (compras y ventas): ARCA Mis Comprobantes con
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110.0",
-    "uvicorn[standard]>=0.29.0",
-    "pydantic-settings>=2.2.1",
-    # Los bots de la raíz del proyecto (bot_arca, bot_xubio, auditor_fo).
+    "uvicorn>=0.30.0",
+    "pydantic>=2.9.0",
+    # Bots (app/bots) y auditoría (app/auditor).
     # Usan el Chrome instalado (channel="chrome"): no hace falta `playwright install`.
     "playwright>=1.40.0",
     "pandas>=2.2.0",
@@ -18,7 +18,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
-    "httpx>=0.27.0",
+    "httpx2>=2.0.0",
 ]
 
 [tool.pytest.ini_options]

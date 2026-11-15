@@ -1,4 +1,4 @@
-# Versiones verificadas en este equipo (Python 3.15.2 / Windows)
+# App de escritorio (legacy). Versiones verificadas con Python 3.13 / Windows
 customtkinter==6.0.0
 pandas==3.1.1
 numpy==2.5.4
