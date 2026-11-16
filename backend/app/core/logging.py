@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from .models import Job, JobLogEntry
+from .saneo import FiltroSaneado, FormatterSaneado, sanear
 
 LOGGER_NAME = "modulonuevo"
 
@@ -26,7 +27,8 @@ def configure_logging(log_dir: Path, level: int = logging.INFO) -> logging.Logge
         return logger
 
     logger.setLevel(level)
-    formato = logging.Formatter(
+    # Todo lo que se escribe pasa por el saneo (contraseñas, CBU, tokens -> ***).
+    formato = FormatterSaneado(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s", "%Y-%m-%d %H:%M:%S"
     )
 
@@ -42,6 +44,16 @@ def configure_logging(log_dir: Path, level: int = logging.INFO) -> logging.Logge
     logger.addHandler(archivo)
 
     logger.propagate = False
+
+    # Librerías de terceros (uvicorn, playwright) también se sanean.
+    for nombre in ("uvicorn", "uvicorn.error", "uvicorn.access", "playwright"):
+        otro = logging.getLogger(nombre)
+        if not any(isinstance(f, FiltroSaneado) for f in otro.filters):
+            otro.addFilter(FiltroSaneado())
+    raiz = logging.getLogger()
+    for handler in raiz.handlers:
+        if not any(isinstance(f, FiltroSaneado) for f in handler.filters):
+            handler.addFilter(FiltroSaneado())
     return logger
 
 
@@ -67,7 +79,7 @@ class JobLog:
         self._logger = get_logger(f"{LOGGER_NAME}.job.{job.id}")
 
     def __call__(self, mensaje: str, level: NivelLog = "info") -> None:
-        texto = str(mensaje).strip()
+        texto = sanear(str(mensaje)).strip()
         if not texto:
             return
         entrada = JobLogEntry(

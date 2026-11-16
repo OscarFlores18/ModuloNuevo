@@ -18,9 +18,14 @@ def nombre_carpeta(texto: str) -> str:
     return limpiar_nombre(texto).rstrip(". ") or "Cliente"
 
 
+# Dentro de la carpeta del período, todo lo del control (ARCA, Xubio y auditoría,
+# Ventas y Compras juntos) va en esta subcarpeta.
+SUBCARPETA_CONTROL = "Control de facturas"
+
+
 def carpeta_cliente(base: Path, cliente: str, mes: str, anio: str) -> Path:
-    """<base>/<Cliente>/<MMAAAA>: los archivos van directo en la carpeta del período."""
-    destino = Path(base) / nombre_carpeta(cliente) / f"{mes}{anio}"
+    """<base>/<Cliente>/<MMAAAA>/Control de facturas: ahí van todos los archivos."""
+    destino = Path(base) / nombre_carpeta(cliente) / f"{mes}{anio}" / SUBCARPETA_CONTROL
     destino.mkdir(parents=True, exist_ok=True)
     return destino
 

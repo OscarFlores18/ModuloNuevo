@@ -38,6 +38,16 @@ class CredencialInvalida(BotError):
     code = "credencial_invalida"
 
 
+class ConsentimientoRevocado(BotError):
+    """El permiso para usar la credencial ya no está vigente (JIT).
+
+    Se verifica justo antes de inyectar la credencial: si la ejecución se
+    canceló, el consentimiento venció o se usó el botón de pánico, se aborta.
+    """
+
+    code = "consentimiento_revocado"
+
+
 class LoginError(BotError):
     code = "login_error"
 

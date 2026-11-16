@@ -196,3 +196,60 @@ def test_yo_usa_encabezados(entorno):
     assert datos["id"] == "7"
     assert datos["nombre"] == "Ana"
     assert datos["roles"] == ["empleado"]
+
+
+def test_arca_y_xubio_corren_en_paralelo(cliente_demo, sin_pausa, tmp_path, monkeypatch):
+    """ARCA y Xubio no se esperan entre sí: cada uno en su hilo y navegador."""
+    import threading
+
+    hilos: dict[str, str] = {}
+    adentro = {"arca": threading.Event(), "xubio": threading.Event()}
+
+    class _ArcaLenta(_SesionArcaFalsa):
+        def descargar(self, *args, **kwargs):
+            hilos["arca"] = threading.current_thread().name
+            adentro["arca"].set()
+            # Si Xubio no arranca mientras ARCA está adentro, no es paralelo.
+            assert adentro["xubio"].wait(2), "Xubio esperó a que termine ARCA"
+            return super().descargar(*args, **kwargs)
+
+    class _XubioLenta(_SesionXubioFalsa):
+        def descargar(self, *args, **kwargs):
+            hilos["xubio"] = threading.current_thread().name
+            adentro["xubio"].set()
+            assert adentro["arca"].wait(2), "ARCA esperó a que termine Xubio"
+            return super().descargar(*args, **kwargs)
+
+    class _Gestor(_GestorFalso):
+        def arca(self, cuit_login, clave):
+            return _ArcaLenta()
+
+        def xubio(self, usuario, password):
+            return _XubioLenta()
+
+    monkeypatch.setattr(ejecuciones_srv, "GestorSesiones", _Gestor)
+    respuesta = cliente_demo.post(
+        "/api/ejecuciones",
+        json={
+            "clientes": ["Acme"],
+            "desde": "01/03/2025",
+            "hasta": "31/03/2025",
+            "ventas": True,
+            "compras": False,
+            "pasos": {"arca": True, "xubio": True, "auditoria": True},
+            "carpeta": str(tmp_path / "salidas"),
+            "xubio": {"usuario": "operador", "clave": "clave-xubio"},
+        },
+    )
+    assert respuesta.status_code == 201, respuesta.text
+    ejecucion_id = respuesta.json()["id"]
+    for _ in range(300):
+        detalle = cliente_demo.get(f"/api/ejecuciones/{ejecucion_id}").json()
+        if detalle["estado"] in {"finalizada", "cancelada", "error"}:
+            break
+        time.sleep(0.02)
+
+    pasos = {p["id"]: p["estado"] for p in detalle["detalle_clientes"][0]["pasos"]}
+    assert pasos["arca_ventas"] == "ok", detalle
+    assert pasos["xubio"] == "ok", detalle
+    assert hilos["arca"] != hilos["xubio"]

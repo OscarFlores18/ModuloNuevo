@@ -1,7 +1,9 @@
 """Persistencia en JSON.
 
 Las credenciales (``arca.clave`` en ``config.json`` y ``pass`` en
-``xubio_credenciales.json``) se guardan **cifradas** con :mod:`core.crypto`.
+``xubio_credenciales.json``) se guardan **cifradas** con :mod:`core.crypto`
+(cifrado de sobre: AES-256-GCM con una DEK por credencial, envuelta por la
+KEK del KMS). La KEK nunca se escribe en estos archivos.
 
 Separación de responsabilidades:
 
@@ -21,7 +23,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .crypto import cifrar, esta_cifrado
+from typing import Callable
+
+from .crypto import cifrar, es_formato_vigente, migrar_valor
 from .errors import ConfigInvalida
 
 
@@ -169,8 +173,11 @@ class ClientesRepository:
             self.store.write(data)
             return True
 
-    def cifrar_pendientes(self) -> int:
-        """Cifra las claves que hayan quedado en texto plano. Devuelve cuántas."""
+    def transformar_secretos(self, funcion: Callable[[str], str]) -> int:
+        """Aplica ``funcion`` a cada ``arca.clave`` guardada. Devuelve cuántas cambiaron.
+
+        Lo usan la migración (texto plano / v1 -> v2) y la rotación de la KEK.
+        """
         with self._lock:
             data = self._cargar()
             cambios = 0
@@ -181,12 +188,38 @@ class ClientesRepository:
                 if not isinstance(arca, dict):
                     continue
                 clave = str(arca.get("clave") or "")
-                if clave and not esta_cifrado(clave):
-                    arca["clave"] = cifrar(clave)
+                if not clave:
+                    continue
+                nueva = funcion(clave)
+                if nueva != clave:
+                    arca["clave"] = nueva
                     cambios += 1
             if cambios:
                 self.store.write(data)
             return cambios
+
+    def cifrar_pendientes(self) -> int:
+        """Pasa a ``enc:v2`` las claves en texto plano o en ``enc:v1``."""
+        return self.transformar_secretos(migrar_valor)
+
+    def borrar_claves(self, nombre: str | None = None) -> int:
+        """Borrado físico de la clave de ARCA (y su DEK) de uno o de todos.
+
+        Se reescribe el JSON sin el campo: no queda marca de "borrado", el
+        valor cifrado y su DEK envuelta desaparecen del archivo.
+        """
+        with self._lock:
+            data = self._cargar()
+            borradas = 0
+            for clave_cliente, datos in data["clientes"].items():
+                if nombre is not None and clave_cliente != nombre:
+                    continue
+                arca = datos.get("arca") if isinstance(datos, dict) else None
+                if isinstance(arca, dict) and arca.pop("clave", None):
+                    borradas += 1
+            if borradas:
+                self.store.write(data)
+            return borradas
 
 
 class CredencialesXubioRepository:
@@ -236,12 +269,25 @@ class CredencialesXubioRepository:
         self.store.write(datos)
         return datos
 
-    def cifrar_pendientes(self) -> int:
-        """Cifra la contraseña si quedó en texto plano. Devuelve 1 o 0."""
+    def transformar_secretos(self, funcion: Callable[[str], str]) -> int:
+        """Aplica ``funcion`` a la contraseña guardada. Devuelve 1 o 0."""
         datos = self.obtener_cifrado()
         clave = datos["pass"]
-        if clave and not esta_cifrado(clave):
-            datos["pass"] = cifrar(clave)
-            self.store.write(datos)
-            return 1
-        return 0
+        if not clave:
+            return 0
+        nueva = funcion(clave)
+        if nueva == clave:
+            return 0
+        datos["pass"] = nueva
+        self.store.write(datos)
+        return 1
+
+    def cifrar_pendientes(self) -> int:
+        """Pasa a ``enc:v2`` la contraseña en texto plano o en ``enc:v1``."""
+        return self.transformar_secretos(migrar_valor)
+
+    def borrar(self) -> bool:
+        """Borrado físico del usuario, la contraseña cifrada y su DEK."""
+        tenia = bool(self.obtener_cifrado()["pass"])
+        self.store.write({"user": "", "pass": "", "recordar": False})
+        return tenia

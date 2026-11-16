@@ -5,6 +5,7 @@ import localeEsAr from '@angular/common/locales/es-AR';
 import { provideRouter, withComponentInputBinding } from '@angular/router';
 import { routes } from './app.routes';
 import { EjecucionStore } from './core/services/ejecucion.store';
+import { accesoClientesInterceptor } from './core/services/acceso-clientes.service';
 import { SesionService, sesionInterceptor } from './core/services/sesion.service';
 
 registerLocaleData(localeEsAr);
@@ -13,7 +14,7 @@ export const appConfig: ApplicationConfig = {
   providers: [
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes, withComponentInputBinding()),
-    provideHttpClient(withInterceptors([sesionInterceptor])),
+    provideHttpClient(withInterceptors([sesionInterceptor, accesoClientesInterceptor])),
     // Antes de la primera pantalla: quién es (pase de ContadorWeb o usuario de prueba)
     // y si hay un control corriendo en el servidor.
     provideAppInitializer(async () => {

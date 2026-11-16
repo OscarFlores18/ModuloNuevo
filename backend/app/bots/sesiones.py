@@ -16,6 +16,7 @@ from typing import Callable
 
 from playwright.sync_api import sync_playwright
 
+from ..core.secreto import Secreto
 from .arca import SesionArca
 from .xubio import SesionXubio
 
@@ -37,9 +38,17 @@ class GestorSesiones:
         return self._pw
 
     # -- ARCA --------------------------------------------------------------
-    def arca(self, cuit_login: str, clave: str) -> SesionArca:
-        """La sesión de ARCA para esas credenciales (se crea la primera vez)."""
-        clave_sesion = ((cuit_login or "").strip(), clave or "")
+    def arca(self, cuit_login: str, clave) -> SesionArca:
+        """La sesión de ARCA para esas credenciales (se crea la primera vez).
+
+        ``clave`` puede ser una fuente JIT (invocable) o un ``str``/``Secreto``.
+        La sesión se indexa por CUIT y una huella efímera: nunca por la clave.
+        """
+        if callable(clave) and not isinstance(clave, Secreto):
+            huella = "jit"
+        else:
+            huella = Secreto.de(clave).huella()
+        clave_sesion = ((cuit_login or "").strip(), huella)
         sesion = self._arca.get(clave_sesion)
         if sesion is None:
             sesion = SesionArca(

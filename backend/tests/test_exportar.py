@@ -39,7 +39,7 @@ def _ejecucion(tmp_path):
 
 
 def test_carpeta_elegida_recibe_solo_las_subcarpetas(entorno, tmp_path, monkeypatch):
-    """Se elige la carpeta del cliente que ya existe: adentro va mmaaaa con los archivos."""
+    """Se elige la carpeta del cliente que ya existe: adentro va mmaaaa/Control de facturas."""
     client, _ = entorno
     _ejecucion(tmp_path)
     destino = tmp_path / "Clientes" / "Cliente SA"
@@ -50,8 +50,9 @@ def test_carpeta_elegida_recibe_solo_las_subcarpetas(entorno, tmp_path, monkeypa
 
     assert r.status_code == 200, r.text
     datos = r.json()
-    carpeta = destino / "102026"
+    carpeta = destino / "102026" / "Control de facturas"
     assert datos["carpeta"] == str(carpeta) and datos["elegida"] is True
+    assert [p.name for p in (destino / "102026").iterdir()] == ["Control de facturas"]
     assert sorted(p.name for p in carpeta.iterdir()) == sorted(datos["copiados"])
     assert len(datos["copiados"]) == 3 and datos["fallas"] == []
     assert (carpeta / "IVA VENTAS - X.xlsx").read_bytes() == b"IVA VENTAS - X.xlsx"
@@ -70,7 +71,7 @@ def test_sin_elegir_se_crea_la_carpeta_del_cliente_en_descargas(entorno, tmp_pat
     assert r.status_code == 200, r.text
     datos = r.json()
     # El punto final del nombre se saca: Windows no admite carpetas que terminen en punto.
-    carpeta = casa / "Downloads" / "Cliente SA" / "102026"
+    carpeta = casa / "Downloads" / "Cliente SA" / "102026" / "Control de facturas"
     assert datos["carpeta"] == str(carpeta) and datos["elegida"] is False
     assert len(list(carpeta.iterdir())) == 3
 
@@ -89,7 +90,7 @@ def test_elegir_descargas_tal_cual_crea_la_carpeta_del_cliente(entorno, tmp_path
 
     assert r.status_code == 200, r.text
     datos = r.json()
-    assert datos["carpeta"] == str(descargas / "Cliente SA" / "102026") and datos["elegida"] is False
+    assert datos["carpeta"] == str(descargas / "Cliente SA" / "102026" / "Control de facturas") and datos["elegida"] is False
     assert not (descargas / "102026").exists()
 
 
@@ -171,7 +172,7 @@ def test_no_se_puede_bajar_un_archivo_de_otro_control(entorno, tmp_path, monkeyp
     assert r.status_code == 404
 
 
-def test_ventas_y_compras_van_en_subcarpetas(tmp_path):
+def test_ventas_y_compras_van_juntos_en_control_de_facturas(tmp_path):
     origen = tmp_path / "salidas" / "Cliente SA" / "112026"
     origen.mkdir(parents=True)
     nombres = [
@@ -196,12 +197,11 @@ def test_ventas_y_compras_van_en_subcarpetas(tmp_path):
 
     carpeta = destino / "112026"
     assert r["fallas"] == [] and len(r["copiados"]) == 6
-    assert sorted(p.name for p in carpeta.iterdir()) == ["Compras", "Ventas"]
-    assert sorted(p.name for p in (carpeta / "Ventas").iterdir()) == sorted(n for n in nombres if "Emitidos" in n or "VENTAS" in n or "Ventas" in n)
-    assert sorted(p.name for p in (carpeta / "Compras").iterdir()) == sorted(n for n in nombres if "Recibidos" in n or "COMPRAS" in n or "Compras" in n)
+    assert [p.name for p in carpeta.iterdir()] == ["Control de facturas"]
+    assert sorted(p.name for p in (carpeta / "Control de facturas").iterdir()) == sorted(nombres)
 
 
-def test_una_sola_operacion_queda_sin_subcarpetas(entorno, tmp_path, monkeypatch):
+def test_una_sola_operacion_tambien_va_en_control_de_facturas(entorno, tmp_path, monkeypatch):
     client, _ = entorno
     ej = _ejecucion(tmp_path)  # solo los parámetros de fecha: ni ventas ni compras juntas
     ej.parametros.update({"ventas": True, "compras": False})
@@ -212,7 +212,7 @@ def test_una_sola_operacion_queda_sin_subcarpetas(entorno, tmp_path, monkeypatch
     r = client.post("/api/ejecuciones/exp123/clientes/0/exportar")
 
     assert r.status_code == 200, r.text
-    assert sorted(p.name for p in (destino / "102026").iterdir()) == sorted(r.json()["copiados"])
+    assert sorted(p.name for p in (destino / "102026" / "Control de facturas").iterdir()) == sorted(r.json()["copiados"])
 
 
 def test_operacion_de_cada_archivo():
@@ -255,7 +255,7 @@ def test_zip_con_la_misma_estructura_de_carpetas(entorno, tmp_path, monkeypatch)
     assert "Cliente%20SA%20-%20102026.zip" in r.headers["content-disposition"]
     nombres = sorted(zipfile.ZipFile(io.BytesIO(r.content)).namelist())
     assert nombres == [
-        "Cliente SA/102026/AUX - Control X.xlsx",
-        "Cliente SA/102026/Ventas/IVA VENTAS - X.xlsx",
-        "Cliente SA/102026/Ventas/Mis comprobantes - Emitidos - X.xlsx",
+        "Cliente SA/102026/Control de facturas/AUX - Control X.xlsx",
+        "Cliente SA/102026/Control de facturas/IVA VENTAS - X.xlsx",
+        "Cliente SA/102026/Control de facturas/Mis comprobantes - Emitidos - X.xlsx",
     ]

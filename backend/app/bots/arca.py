@@ -34,6 +34,7 @@ from playwright.sync_api import Page, sync_playwright
 from ..core import config
 from ..core.errors import BotError, SesionVencida, TimeoutDescarga
 from ..core.models import BotResult
+from .navegador import como_fuente, inyectar, lanzar, nuevo_contexto
 
 # Marcas con las que ARCA contesta cuando la sesión ya no vale.
 MARCAS_SESION_VENCIDA = ("MISSING_AUTHENTICATION_INFO", "HTTP Status 401", "F1:username")
@@ -101,7 +102,9 @@ class SesionArca:
         # Playwright sync admite uno solo por hilo: si viene de afuera, no es nuestro.
         self._pw_ajeno = playwright
         self.cuit_login = (cuit_login or "").strip()
-        self.clave = clave or ""
+        # La clave no se guarda como str: es una fuente que entrega un Secreto
+        # en el momento de escribirlo (JIT) y que se borra después.
+        self._fuente_clave, self._clave_jit = como_fuente(clave)
         self.log = log
         self.intervalo_ping_s = intervalo_ping_s or config.ARCA_PING_MIN * 60
         self.renovar_s = renovar_s or config.ARCA_RENOVAR_MIN * 60
@@ -119,14 +122,9 @@ class SesionArca:
             return self
         self._pw = self._pw_ajeno or sync_playwright().start()
         try:
-            opciones: dict[str, object] = {"headless": config.PLAYWRIGHT_HEADLESS}
-            if config.PLAYWRIGHT_CHANNEL:
-                opciones["channel"] = config.PLAYWRIGHT_CHANNEL
-            if not config.PLAYWRIGHT_HEADLESS:
-                opciones["args"] = ["--start-maximized"]
-            self._browser = self._pw.chromium.launch(**opciones)
-            self._context = self._browser.new_context(
-                no_viewport=not config.PLAYWRIGHT_HEADLESS
+            self._browser = lanzar(self._pw, maximizado=not config.PLAYWRIGHT_HEADLESS)
+            self._context = nuevo_contexto(
+                self._browser, self.log, no_viewport=not config.PLAYWRIGHT_HEADLESS
             )
             self._context.accept_downloads = True
             self._portal = self._context.new_page()
@@ -142,6 +140,8 @@ class SesionArca:
             if self._browser is not None:
                 self._browser.close()
         finally:
+            if not self._clave_jit:
+                self._fuente_clave().borrar()
             self._browser = None
             self._context = None
             self._portal = None
@@ -199,11 +199,10 @@ class SesionArca:
         self._ir(page, URL_LOGIN)
         page.fill("id=F1:username", self.cuit_login)
         page.click("id=F1:btnSiguiente")
-        page.fill("id=F1:password", self.clave)
+        inyectar(page, "id=F1:password", self._fuente_clave, self._clave_jit)
         page.click("id=F1:btnIngresar")
 
         page.wait_for_selector("#buscadorInput", timeout=30000)
-        page.wait_for_timeout(500)
         self._login_ts = time.monotonic()
         self._ultimo_ping = self._login_ts
         self.log("      [OK]: Sesión de ARCA iniciada.")
@@ -276,12 +275,13 @@ class SesionArca:
         if portal.locator("#buscadorInput").count() == 0:
             self._ir(portal, URL_PORTAL)
             portal.wait_for_selector("#buscadorInput", timeout=30000)
-            portal.wait_for_timeout(500)
 
         buscador = portal.locator("#buscadorInput")
         buscador.click()
-        buscador.press_sequentially(SERVICIO, delay=30)
+        buscador.fill("")
+        buscador.press_sequentially(SERVICIO, delay=10)
 
+        # Tiempo para que el buscador del portal muestre la sugerencia.
         portal.wait_for_timeout(800)
         portal.keyboard.press("ArrowDown")
         portal.wait_for_timeout(200)
@@ -291,12 +291,21 @@ class SesionArca:
         servicio = nueva_pestana_info.value
         servicio.on("dialog", self._manejar_dialogo)
 
-        # Selección de perfil (si ARCA la pide).
+        # Selección de perfil (si ARCA la pide). Se espera lo que llegue primero:
+        # la pantalla de perfiles o el servicio ya abierto. Antes se esperaban
+        # 2,5 s fijos aunque ARCA no pidiera perfil.
+        titulo_eleccion = servicio.get_by_text(
+            "Elegí una persona para ingresar", exact=False
+        )
         try:
-            titulo_eleccion = servicio.get_by_text(
-                "Elegí una persona para ingresar", exact=False
+            servicio.locator("#btnEmitidos").or_(titulo_eleccion).first.wait_for(
+                state="visible", timeout=20000
             )
-            titulo_eleccion.wait_for(state="visible", timeout=2500)
+        except Exception:
+            pass
+        try:
+            if not titulo_eleccion.is_visible():
+                raise LookupError("ARCA no pidió elegir perfil.")
             cuit_limpio = (cuit_representado or "").strip()
             cuit_formateado = (
                 f"{cuit_limpio[:2]}-{cuit_limpio[2:10]}-{cuit_limpio[10:]}"
@@ -308,6 +317,8 @@ class SesionArca:
             ).first
             tarjeta_empresa.click()
             servicio.wait_for_timeout(500)
+        except LookupError:
+            pass
         except Exception as exc:
             self.log(
                 f"      [INFO]: Selección de perfil no aplicó o no se pudo "
@@ -340,6 +351,44 @@ class SesionArca:
         raise SesionVencida("No se pudo entrar a Mis Comprobantes de ARCA.")
 
     # -- descarga ----------------------------------------------------------
+    def _apretar_tipo(self, servicio: Page, boton_tipo, tipo_comprobante: str) -> None:
+        """Aprieta Emitidos/Recibidos hasta que aparezca el filtro de fechas.
+
+        Si se aprieta apenas el botón se ve, ARCA todavía no terminó de cargar
+        su JS y el click no hace nada. Se espera la carga completa y, si el
+        filtro no aparece en unos segundos, se vuelve a apretar (hasta 3 veces).
+        """
+        try:
+            servicio.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass
+        fecha = servicio.locator("#fechaEmision")
+        for intento in (1, 2, 3):
+            try:
+                if intento == 1:
+                    boton_tipo.click(timeout=5000)
+                else:
+                    self.log(
+                        f"      [AVISO]: ARCA no respondió al botón '{tipo_comprobante}'. "
+                        f"Reintento {intento}/3..."
+                    )
+                    boton_tipo.evaluate("el => el.click()", timeout=3000)
+            except Exception as exc:
+                self.log(f"      [AVISO]: No se pudo apretar '{tipo_comprobante}': {exc}")
+            try:
+                fecha.wait_for(state="visible", timeout=6000 if intento < 3 else 15000)
+                return
+            except Exception:
+                if self._es_sesion_vencida(servicio):
+                    raise SesionVencida(
+                        "ARCA pidió volver a iniciar sesión al elegir el tipo de comprobante."
+                    ) from None
+        raise TimeoutDescarga(
+            f"ARCA no mostró el filtro de fechas después de apretar '{tipo_comprobante}' "
+            "tres veces. Puede estar lento: probá de nuevo en unos minutos.",
+            detalle={"tipo": tipo_comprobante},
+        )
+
     def descargar(
         self,
         servicio: Page,
@@ -361,43 +410,13 @@ class SesionArca:
             tab_consulta = servicio.locator('a[href="#tabConsulta"]')
             if tab_consulta.count() and tab_consulta.first.is_visible():
                 tab_consulta.first.click()
-                servicio.wait_for_timeout(500)
         except Exception:
             pass
 
         boton_id = "#btnEmitidos" if tipo_comprobante == "Emitidos" else "#btnRecibidos"
         boton_tipo = servicio.locator(boton_id).first
         self.log(f"   -> Apretando botón '{tipo_comprobante}'...")
-        try:
-            boton_tipo.click(timeout=5000)
-        except Exception as exc:
-            self.log(f"      [AVISO]: Click normal no llegó a tiempo ({exc}). Forzando con JS...")
-            try:
-                boton_tipo.evaluate("el => el.click()", timeout=3000)
-            except Exception as exc2:
-                self.log(
-                    f"      [ERROR]: No se pudo apretar el botón "
-                    f"'{tipo_comprobante}': {exc2}"
-                )
-
-        servicio.wait_for_timeout(1500)
-
-        try:
-            info_boton = boton_tipo.evaluate(
-                """(el) => {
-                    const li = el.closest('li');
-                    const contenedor = li || el;
-                    return JSON.stringify({
-                        clases_boton: el.className,
-                        aria_selected: el.getAttribute('aria-selected'),
-                        clases_contenedor: contenedor.className,
-                    });
-                }""",
-                timeout=2000,
-            )
-            self.log(f"      [DEBUG]: Estado de '{tipo_comprobante}' tras click: {info_boton}")
-        except Exception:
-            pass
+        self._apretar_tipo(servicio, boton_tipo, tipo_comprobante)
 
         fecha_desde_actual = fecha_desde
         fecha_hasta_actual = fecha_hasta
@@ -417,25 +436,20 @@ class SesionArca:
             caja_fecha = servicio.locator("#fechaEmision")
 
             caja_fecha.click(timeout=3000)
-            servicio.wait_for_timeout(800)
+            servicio.wait_for_timeout(250)
 
             caja_fecha.click(click_count=3, timeout=3000)
-            servicio.wait_for_timeout(200)
             servicio.keyboard.press("Backspace")
-            servicio.wait_for_timeout(200)
 
             caja_fecha.press_sequentially(rango_fechas, delay=5)
-            servicio.wait_for_timeout(400)
+            servicio.wait_for_timeout(150)
 
             caja_fecha.press("Enter")
-            servicio.wait_for_timeout(400)
+            servicio.wait_for_timeout(150)
 
             boton_buscar = servicio.locator("#buscarComprobantes")
             boton_buscar.scroll_into_view_if_needed()
-            servicio.wait_for_timeout(150)
-
             boton_buscar.click(timeout=3000)
-            servicio.wait_for_timeout(700)
 
             # --- PROCESO DE DESCARGA ---
             if bajar_csv and not bajar_excel:
@@ -470,7 +484,6 @@ class SesionArca:
                     ) from exc
 
                 servicio.click('a[href="#tabConsulta"]')
-                servicio.wait_for_timeout(1000)
                 continue
 
             try:
@@ -508,7 +521,6 @@ class SesionArca:
                     break
 
                 servicio.click('a[href="#tabConsulta"]')
-                servicio.wait_for_timeout(1000)
 
             except Exception as exc:
                 if self._es_sesion_vencida(servicio):
@@ -552,7 +564,6 @@ class SesionArca:
                     )
 
                 servicio.click('a[href="#tabConsulta"]')
-                servicio.wait_for_timeout(1000)
 
         # --- UNIFICACIÓN ---
         mes_anio_desde = formatear_mes_anio(fecha_desde)
@@ -598,7 +609,6 @@ class SesionArca:
             except Exception:
                 pass
 
-        servicio.wait_for_timeout(1500)
         return resultado
 
 

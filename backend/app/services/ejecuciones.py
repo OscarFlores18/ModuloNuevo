@@ -23,6 +23,7 @@ import re
 import shutil
 import threading
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 import uuid
 import zipfile
 from dataclasses import dataclass, field
@@ -34,7 +35,8 @@ from ..auditor.cruce_fo import texto_letras_distintas
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
-from ..core.paths import carpeta_cliente, nombre_carpeta
+from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente, nombre_carpeta
+from ..core.saneo import sanear
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from .credenciales import ServicioCredenciales
 
@@ -121,9 +123,12 @@ class Ejecucion:
     # Interno: la respuesta a la pausa.
     _respuesta: str | None = None
     _evento: threading.Event = field(default_factory=threading.Event)
+    # Errores registrados por hilo: ARCA y Xubio corren en paralelo y cada paso
+    # tiene que ver solo los suyos.
+    _errores_hilo: dict = field(default_factory=dict)
 
     def registrar(self, texto: str, tipo: str | None = None) -> None:
-        texto = _EMOJIS.sub("", str(texto)).rstrip()
+        texto = sanear(_EMOJIS.sub("", str(texto))).rstrip()
         if not texto.strip():
             return
         self.log.append(
@@ -133,6 +138,10 @@ class Ejecucion:
             sobra = len(self.log) - MAX_LINEAS_LOG
             del self.log[:sobra]
             self.log_base += sobra
+        if (tipo or _tipo_de_linea(texto)) == "error":
+            hilo = threading.get_ident()
+            cantidad, _ = self._errores_hilo.get(hilo, (0, ""))
+            self._errores_hilo[hilo] = (cantidad + 1, texto.strip())
         self._a_disco(texto)
 
     def _a_disco(self, texto: str) -> None:
@@ -409,7 +418,8 @@ def listar_archivos(carpeta: Path, desde_ts: float | None = None) -> list[dict]:
 def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> BaseException | None:
     paso.estado = "en_curso"
     paso.inicio = _ahora()
-    desde = ej.log_base + len(ej.log)
+    hilo = threading.get_ident()
+    errores_antes = ej._errores_hilo.get(hilo, (0, ""))[0]
     error: BaseException | None = None
     try:
         funcion()
@@ -420,14 +430,10 @@ def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> BaseException | None:
         ej.registrar(f" [ERROR] {paso.etiqueta}: {exc}", "error")
     else:
         # Algunos bots atrapan su propio error y solo lo registran.
-        errores = [
-            linea["texto"]
-            for linea in ej.log[max(0, desde - ej.log_base) :]
-            if linea["tipo"] == "error"
-        ]
-        if errores:
+        errores_despues, ultimo = ej._errores_hilo.get(hilo, (0, ""))
+        if errores_despues > errores_antes:
             paso.estado = "aviso"
-            paso.mensaje = errores[-1].strip()[:300]
+            paso.mensaje = ultimo[:300]
         else:
             paso.estado = "ok"
     paso.fin = _ahora()
@@ -452,11 +458,51 @@ def _pausa(ej: Ejecucion, cliente: str) -> str:
     return ej._respuesta or "continuar"
 
 
+class _HiloBot:
+    """Un hilo dedicado con su propio ``GestorSesiones``.
+
+    Playwright sync solo deja usar un navegador desde el hilo que lo abrió, y
+    las sesiones se reutilizan entre clientes: por eso cada portal tiene su
+    hilo fijo durante toda la ejecución.
+    """
+
+    def __init__(self, nombre: str, log) -> None:
+        self._local = threading.local()
+        self._log = log
+        self._ejecutor: ThreadPoolExecutor | None = None
+        self._nombre = nombre
+
+    def _gestor(self) -> GestorSesiones:
+        gestor = getattr(self._local, "gestor", None)
+        if gestor is None:
+            gestor = self._local.gestor = GestorSesiones(log=self._log)
+        return gestor
+
+    def enviar(self, funcion) -> Future:
+        if self._ejecutor is None:
+            self._ejecutor = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix=f"bot-{self._nombre}"
+            )
+        return self._ejecutor.submit(lambda: funcion(self._gestor()))
+
+    def cerrar(self) -> None:
+        if self._ejecutor is None:
+            return
+        try:
+            self._ejecutor.submit(
+                lambda: getattr(self._local, "gestor", None) and self._local.gestor.cerrar()
+            ).result(timeout=120)
+        except Exception:
+            pass
+        self._ejecutor.shutdown(wait=False)
+        self._ejecutor = None
+
 
 def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> None:
     p = ej.parametros
     _, mes, anio = p["desde"].split("/")
-    gestor = GestorSesiones(log=ej.registrar)
+    hilo_arca = _HiloBot("arca", ej.registrar)
+    hilo_xubio = _HiloBot("xubio", ej.registrar)
     try:
         ej.registrar("[INICIO] CONTROL DE FACTURAS")
         ej.registrar(
@@ -525,14 +571,15 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                         sesion.renovar()
                 return None
 
-            try:
-                for paso in cli.pasos:
-                    if ej.cancelar_pedido:
-                        paso.estado = "omitido"
-                        continue
-                    ej.registrar(f" -> {paso.etiqueta}")
-
-                    if paso.id in ("arca_ventas", "arca_compras"):
+            def correr_pasos_arca(gestor, _pasos=[x for x in cli.pasos if x.id.startswith("arca_")]):
+                """Hilo de ARCA: Ventas y Compras en la misma sesión."""
+                nonlocal servicio_arca
+                try:
+                    for paso in _pasos:
+                        if ej.cancelar_pedido:
+                            paso.estado = "omitido"
+                            continue
+                        ej.registrar(f" -> {paso.etiqueta}")
                         tipo = "Emitidos" if paso.id == "arca_ventas" else "Recibidos"
 
                         def hacer_paso_arca(_tipo=tipo):
@@ -540,65 +587,84 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             return hacer_arca(sesion, _tipo)
 
                         _correr_paso(ej, paso, hacer_paso_arca)
+                        cli.archivos = listar_archivos(carpeta, inicio_cliente)
+                finally:
+                    if servicio_arca is not None:
+                        try:
+                            servicio_arca.close()
+                        except Exception:
+                            pass
+                        servicio_arca = None
 
-                    elif paso.id == "xubio":
-                        def hacer_xubio():
-                            sesion = gestor.xubio(p["xubio_usuario"], xubio_clave)
-                            sesion.cambiar_empresa(cli.nombre)
-                            return sesion.descargar(
-                                cli.nombre,
-                                p["desde"],
-                                p["hasta"],
-                                p["ventas"],
-                                p["compras"],
-                                str(carpeta),
-                            )
+            def correr_paso_xubio(gestor, _pasos=[x for x in cli.pasos if x.id == "xubio"]):
+                """Hilo de Xubio: corre a la par de ARCA."""
+                for paso in _pasos:
+                    if ej.cancelar_pedido:
+                        paso.estado = "omitido"
+                        continue
+                    ej.registrar(f" -> {paso.etiqueta}")
 
-                        error = _correr_paso(ej, paso, hacer_xubio)
-                        if error is not None:
-                            gestor.descartar_xubio()
-
-                    elif paso.id.startswith("auditoria_"):
-                        operacion = (
-                            "Ventas" if paso.id == "auditoria_ventas" else "Compras"
+                    def hacer_xubio():
+                        sesion = gestor.xubio(p["xubio_usuario"], xubio_clave)
+                        sesion.cambiar_empresa(cli.nombre)
+                        return sesion.descargar(
+                            cli.nombre,
+                            p["desde"],
+                            p["hasta"],
+                            p["ventas"],
+                            p["compras"],
+                            str(carpeta),
                         )
-                        letras: list[dict] = []
 
-                        _correr_paso(
-                            ej,
-                            paso,
-                            lambda op=operacion: procesar_cruce(
-                                cli.nombre,
-                                op,
-                                p["desde"],
-                                p["hasta"],
-                                str(carpeta),
-                                log=ej.registrar,
-                                avisar_letras_distintas=letras.extend,
-                            ),
-                        )
-                        # Duplicados y letras distintas no frenan: la auditoría se hace
-                        # y el paso queda OK. La letra distinta se avisa al terminar
-                        # (SweetAlert2 en la web).
-                        if letras:
-                            texto = texto_letras_distintas(cli.nombre, operacion, letras)
-                            ej.advertencias.append(
-                                {
-                                    "tipo": "letra_distinta",
-                                    "cliente": cli.nombre,
-                                    "operacion": operacion,
-                                    "texto": texto,
-                                    "comprobantes": list(letras),
-                                }
-                            )
-
+                    if _correr_paso(ej, paso, hacer_xubio) is not None:
+                        gestor.descartar_xubio()
                     cli.archivos = listar_archivos(carpeta, inicio_cliente)
-            finally:
-                if servicio_arca is not None:
-                    try:
-                        servicio_arca.close()
-                    except Exception:
-                        pass
+
+            # ARCA y Xubio no dependen uno del otro: se bajan en paralelo, cada
+            # uno en su hilo con su navegador. La auditoría espera a los dos.
+            futuros = []
+            if any(x.id.startswith("arca_") for x in cli.pasos):
+                futuros.append(hilo_arca.enviar(correr_pasos_arca))
+            if any(x.id == "xubio" for x in cli.pasos):
+                futuros.append(hilo_xubio.enviar(correr_paso_xubio))
+            for futuro in futuros:
+                futuro.result()
+
+            for paso in cli.pasos:
+                if not paso.id.startswith("auditoria_"):
+                    continue
+                if ej.cancelar_pedido:
+                    paso.estado = "omitido"
+                    continue
+                ej.registrar(f" -> {paso.etiqueta}")
+                operacion = "Ventas" if paso.id == "auditoria_ventas" else "Compras"
+                letras: list[dict] = []
+                _correr_paso(
+                    ej,
+                    paso,
+                    lambda op=operacion: procesar_cruce(
+                        cli.nombre,
+                        op,
+                        p["desde"],
+                        p["hasta"],
+                        str(carpeta),
+                        log=ej.registrar,
+                        avisar_letras_distintas=letras.extend,
+                    ),
+                )
+                # Duplicados y letras distintas no frenan: la auditoría se hace
+                # y el paso queda OK. La letra distinta se avisa al terminar
+                # (SweetAlert2 en la web).
+                if letras:
+                    ej.advertencias.append(
+                        {
+                            "tipo": "letra_distinta",
+                            "cliente": cli.nombre,
+                            "operacion": operacion,
+                            "texto": texto_letras_distintas(cli.nombre, operacion, letras),
+                            "comprobantes": list(letras),
+                        }
+                    )
 
             cli.archivos = listar_archivos(carpeta, inicio_cliente)
             cli.estado = (
@@ -640,7 +706,8 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
         ej.mensaje = f"El control se cortó: {exc}"
         ej.registrar(f"[ERROR] El control se cortó: {exc}", "error")
     finally:
-        gestor.cerrar()
+        hilo_arca.cerrar()
+        hilo_xubio.cerrar()
         ej.pausa = None
         ej.cliente_actual = -1
         ej.terminada = _ahora()
@@ -697,18 +764,16 @@ def operacion_de(nombre: str) -> str | None:
 
 def plan_de_archivos(ej: Ejecucion, indice: int) -> tuple[Path, list[tuple[str, Path]]]:
     """La carpeta de origen y, por archivo, su ruta relativa dentro de <mmaaaa>:
-    `Ventas/…` o `Compras/…` si el control hizo las dos operaciones."""
+    todos juntos (Ventas y Compras) en `Control de facturas/…`."""
     origen, archivos = archivos_del_cliente(ej, indice)
-    separar = bool(ej.parametros.get("ventas")) and bool(ej.parametros.get("compras"))
-    plan = []
-    for a in archivos:
-        op = operacion_de(a["nombre"]) if separar else None
-        plan.append((a["nombre"], Path(op, a["nombre"]) if op else Path(a["nombre"])))
-    return origen, plan
+    return origen, [
+        (a["nombre"], Path(SUBCARPETA_CONTROL, a["nombre"])) for a in archivos
+    ]
 
 
 def zip_de_archivos(ej: Ejecucion, indice: int) -> tuple[str, bytes]:
-    """«Descargar todos» sin ventanas (servidor): un .zip con <Cliente>/<mmaaaa>/…"""
+    """«Descargar todos» sin ventanas (servidor): un .zip con
+    <Cliente>/<mmaaaa>/Control de facturas/…"""
     origen, plan = plan_de_archivos(ej, indice)
     _, mes, anio = ej.parametros["desde"].split("/")
     raiz = Path(nombre_carpeta(ej.clientes[indice].nombre), f"{mes}{anio}")
@@ -732,11 +797,12 @@ def exportar_archivos(
     """Copia los archivos del cliente con el formato de la app de escritorio y DRLiqui.
 
     - Con carpeta elegida (por ejemplo, la del cliente que ya existe):
-      `<elegida>/<mmaaaa>/`.
+      `<elegida>/<mmaaaa>/Control de facturas/`.
     - Sin carpeta elegida: se crea la del cliente en Descargas:
-      `<Descargas>/<Cliente>/<mmaaaa>/`. Si vuelve Descargas misma (la ventana abre
-      ahí y se tocó «Seleccionar carpeta» sin entrar a ninguna) cuenta como sin elegir.
-    - Si el control fue de Ventas y Compras, adentro de <mmaaaa> van `Ventas/` y `Compras/`.
+      `<Descargas>/<Cliente>/<mmaaaa>/Control de facturas/`. Si vuelve Descargas
+      misma (la ventana abre ahí y se tocó «Seleccionar carpeta» sin entrar a
+      ninguna) cuenta como sin elegir.
+    - Ventas y Compras van juntos, sin subcarpetas por operación.
 
     Si uno no se puede copiar (por ejemplo, ya existe y está abierto en Excel),
     los demás se copian igual y ese queda en `fallas`.
@@ -753,7 +819,8 @@ def exportar_archivos(
             carpeta = Path(destino) / f"{mes}{anio}"
             carpeta.mkdir(parents=True, exist_ok=True)
         else:
-            carpeta = carpeta_cliente(base, ej.clientes[indice].nombre, mes, anio)
+            # carpeta_cliente ya incluye «Control de facturas»; el plan la agrega.
+            carpeta = carpeta_cliente(base, ej.clientes[indice].nombre, mes, anio).parent
     except OSError as exc:
         raise ErrorEjecucion(f"No se pudo crear la carpeta para los archivos: {exc}", 422) from exc
 
@@ -769,5 +836,5 @@ def exportar_archivos(
             fallas.append({"nombre": nombre, "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})
         except OSError as exc:
             fallas.append({"nombre": nombre, "motivo": str(exc)})
-    return {"carpeta": str(carpeta), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
+    return {"carpeta": str(carpeta / SUBCARPETA_CONTROL), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
 
