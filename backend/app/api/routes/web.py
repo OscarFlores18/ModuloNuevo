@@ -14,14 +14,15 @@ import re
 import time
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...core import config, dialogos
+from ...core import acceso_clientes, config, dialogos
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...services import ejecuciones as ejecuciones_srv
+from ...services import precarga as precarga_srv
 from ..deps import get_clientes, get_credenciales_xubio
 
 router = APIRouter(tags=["web"])
@@ -126,6 +127,65 @@ def _validar_nombre(nombre: str) -> str:
     return nombre
 
 
+# --- Contraseña de la sección Clientes ---------------------------------------------
+
+
+def exigir_acceso_clientes(
+    x_clientes_token: str | None = Header(default=None),
+) -> None:
+    """Alta, edición y borrado de clientes piden la contraseña de la sección."""
+    if not acceso_clientes.autorizado(x_clientes_token):
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "code": "clientes_bloqueado",
+                "mensaje": "La sección Clientes está bloqueada: escribí la contraseña.",
+            },
+        )
+
+
+class EntrarClientes(BaseModel):
+    clave: str = ""
+
+
+@router.get("/clientes/acceso")
+def estado_acceso_clientes(
+    x_clientes_token: str | None = Header(default=None),
+) -> dict:
+    return {
+        "configurada": acceso_clientes.configurada(),
+        "desbloqueado": acceso_clientes.autorizado(x_clientes_token),
+    }
+
+
+@router.post("/clientes/acceso")
+def entrar_clientes(body: EntrarClientes) -> dict:
+    try:
+        token, vence, creada = acceso_clientes.entrar(body.clave)
+    except acceso_clientes.AccesoDenegado as exc:
+        raise HTTPException(
+            status_code=exc.estado, detail={"mensaje": exc.mensaje}
+        ) from None
+    return {"token": token, "expira": int(vence), "creada": creada}
+
+
+@router.delete("/clientes/acceso", status_code=status.HTTP_204_NO_CONTENT)
+def salir_clientes(x_clientes_token: str | None = Header(default=None)) -> None:
+    acceso_clientes.salir(x_clientes_token)
+
+
+@router.post("/clientes/precargar", dependencies=[Depends(exigir_acceso_clientes)])
+def precargar_clientes(
+    repo: ClientesRepository = Depends(get_clientes),
+) -> dict:
+    """Agrega los clientes del estudio que falten (ver services/precarga.py)."""
+    resultado = precarga_srv.precargar(repo).a_dict()
+    resultado["clientes"] = [
+        _publico(nombre, datos) for nombre, datos in repo.listar_publico().items()
+    ]
+    return resultado
+
+
 @router.get("/clientes")
 def listar_clientes(
     repo: ClientesRepository = Depends(get_clientes),
@@ -136,7 +196,11 @@ def listar_clientes(
     ]
 
 
-@router.post("/clientes", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/clientes",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(exigir_acceso_clientes)],
+)
 def crear_cliente(
     body: ClienteEntrada,
     repo: ClientesRepository = Depends(get_clientes),
@@ -163,7 +227,7 @@ def obtener_cliente(
     return _publico(nombre, datos)
 
 
-@router.put("/clientes/{nombre}")
+@router.put("/clientes/{nombre}", dependencies=[Depends(exigir_acceso_clientes)])
 def editar_cliente(
     nombre: str,
     body: ClienteEntrada,
@@ -187,7 +251,9 @@ def editar_cliente(
     return _publico(nuevo, repo.obtener_publico(nuevo) or {})
 
 
-@router.post("/clientes/{nombre}/renombrar")
+@router.post(
+    "/clientes/{nombre}/renombrar", dependencies=[Depends(exigir_acceso_clientes)]
+)
 def renombrar_cliente(
     nombre: str,
     body: RenombrarCliente,
@@ -201,7 +267,11 @@ def renombrar_cliente(
     return _publico(nuevo, repo.obtener_publico(nuevo) or {})
 
 
-@router.delete("/clientes/{nombre}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/clientes/{nombre}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(exigir_acceso_clientes)],
+)
 def borrar_cliente(
     nombre: str, repo: ClientesRepository = Depends(get_clientes)
 ) -> None:

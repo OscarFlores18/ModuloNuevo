@@ -316,6 +316,7 @@ class SesionArca:
                 f"a:has-text('{cuit_formateado}'), a:has-text('{cuit_limpio}')"
             ).first
             tarjeta_empresa.click()
+            servicio.wait_for_timeout(500)
         except LookupError:
             pass
         except Exception as exc:
@@ -350,6 +351,44 @@ class SesionArca:
         raise SesionVencida("No se pudo entrar a Mis Comprobantes de ARCA.")
 
     # -- descarga ----------------------------------------------------------
+    def _apretar_tipo(self, servicio: Page, boton_tipo, tipo_comprobante: str) -> None:
+        """Aprieta Emitidos/Recibidos hasta que aparezca el filtro de fechas.
+
+        Si se aprieta apenas el botón se ve, ARCA todavía no terminó de cargar
+        su JS y el click no hace nada. Se espera la carga completa y, si el
+        filtro no aparece en unos segundos, se vuelve a apretar (hasta 3 veces).
+        """
+        try:
+            servicio.wait_for_load_state("load", timeout=15000)
+        except Exception:
+            pass
+        fecha = servicio.locator("#fechaEmision")
+        for intento in (1, 2, 3):
+            try:
+                if intento == 1:
+                    boton_tipo.click(timeout=5000)
+                else:
+                    self.log(
+                        f"      [AVISO]: ARCA no respondió al botón '{tipo_comprobante}'. "
+                        f"Reintento {intento}/3..."
+                    )
+                    boton_tipo.evaluate("el => el.click()", timeout=3000)
+            except Exception as exc:
+                self.log(f"      [AVISO]: No se pudo apretar '{tipo_comprobante}': {exc}")
+            try:
+                fecha.wait_for(state="visible", timeout=6000 if intento < 3 else 15000)
+                return
+            except Exception:
+                if self._es_sesion_vencida(servicio):
+                    raise SesionVencida(
+                        "ARCA pidió volver a iniciar sesión al elegir el tipo de comprobante."
+                    ) from None
+        raise TimeoutDescarga(
+            f"ARCA no mostró el filtro de fechas después de apretar '{tipo_comprobante}' "
+            "tres veces. Puede estar lento: probá de nuevo en unos minutos.",
+            detalle={"tipo": tipo_comprobante},
+        )
+
     def descargar(
         self,
         servicio: Page,
@@ -377,20 +416,7 @@ class SesionArca:
         boton_id = "#btnEmitidos" if tipo_comprobante == "Emitidos" else "#btnRecibidos"
         boton_tipo = servicio.locator(boton_id).first
         self.log(f"   -> Apretando botón '{tipo_comprobante}'...")
-        try:
-            boton_tipo.click(timeout=5000)
-        except Exception as exc:
-            self.log(f"      [AVISO]: Click normal no llegó a tiempo ({exc}). Forzando con JS...")
-            try:
-                boton_tipo.evaluate("el => el.click()", timeout=3000)
-            except Exception as exc2:
-                self.log(
-                    f"      [ERROR]: No se pudo apretar el botón "
-                    f"'{tipo_comprobante}': {exc2}"
-                )
-
-        # Se sigue apenas está el filtro de fechas (antes: 1,5 s fijos).
-        servicio.wait_for_selector("#fechaEmision", state="visible", timeout=20000)
+        self._apretar_tipo(servicio, boton_tipo, tipo_comprobante)
 
         fecha_desde_actual = fecha_desde
         fecha_hasta_actual = fecha_hasta
