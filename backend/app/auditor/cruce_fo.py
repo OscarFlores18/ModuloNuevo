@@ -105,8 +105,8 @@ def procesar_cruce(
     df_arca = pd.read_csv(ruta_arca, skiprows=1) if ruta_arca.endswith('.csv') else pd.read_excel(ruta_arca, skiprows=1)
     df_arca.columns = df_arca.columns.str.strip()
     
-    if 'Tipo' in df_arca.columns: df_arca.dropna(subset=['Tipo'], inplace=True)
-    else: df_arca.dropna(how='all', inplace=True)
+    if 'Tipo' in df_arca.columns: df_arca = df_arca.dropna(subset=['Tipo'])
+    else: df_arca = df_arca.dropna(how='all')
 
     df_arca.insert(0, 'Clave_Conciliacion', '')
     def extraer_letra(t):
@@ -188,7 +188,7 @@ def procesar_cruce(
                          'Percepción IIBB', 'Impuestos internos', 'No gravado exento', 'Total']
     df_xubio.columns = nuevas_cols
     
-    df_xubio.dropna(subset=['Tipo'], inplace=True)
+    df_xubio = df_xubio.dropna(subset=['Tipo'])
     df_xubio['Comprobante'] = df_xubio['Comprobante'].apply(normalize_comp_standard)
     df_xubio['Condición IVA'] = df_xubio['Condición IVA'].astype(str).replace(r'^\s*RI\s*$', 'Responsable Inscripto', regex=True)
 
@@ -197,7 +197,7 @@ def procesar_cruce(
 
     c_fec_x_clean = next((c for c in df_xubio.columns if 'fecha' in str(c).lower()), None)
     if c_fec_x_clean: 
-        df_xubio.dropna(subset=[c_fec_x_clean], inplace=True)
+        df_xubio = df_xubio.dropna(subset=[c_fec_x_clean])
         df_xubio = df_xubio[df_xubio[c_fec_x_clean].astype(str).str.strip() != '']
         df_xubio = df_xubio[~df_xubio[c_fec_x_clean].astype(str).str.upper().str.contains('TOTAL', na=False)]
         df_xubio[c_fec_x_clean] = df_xubio[c_fec_x_clean].apply(format_to_dd_mm_yyyy)
@@ -308,7 +308,7 @@ def procesar_cruce(
 
     importados_a_list = [inyectar_hacia_arca(row) for _, row in df_faltantes_xubio.iterrows()]
     df_importados_a = pd.DataFrame(importados_a_list) if importados_a_list else pd.DataFrame(columns=df_arca.columns)
-    df_importados_a.dropna(how='all', inplace=True)
+    df_importados_a = df_importados_a.dropna(how='all')
 
     # 5. ARCA -> XUBIO (Inyectar)
     def inyectar_hacia_xubio(row):
@@ -367,9 +367,9 @@ def procesar_cruce(
 
     importados_x_list = [inyectar_hacia_xubio(row) for _, row in df_faltantes_arca.iterrows()]
     df_importados_x = pd.DataFrame(importados_x_list) if importados_x_list else pd.DataFrame(columns=df_xubio.columns)
-    df_importados_x.dropna(how='all', inplace=True)
+    df_importados_x = df_importados_x.dropna(how='all')
 
-    df_faltantes_arca.drop(columns=['Clave_Py', 'Clave_Unica', 'Clave_Conciliacion'], inplace=True, errors='ignore')
+    df_faltantes_arca = df_faltantes_arca.drop(columns=['Clave_Py', 'Clave_Unica', 'Clave_Conciliacion'], errors='ignore')
 
     original_max_row_arca = len(df_arca) + 1
     original_max_row_xubio = len(df_xubio) + 1
