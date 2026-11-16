@@ -37,10 +37,6 @@ XUBIO_CRED_PATH = DATA_DIR / "xubio_credenciales.json"
 # Pausa entre un cliente y el siguiente (el front muestra la cuenta regresiva).
 PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "15"))
 
-# Cuánto se espera la respuesta del usuario cuando la auditoría encuentra
-# comprobantes duplicados. Si nadie responde, se saltea esa auditoría.
-ESPERA_DUPLICADOS_S = int(os.getenv("MODULONUEVO_ESPERA_DUPLICADOS_S", "1800"))
-
 # Keep-alive de ARCA: el portal cierra la sesión por inactividad (~15 min).
 # Se consulta el portal cada ARCA_PING_MIN minutos y se renueva el login a los
 # ARCA_RENOVAR_MIN minutos, antes de que el portal la venza por su cuenta.

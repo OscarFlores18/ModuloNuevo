@@ -155,30 +155,13 @@ export interface Advertencia {
 }
 
 /** Pausa entre un cliente y el siguiente (cuenta regresiva). */
-export interface PausaEntreClientes {
-  tipo?: 'entre_clientes';
+export interface Pausa {
   cliente: string;
   vence: number;
   segundos: number;
 }
 
-/** La auditoría encontró comprobantes duplicados: espera que el usuario decida. */
-export interface PausaDuplicados {
-  tipo: 'duplicados';
-  cliente: string;
-  operacion: 'Ventas' | 'Compras';
-  /** Hasta 15 comprobantes por origen; los totales dicen cuántos hay en realidad. */
-  arca: string[];
-  xubio: string[];
-  total_arca: number;
-  total_xubio: number;
-  vence: number;
-  segundos: number;
-}
-
-export type Pausa = PausaEntreClientes | PausaDuplicados;
-
-export type AccionPausa = 'continuar' | 'cancelar' | 'no_preguntar' | 'omitir';
+export type AccionPausa = 'continuar' | 'cancelar' | 'no_preguntar';
 
 export function estaActiva(estado: EstadoEjecucion | undefined | null): boolean {
   return estado === 'en_curso' || estado === 'esperando';

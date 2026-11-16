@@ -347,19 +347,11 @@ def iniciar(
     return ej
 
 
-ACCIONES_POR_PAUSA = {
-    "entre_clientes": ("continuar", "cancelar", "no_preguntar"),
-    # Duplicados: seguir igual, saltear esa auditoría o cancelar todo.
-    "duplicados": ("continuar", "omitir", "cancelar"),
-}
-
-
 def responder_pausa(ej: Ejecucion, accion: str) -> None:
+    if accion not in ("continuar", "cancelar", "no_preguntar"):
+        raise ErrorEjecucion("Acción desconocida.", 422)
     if ej.pausa is None:
         raise ErrorEjecucion("La ejecución no está esperando una respuesta.", 409)
-    tipo = ej.pausa.get("tipo", "entre_clientes")
-    if accion not in ACCIONES_POR_PAUSA.get(tipo, ()):
-        raise ErrorEjecucion("Acción desconocida.", 422)
     ej._respuesta = accion
     ej._evento.set()
 
@@ -449,7 +441,6 @@ def _pausa(ej: Ejecucion, cliente: str) -> str:
     ej._respuesta = None
     ej._evento.clear()
     ej.pausa = {
-        "tipo": "entre_clientes",
         "cliente": cliente,
         "vence": time.time() + segundos,
         "segundos": segundos,
@@ -460,45 +451,6 @@ def _pausa(ej: Ejecucion, cliente: str) -> str:
     ej.estado = "en_curso"
     return ej._respuesta or "continuar"
 
-
-MAX_DUPLICADOS_EN_PANTALLA = 15
-
-
-def _preguntar_duplicados(ej: Ejecucion, info: dict) -> str:
-    """Frena el control y pregunta en la web qué hacer con los duplicados.
-
-    Devuelve «continuar», «omitir» o «cancelar». Si nadie responde a tiempo se
-    saltea la auditoría: es más seguro que generar un control mal hecho.
-    """
-    segundos = config.ESPERA_DUPLICADOS_S
-    ej._respuesta = None
-    ej._evento.clear()
-    ej.pausa = {
-        "tipo": "duplicados",
-        "cliente": info["cliente"],
-        "operacion": info["operacion"],
-        "arca": info["arca"][:MAX_DUPLICADOS_EN_PANTALLA],
-        "xubio": info["xubio"][:MAX_DUPLICADOS_EN_PANTALLA],
-        "total_arca": len(info["arca"]),
-        "total_xubio": len(info["xubio"]),
-        "vence": time.time() + segundos,
-        "segundos": segundos,
-    }
-    ej.estado = "esperando"
-    ej.registrar(
-        f"      [AVISO] Se espera la decisión del usuario sobre los duplicados de "
-        f"{info['operacion']}.",
-        "aviso",
-    )
-    respondio = ej._evento.wait(segundos)
-    ej.pausa = None
-    ej.estado = "en_curso"
-    if not respondio:
-        ej.registrar(
-            "      [AVISO] Nadie respondió: se saltea esta auditoría.", "aviso"
-        )
-        return "omitir"
-    return ej._respuesta or "omitir"
 
 
 def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> None:
@@ -610,23 +562,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                         operacion = (
                             "Ventas" if paso.id == "auditoria_ventas" else "Compras"
                         )
-                        siguio_con_duplicados: dict | None = None
                         letras: list[dict] = []
-
-                        def confirmar(info: dict) -> bool:
-                            nonlocal siguio_con_duplicados
-                            accion = _preguntar_duplicados(ej, info)
-                            if accion == "continuar":
-                                ej.registrar(
-                                    "      [AVISO] El usuario eligió seguir con los "
-                                    "duplicados.",
-                                    "aviso",
-                                )
-                                siguio_con_duplicados = info
-                                return True
-                            if accion == "cancelar":
-                                ej.cancelar_pedido = True
-                            return False
 
                         _correr_paso(
                             ej,
@@ -638,22 +574,14 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                                 p["hasta"],
                                 str(carpeta),
                                 log=ej.registrar,
-                                confirmar_duplicados=confirmar,
                                 avisar_letras_distintas=letras.extend,
                             ),
                         )
-                        mensajes: list[str] = []
-                        if siguio_con_duplicados and paso.estado in ("ok", "aviso"):
-                            total = len(siguio_con_duplicados["arca"]) + len(
-                                siguio_con_duplicados["xubio"]
-                            )
-                            mensajes.append(
-                                f"Se generó con {total} comprobante(s) duplicado(s): "
-                                "revisá las credenciales del cliente."
-                            )
+                        # Duplicados y letras distintas no frenan: la auditoría se hace
+                        # y el paso queda OK. La letra distinta se avisa al terminar
+                        # (SweetAlert2 en la web).
                         if letras:
                             texto = texto_letras_distintas(cli.nombre, operacion, letras)
-                            mensajes.append(texto)
                             ej.advertencias.append(
                                 {
                                     "tipo": "letra_distinta",
@@ -663,9 +591,6 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                                     "comprobantes": list(letras),
                                 }
                             )
-                        if mensajes and paso.estado in ("ok", "aviso"):
-                            paso.estado = "aviso"
-                            paso.mensaje = " ".join(mensajes)
 
                     cli.archivos = listar_archivos(carpeta, inicio_cliente)
             finally:

@@ -158,15 +158,6 @@ export class EjecucionPantalla {
     if (a?.length) void mostrarErroresDeSintaxis(a);
   }
 
-  /** La pausa por comprobantes duplicados (null si no hay o es la de entre clientes). */
-  protected readonly pausaDuplicados = computed(() => {
-    const p = this.ej()?.pausa;
-    return p?.tipo === 'duplicados' ? p : null;
-  });
-  protected readonly pausaEntreClientes = computed(() => {
-    const p = this.ej()?.pausa;
-    return p && p.tipo !== 'duplicados' ? p : null;
-  });
   protected readonly siguienteCliente = computed(() => {
     const e = this.ej();
     if (!e?.pausa) return null;

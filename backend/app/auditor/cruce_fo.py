@@ -19,7 +19,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 from ..core.controles import ordinal, ruta_siguiente_control
-from ..core.errors import ArchivoNoEncontrado, DuplicadosDetectados
+from ..core.errors import ArchivoNoEncontrado
 
 def formatear_mes_anio(fecha_str):
     partes = fecha_str.split('/')
@@ -152,14 +152,11 @@ def procesar_cruce(
     ruta_arca_manual=None,
     ruta_xubio_manual=None,
     log: Callable[[str], None] = print,
-    confirmar_duplicados: Callable[[dict], bool] | None = None,
     avisar_letras_distintas: Callable[[list[dict]], None] | None = None,
 ) -> str:
     """Genera el control de facturas y devuelve la ruta del Excel.
 
-    Si hay comprobantes duplicados se llama a `confirmar_duplicados(info)`:
-    si devuelve False se corta con `DuplicadosDetectados` sin generar el AUX.
-    Sin callback se sigue como antes (los duplicados quedan marcados).
+    Nunca frena por duplicados ni por letras distintas: los anota y sigue.
     """
     log(f"      [INFO] Iniciando cruce FO 04-01 para {empresa} ({operacion})")
     
@@ -368,26 +365,12 @@ def procesar_cruce(
         if avisar_letras_distintas is not None:
             avisar_letras_distintas(letras_distintas)
 
-    # Primero se identifica el problema y se avisa; el AUX se arma solo si
-    # quien controla decide seguir (los duplicados suelen ser credenciales mal
-    # cargadas: el Excel trae datos de otro CUIT o de otra empresa de Xubio).
+    # Los duplicados no frenan el control: se marcan en el Excel y se anotan.
     if all_dups:
-        info_dups = {
-            "cliente": empresa,
-            "operacion": operacion,
-            "arca": sorted(str(c) for c in dups_a),
-            "xubio": sorted(str(c) for c in dups_x),
-        }
         log(
             f"      [AVISO] {operacion}: {len(dups_a)} comprobante(s) duplicado(s) en ARCA "
-            f"y {len(dups_x)} en Xubio. Puede haber credenciales mal cargadas."
+            f"y {len(dups_x)} en Xubio."
         )
-        if confirmar_duplicados is not None and not confirmar_duplicados(info_dups):
-            raise DuplicadosDetectados(
-                f"Auditoría de {operacion} frenada: hay comprobantes duplicados "
-                "(revisá las credenciales de ARCA y la empresa de Xubio).",
-                detalle=info_dups,
-            )
     df_xubio['Clave_Unica'] = df_xubio['Comprobante'] + "_" + df_xubio.groupby('Comprobante').cumcount().astype(str)
 
     # 3. IDENTIFICACIÓN DE FALTANTES
