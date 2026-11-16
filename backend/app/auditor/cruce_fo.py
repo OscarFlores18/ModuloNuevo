@@ -18,13 +18,130 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 
-from ..core.errors import ArchivoNoEncontrado
+from ..core.controles import ordinal, ruta_siguiente_control
+from ..core.errors import ArchivoNoEncontrado, DuplicadosDetectados
 
 def formatear_mes_anio(fecha_str):
     partes = fecha_str.split('/')
     if len(partes) == 3:
         return f"{partes[1]}-{partes[2][-2:]}"
     return fecha_str.replace('/', '-')
+
+def _solo_digitos(valor) -> str:
+    if valor is None or (isinstance(valor, float) and np.isnan(valor)):
+        return ""
+    texto = str(valor)
+    if re.fullmatch(r"\d+\.0", texto):  # pandas lee el CUIT como float
+        texto = texto[:-2]
+    return re.sub(r"\D", "", texto)
+
+
+def _nombre_legible(nombre) -> str:
+    texto = " ".join(str(nombre or "").split())
+    return texto.title() if texto.isupper() else texto
+
+
+def _celda(valor):
+    """Valor de una celda listo para JSON (sin NaN ni tipos de numpy)."""
+    if valor is None:
+        return None
+    if isinstance(valor, (float, np.floating)):
+        return None if np.isnan(valor) else float(valor)
+    if isinstance(valor, (np.integer,)):
+        return int(valor)
+    texto = str(valor).strip()
+    return texto or None
+
+
+def _fila_vista(fila, columnas: list[tuple[str, object]]) -> list[dict]:
+    """[(título, columna del DataFrame)] -> [{columna, valor}] para mostrar en la web."""
+    return [
+        {"columna": titulo, "valor": _celda(fila.get(col)) if col is not None else None}
+        for titulo, col in columnas
+    ]
+
+
+def detectar_letras_distintas(
+    df_arca, df_xubio, col_cuit_arca, col_prov_arca, col_fecha_arca=None, col_total_arca=None
+) -> list[dict]:
+    """Comprobantes del Libro IVA que en ARCA tienen el mismo CUIT, punto de
+    venta y número pero otra letra (ej. ARCA «C-00002-00000006», Xubio «A-...»).
+
+    Devuelve una entrada por comprobante: proveedor, comprobante de ARCA, la
+    letra con la que quedó cargado en Xubio y las dos filas tal como están en
+    cada planilla (para mostrarlas en la web con el error remarcado).
+    """
+    if col_cuit_arca is None or 'CUIT' not in df_xubio.columns:
+        return []
+    columnas_arca = [
+        ("Fecha", col_fecha_arca),
+        ("Tipo", 'Tipo' if 'Tipo' in df_arca.columns else None),
+        ("Comprobante", 'Clave_Py'),
+        ("Nro. Doc.", col_cuit_arca),
+        ("Denominación", col_prov_arca),
+        ("Imp. Total", col_total_arca),
+    ]
+    columnas_xubio = [
+        ("Fecha", 'Fecha'),
+        ("Tipo", 'Tipo'),
+        ("Comprobante", 'Comprobante'),
+        ("CUIT", 'CUIT'),
+        ("Proveedor", 'Proveedor'),
+        ("Condición IVA", 'Condición IVA'),
+        ("Total", 'Total'),
+    ]
+    claves_arca = set(df_arca['Clave_Py'].astype(str))
+    por_numero: dict[str, list[tuple[str, str, object]]] = {}
+    for _, fila in df_arca.iterrows():
+        letra, _, resto = str(fila['Clave_Py']).partition('-')
+        if not resto:
+            continue
+        por_numero.setdefault(resto, []).append(
+            (letra, _solo_digitos(fila.get(col_cuit_arca)), fila)
+        )
+
+    encontrados: list[dict] = []
+    vistos: set[tuple[str, str]] = set()
+    for _, fila in df_xubio.iterrows():
+        comprobante = str(fila['Comprobante'])
+        if comprobante in claves_arca:
+            continue
+        letra_x, _, resto = comprobante.partition('-')
+        cuit_x = _solo_digitos(fila.get('CUIT'))
+        if not resto or not cuit_x:
+            continue
+        for letra_a, cuit_a, fila_a in por_numero.get(resto, []):
+            if cuit_a == cuit_x and letra_a != letra_x and (cuit_x, comprobante) not in vistos:
+                vistos.add((cuit_x, comprobante))
+                prov_a = fila_a.get(col_prov_arca) if col_prov_arca else None
+                encontrados.append({
+                    "proveedor": _nombre_legible(prov_a or fila.get('Proveedor')),
+                    "cuit": cuit_x,
+                    "comprobante_arca": f"{letra_a}-{resto}",
+                    "comprobante_xubio": comprobante,
+                    "letra_arca": letra_a,
+                    "letra_xubio": letra_x,
+                    "fila_arca": _fila_vista(fila_a, columnas_arca),
+                    "fila_xubio": _fila_vista(fila, columnas_xubio),
+                })
+                break
+    return encontrados
+
+
+def texto_letras_distintas(cliente: str, operacion: str, letras: list[dict]) -> str:
+    """«PICCININI – Compras: 1 comprobante con letra distinta ... Corregilo en Xubio.»"""
+    n = len(letras)
+    detalle = "; ".join(
+        f"{l['proveedor']}, {l['comprobante_arca']} cargado como {l['letra_xubio']}"
+        for l in letras
+    )
+    comprobantes = "1 comprobante" if n == 1 else f"{n} comprobantes"
+    corregir = "Corregilo" if n == 1 else "Corregilos"
+    return (
+        f"{cliente} – {operacion}: {comprobantes} con letra distinta entre ARCA y Xubio "
+        f"({detalle}). {corregir} en Xubio."
+    )
+
 
 def procesar_cruce(
     empresa,
@@ -35,8 +152,15 @@ def procesar_cruce(
     ruta_arca_manual=None,
     ruta_xubio_manual=None,
     log: Callable[[str], None] = print,
+    confirmar_duplicados: Callable[[dict], bool] | None = None,
+    avisar_letras_distintas: Callable[[list[dict]], None] | None = None,
 ) -> str:
-    """Genera el control de facturas y devuelve la ruta del Excel."""
+    """Genera el control de facturas y devuelve la ruta del Excel.
+
+    Si hay comprobantes duplicados se llama a `confirmar_duplicados(info)`:
+    si devuelve False se corta con `DuplicadosDetectados` sin generar el AUX.
+    Sin callback se sigue como antes (los duplicados quedan marcados).
+    """
     log(f"      [INFO] Iniciando cruce FO 04-01 para {empresa} ({operacion})")
     
     # 1. RUTAS DE LOS ARCHIVOS
@@ -52,8 +176,11 @@ def procesar_cruce(
     ruta_arca = ruta_arca_manual if ruta_arca_manual else os.path.join(directorio_guardado, f"Mis comprobantes - {tipo_arca} - {cliente_limpio_arca} - {mes_anio_desde} al {mes_anio_hasta}.xlsx")
     ruta_xubio = ruta_xubio_manual if ruta_xubio_manual else os.path.join(directorio_guardado, f"IVA {operacion.upper()} - {nombre_seguro_xubio} - {f_desde_limpia} al {f_hasta_limpia}.xlsx")
     
-    # Sin el punto final del nombre («S.A.»): si no, el archivo queda «S.A..xlsx».
-    ruta_salida = os.path.join(directorio_guardado, f"AUX - Control de facturas {operacion} con AFIP - {mes_anio_desde} - {cliente_limpio_arca.rstrip('. ')}.xlsx")
+    # Cada auditoría del mismo período es un control nuevo: no pisa los anteriores.
+    ruta_control, numero_control, previos = ruta_siguiente_control(
+        directorio_guardado, operacion, fecha_desde, empresa
+    )
+    ruta_salida = str(ruta_control)
 
     if not os.path.exists(ruta_arca):
         raise ArchivoNoEncontrado(
@@ -65,6 +192,16 @@ def procesar_cruce(
             f"No se encontró el archivo de Xubio esperado:\n{ruta_xubio}",
             detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_xubio},
         )
+
+    if previos:
+        anterior = previos[-1]
+        log(
+            f"      [INFO] {operacion}: {ordinal(numero_control)} control "
+            f"(el {ordinal(anterior.numero)} fue el "
+            f"{anterior.modificado.strftime('%d/%m/%Y %H:%M')})"
+        )
+    else:
+        log(f"      [INFO] {operacion}: 1er control del período")
 
     # =========================================================
     # LIMPIEZA DE NÚMEROS Y FECHAS
@@ -215,6 +352,42 @@ def procesar_cruce(
         dups_x = set(df_xubio['Comprobante'][df_xubio['Comprobante'].duplicated(keep=False)])
 
     all_dups = dups_a.union(dups_x)
+
+    # Misma factura (mismo CUIT, punto de venta y número) con otra letra en
+    # Xubio: casi siempre un error de carga en el Libro IVA. No frena el control.
+    col_doc_arca = next(
+        (c for c in df_arca_temp.columns if 'nro. doc' in str(c).lower()), arca_map['cuit']
+    )
+    letras_distintas = detectar_letras_distintas(
+        df_arca_temp, df_xubio, col_doc_arca, arca_map['prov'],
+        arca_map['fecha'],
+        next((c for c in df_arca_temp.columns if 'imp. total' in str(c).lower()), arca_map['tot']),
+    )
+    if letras_distintas:
+        log(f"      [AVISO] {texto_letras_distintas(empresa, operacion, letras_distintas)}")
+        if avisar_letras_distintas is not None:
+            avisar_letras_distintas(letras_distintas)
+
+    # Primero se identifica el problema y se avisa; el AUX se arma solo si
+    # quien controla decide seguir (los duplicados suelen ser credenciales mal
+    # cargadas: el Excel trae datos de otro CUIT o de otra empresa de Xubio).
+    if all_dups:
+        info_dups = {
+            "cliente": empresa,
+            "operacion": operacion,
+            "arca": sorted(str(c) for c in dups_a),
+            "xubio": sorted(str(c) for c in dups_x),
+        }
+        log(
+            f"      [AVISO] {operacion}: {len(dups_a)} comprobante(s) duplicado(s) en ARCA "
+            f"y {len(dups_x)} en Xubio. Puede haber credenciales mal cargadas."
+        )
+        if confirmar_duplicados is not None and not confirmar_duplicados(info_dups):
+            raise DuplicadosDetectados(
+                f"Auditoría de {operacion} frenada: hay comprobantes duplicados "
+                "(revisá las credenciales de ARCA y la empresa de Xubio).",
+                detalle=info_dups,
+            )
     df_xubio['Clave_Unica'] = df_xubio['Comprobante'] + "_" + df_xubio.groupby('Comprobante').cumcount().astype(str)
 
     # 3. IDENTIFICACIÓN DE FALTANTES

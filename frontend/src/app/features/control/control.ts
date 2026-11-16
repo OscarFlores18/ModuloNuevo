@@ -11,7 +11,7 @@ import {
   rangoDelAnio,
   rangoDelMes,
 } from '../../core/fechas';
-import { Ajustes, Cliente, PasoId, mensajeDeError } from '../../core/models';
+import { Ajustes, Cliente, ControlesPorCliente, PasoId, ResumenControl, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
@@ -164,7 +164,53 @@ export class NuevoControl {
 
   protected readonly intentado = signal(false);
 
+  // --- 1er / 2do control ---------------------------------------------------------------
+
+  /** Lo que respondió el servidor para la selección y el período actuales. */
+  private readonly controles = signal<ControlesPorCliente>({});
+  private pedidoControles = 0;
+
+  /** Una etiqueta por operación elegida: «1er control», «2do control»… */
+  protected etiquetasControl(nombre: string): { texto: string; titulo: string; repetido: boolean }[] {
+    const c = this.controles()[nombre];
+    const o = this.valor().operaciones;
+    if (!c || !this.periodo()) return [];
+    const ops = [o?.ventas && (['Ventas', c.ventas] as const), o?.compras && (['Compras', c.compras] as const)].filter(
+      (x): x is readonly ['Ventas' | 'Compras', ResumenControl] => !!x,
+    );
+    return ops.map(([op, r]) => ({
+      texto: ops.length > 1 ? `${op === 'Ventas' ? 'V' : 'C'}: ${r.proximo_texto}` : r.proximo_texto,
+      titulo: r.ultimo
+        ? `${op}: ya hubo ${r.realizados} control(es) en este período, el último el ${new Date(r.ultimo).toLocaleString('es-AR')}. Este será el ${r.proximo_texto}.`
+        : `${op}: todavía no se controló este período.`,
+      repetido: r.realizados > 0,
+    }));
+  }
+
+  private async cargarControles(clientes: string[], desde: string): Promise<void> {
+    const n = ++this.pedidoControles;
+    try {
+      const r = await this.api.controles(clientes, desde);
+      if (n === this.pedidoControles) this.controles.set(r);
+    } catch {
+      // Es solo informativo: si falla, no se muestran las etiquetas.
+      if (n === this.pedidoControles) this.controles.set({});
+    }
+  }
+
   constructor() {
+    // Al cambiar los clientes elegidos o el período, se pregunta qué control le toca a cada uno.
+    effect(() => {
+      const clientes = this.seleccion();
+      const desde = this.periodo()?.desde;
+      untracked(() => {
+        if (!clientes.length || !desde) {
+          this.pedidoControles++;
+          this.controles.set({});
+        } else void this.cargarControles(clientes, desde);
+      });
+    });
+
     void this.clientes.cargar(true);
     void this.cargarAjustes();
     this.reaccionarACambios();

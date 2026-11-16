@@ -1,6 +1,6 @@
 import { Injectable, PLATFORM_ID, computed, inject, signal } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
-import { DetalleEjecucion, LineaLog, PedidoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../models';
+import { AccionPausa, DetalleEjecucion, LineaLog, PedidoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../models';
 import { ApiService } from './api.service';
 
 const CADA_MS = 1200;
@@ -72,7 +72,7 @@ export class EjecucionStore {
     void this.consultar();
   }
 
-  async responder(accion: 'continuar' | 'cancelar' | 'no_preguntar'): Promise<void> {
+  async responder(accion: AccionPausa): Promise<void> {
     const ej = this.actual();
     if (!ej) return;
     try {

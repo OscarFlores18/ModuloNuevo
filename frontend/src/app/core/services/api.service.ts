@@ -2,7 +2,7 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { Ajustes, Cliente, ClienteEntrada, DetalleEjecucion, PedidoEjecucion, ResumenEjecucion } from '../models';
+import { AccionPausa, Ajustes, Cliente, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, PedidoEjecucion, ResumenEjecucion } from '../models';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -22,6 +22,11 @@ export class ApiService {
   }
   borrarCliente(nombre: string): Promise<void> {
     return firstValueFrom(this.http.delete<void>(`${this.url}/clientes/${encodeURIComponent(nombre)}`));
+  }
+
+  // Controles: 1er / 2do control de cada cliente en el período (desde en DD/MM/AAAA).
+  controles(clientes: string[], desde: string): Promise<ControlesPorCliente> {
+    return firstValueFrom(this.http.post<ControlesPorCliente>(`${this.url}/controles`, { clientes, desde }));
   }
 
   // Ajustes
@@ -45,7 +50,7 @@ export class ApiService {
   ejecucion(id: string, logDesde = 0): Promise<DetalleEjecucion> {
     return firstValueFrom(this.http.get<DetalleEjecucion>(`${this.url}/ejecuciones/${id}`, { params: { log_desde: logDesde } }));
   }
-  responder(id: string, accion: 'continuar' | 'cancelar' | 'no_preguntar'): Promise<ResumenEjecucion> {
+  responder(id: string, accion: AccionPausa): Promise<ResumenEjecucion> {
     return firstValueFrom(this.http.post<ResumenEjecucion>(`${this.url}/ejecuciones/${id}/respuesta`, { accion }));
   }
   cancelar(id: string): Promise<ResumenEjecucion> {

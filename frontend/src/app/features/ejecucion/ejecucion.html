@@ -53,8 +53,55 @@
     </div>
   </section>
 
+  <!-- Advertencias que no frenan el control: se muestran al terminar -->
+  @if (!activa() && e.advertencias?.length) {
+    <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-3" aria-labelledby="t-advertencias">
+      <span class="mf-badge mf-badge-aviso shrink-0">Error de sintaxis</span>
+      <strong id="t-advertencias" class="min-w-0 flex-1 text-sm">
+        El control se hizo, pero hay {{ comprobantesConError() === 1 ? 'un comprobante' : comprobantesConError() + ' comprobantes' }} con la letra mal cargada en Xubio.
+      </strong>
+      <button type="button" class="mf-btn mf-btn-mini" (click)="verErroresDeSintaxis()">Ver el error</button>
+    </section>
+  }
+
+  <!-- Duplicados en la auditoría: el control se frena hasta que el usuario decida -->
+  @if (pausaDuplicados(); as d) {
+    <section class="mf-aviso mf-aviso-alerta flex flex-col gap-3" role="alertdialog" aria-labelledby="t-dups" aria-describedby="d-dups"
+      style="border-color: var(--color-error)">
+      <div class="flex items-start gap-3">
+        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 text-lg font-bold" style="border-color: var(--color-error); color: var(--color-error)" aria-hidden="true">!</span>
+        <div class="min-w-0 flex-1">
+          <strong id="t-dups" class="block">Se encontraron comprobantes duplicados en la auditoría de {{ d.operacion }} de {{ d.cliente }}</strong>
+          <p id="d-dups" class="m-0 mt-1 text-sm">
+            Puede que haya <b>credenciales mal cargadas</b>: el CUIT de ARCA o la empresa de Xubio de este cliente podrían ser de otro.
+            Si seguís, el control se genera igual, pero puede quedar mal hecho.
+          </p>
+        </div>
+      </div>
+      <div class="grid gap-2 text-sm sm:grid-cols-2">
+        @if (d.total_arca) {
+          <div>
+            <span class="mf-campo-etiqueta">En ARCA ({{ d.total_arca }})</span>
+            <p class="mono m-0 break-words text-xs">{{ d.arca.join(' · ') }}@if (d.total_arca > d.arca.length) { · y {{ d.total_arca - d.arca.length }} más }</p>
+          </div>
+        }
+        @if (d.total_xubio) {
+          <div>
+            <span class="mf-campo-etiqueta">En Xubio ({{ d.total_xubio }})</span>
+            <p class="mono m-0 break-words text-xs">{{ d.xubio.join(' · ') }}@if (d.total_xubio > d.xubio.length) { · y {{ d.total_xubio - d.xubio.length }} más }</p>
+          </div>
+        }
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('omitir')">Saltear esta auditoría</button>
+        <button type="button" class="mf-btn" (click)="store.responder('continuar')">Avanzar igual</button>
+        <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')">Cancelar todo</button>
+      </div>
+    </section>
+  }
+
   <!-- Pausa entre clientes: espera una respuesta -->
-  @if (e.pausa; as p) {
+  @if (pausaEntreClientes(); as p) {
     <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-4" role="alertdialog" aria-labelledby="t-pausa">
       <span class="mono flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-aviso text-lg font-bold" aria-hidden="true">{{ segundosPausa() }}</span>
       <div class="min-w-0 flex-1">
