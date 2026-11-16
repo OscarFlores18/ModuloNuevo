@@ -8,26 +8,38 @@ import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { ToastService } from '../../core/ui/toast';
+<<<<<<< HEAD
 import { mostrarErroresDeSintaxis } from './errores-sintaxis';
 import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
+=======
+import { contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
+import { ETIQUETA_ARCHIVO, Etapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
+>>>>>>> 18e3072a3540bb13a1e32afcff781e29269da151
 
-/** Ejecuciones cuyo aviso de errores de sintaxis ya se abrió (para no repetirlo). */
-const CLAVE_AVISADOS = 'cf-errores-sintaxis-vistos';
-const avisados = new Set<string>();
+/**
+ * Aviso de errores de sintaxis: se abre solo hasta que el usuario lo cierra.
+ * Cuenta como visto recién al apretar «Entendido»: si la página se recarga con
+ * el aviso abierto, vuelve a aparecer.
+ */
+const CLAVE_VISTOS = 'cf-errores-sintaxis-vistos';
+/** Abiertos en esta carga de la página (para no abrirlo dos veces a la vez). */
+const abiertos = new Set<string>();
 
-function yaAvisado(id: string): boolean {
-  if (avisados.has(id)) return true;
+function leerVistos(): string[] {
   try {
-    return (JSON.parse(sessionStorage.getItem(CLAVE_AVISADOS) ?? '[]') as string[]).includes(id);
+    return JSON.parse(sessionStorage.getItem(CLAVE_VISTOS) ?? '[]') as string[];
   } catch {
-    return false;
+    return [];
   }
 }
 
-function marcarAvisado(id: string): void {
-  avisados.add(id);
+function yaVisto(id: string): boolean {
+  return abiertos.has(id) || leerVistos().includes(id);
+}
+
+function marcarVisto(id: string): void {
   try {
-    sessionStorage.setItem(CLAVE_AVISADOS, JSON.stringify([...avisados]));
+    sessionStorage.setItem(CLAVE_VISTOS, JSON.stringify([...new Set([...leerVistos(), id])]));
   } catch {
     // Sin sessionStorage alcanza con el Set en memoria.
   }
@@ -156,15 +168,13 @@ export class EjecucionPantalla {
     const p = this.ej()?.pausa;
     return p ? Math.max(0, Math.ceil(p.vence - this.ahora() / 1000)) : 0;
   });
-  // --- Errores de sintaxis (letra distinta entre ARCA y Xubio) -----------------------
+  // --- Ventana de errores (lo que encontró la auditoría y los pasos que fallaron) -----
 
-  protected readonly comprobantesConError = computed(() =>
-    (this.ej()?.advertencias ?? []).reduce((n, a) => n + a.comprobantes.length, 0),
-  );
+  protected readonly conteoErrores = computed(() => contarErrores(this.ej()?.advertencias ?? []));
 
-  protected verErroresDeSintaxis(): void {
+  protected verErrores(): void {
     const a = this.ej()?.advertencias;
-    if (a?.length) void mostrarErroresDeSintaxis(a);
+    if (a?.length) void mostrarVentanaDeErrores(a);
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -191,12 +201,12 @@ export class EjecucionPantalla {
       untracked(() => void this.abrir(id));
     });
 
-    // Al terminar un control con errores de sintaxis, el aviso se abre solo una vez.
+    // Al terminar un control con errores de sintaxis, el aviso se abre solo.
     effect(() => {
       const e = this.ej();
-      if (!e || this.activa() || !e.advertencias?.length || yaAvisado(e.id)) return;
-      marcarAvisado(e.id);
-      untracked(() => void mostrarErroresDeSintaxis(e.advertencias!));
+      if (!e || this.activa() || !e.advertencias?.length || yaVisto(e.id)) return;
+      abiertos.add(e.id);
+      untracked(() => void mostrarVentanaDeErrores(e.advertencias!).then(() => marcarVisto(e.id)));
     });
   }
 

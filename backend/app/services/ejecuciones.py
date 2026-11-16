@@ -31,7 +31,6 @@ from datetime import datetime
 from pathlib import Path
 
 from ..auditor import procesar_cruce
-from ..auditor.cruce_fo import texto_letras_distintas
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
@@ -456,6 +455,36 @@ def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> BaseException | None:
     return error
 
 
+def _acciones_de_paso(paso: Paso) -> tuple[str, list[str]]:
+    """Qué pasó (en criollo) y qué hacer, según el paso que falló."""
+    m = (paso.mensaje or "").lower()
+    portal = "ARCA" if paso.id.startswith("arca_") else "Xubio"
+    if "clave" in m or "login" in m or "contraseña" in m or "credencial" in m or "iniciar sesión" in m:
+        return f"No se pudo entrar a {portal}.", [f"Corregir clave de {portal}"]
+    if "empresa" in m or "compañ" in m:
+        return "No se encontró la empresa en Xubio.", ["Revisar empresa en Xubio"]
+    if "no se encontró el archivo" in m or ("archivo" in m and "esperado" in m):
+        return "Faltó el Excel de ARCA o de Xubio.", ["Revisar paso anterior"]
+    if "tiempo" in m or "timeout" in m or "vencid" in m:
+        return f"{portal} no respondió a tiempo.", ["Volver a correr"]
+    return paso.mensaje, ["Volver a correr"]
+
+
+def _error_de_paso(cliente: str, paso: Paso) -> dict:
+    return {
+        "tipo": "paso_error",
+        "gravedad": "grave" if paso.estado == "error" else "corregir",
+        "cliente": cliente,
+        "operacion": None,
+        "titulo": f"{paso.etiqueta}: {'falló' if paso.estado == 'error' else 'terminó con avisos'}",
+        "detalle": _acciones_de_paso(paso)[0],
+        "acciones": _acciones_de_paso(paso)[1],
+        "total": 0,
+        "comprobantes": [],
+        "hoja": None,
+    }
+
+
 def _pausa(ej: Ejecucion, cliente: str) -> str:
     if not ej.preguntar:
         return "continuar"
@@ -657,7 +686,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                     continue
                 ej.registrar(f" -> {paso.etiqueta}")
                 operacion = "Ventas" if paso.id == "auditoria_ventas" else "Compras"
-                letras: list[dict] = []
+                errores_auditoria: list[dict] = []
                 _correr_paso(
                     ej,
                     paso,
@@ -668,22 +697,20 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                         p["hasta"],
                         str(carpeta),
                         log=ej.registrar,
-                        avisar_letras_distintas=letras.extend,
+                        avisar_errores=errores_auditoria.extend,
                     ),
                 )
-                # Duplicados y letras distintas no frenan: la auditoría se hace
-                # y el paso queda OK. La letra distinta se avisa al terminar
-                # (SweetAlert2 en la web).
-                if letras:
-                    ej.advertencias.append(
-                        {
-                            "tipo": "letra_distinta",
-                            "cliente": cli.nombre,
-                            "operacion": operacion,
-                            "texto": texto_letras_distintas(cli.nombre, operacion, letras),
-                            "comprobantes": list(letras),
-                        }
-                    )
+                # Lo que encontró la auditoría no frena el control: el paso queda
+                # OK y los errores se muestran al terminar, con cómo solucionarlos
+                # (ventana de errores en la web).
+                for e in errores_auditoria:
+                    ej.advertencias.append({**e, "cliente": cli.nombre})
+
+            # Pasos que fallaron (login, empresa de Xubio, descargas...): también
+            # van a la ventana de errores, con qué revisar.
+            for x in cli.pasos:
+                if x.estado in ("error", "aviso") and x.mensaje:
+                    ej.advertencias.append(_error_de_paso(cli.nombre, x))
 
             cli.archivos = listar_archivos(carpeta, inicio_cliente)
             if not cli.archivos and descartar_si_vacia(carpeta):

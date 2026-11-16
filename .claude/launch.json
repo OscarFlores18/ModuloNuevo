@@ -13,6 +13,18 @@
       "runtimeArgs": ["-m", "uvicorn", "backend.app.main:app", "--host", "127.0.0.1", "--port", "8000", "--reload", "--reload-dir", "backend/app"],
       "port": 8000,
       "autoPort": false
+    },
+    {
+      "name": "backend-vista",
+      "runtimeExecutable": "backend/.venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "backend.app.main:app", "--host", "127.0.0.1", "--port", "8010"],
+      "env": {
+        "MODULONUEVO_DATA_DIR": "C:/Users/Admin/AppData/Local/Temp/claude/f56a12a9f2db1356/24b9114e-8a82-4278-963c-537490a677b7/scratchpad/data-ui",
+        "MODULONUEVO_OUTPUT_DIR": "C:/Users/Admin/AppData/Local/Temp/claude/f56a12a9f2db1356/24b9114e-8a82-4278-963c-537490a677b7/scratchpad/data-ui/salidas",
+        "MODULONUEVO_LOG_DIR": "C:/Users/Admin/AppData/Local/Temp/claude/f56a12a9f2db1356/24b9114e-8a82-4278-963c-537490a677b7/scratchpad/data-ui/logs"
+      },
+      "port": 8010,
+      "autoPort": false
     }
   ]
 }
