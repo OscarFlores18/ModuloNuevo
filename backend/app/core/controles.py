@@ -105,20 +105,120 @@ def siguiente_numero(previos: list[ControlPrevio]) -> int:
     return max((p.numero for p in previos), default=0) + 1
 
 
+# --- Carpetas por control -------------------------------------------------------------
+#
+# <Cliente>/<MMAAAA>/Control de facturas/
+#     1er control/   <- todo lo del primer control (ARCA, Xubio y los AUX)
+#     2do control/   <- el segundo control del mismo período
+#
+# No se guarda ningún estado: el número sale de lo que ya se hizo en la carpeta.
+# - El primer control del período es siempre el «1er control».
+# - Solo cuentan los controles realizados: carpetas que tienen algún archivo.
+#   Si un control falla antes de bajar nada, su carpeta queda vacía (o se borra)
+#   y el próximo control la reutiliza con el mismo número.
+# - Los AUX sueltos de antes de las carpetas no cuentan.
+
+_CARPETA_CONTROL = re.compile(r"(\d+)\S*\s+control", re.IGNORECASE)
+
+
+def numero_de_carpeta(carpeta: Path | str) -> int | None:
+    """«2do control» -> 2. None si no es una carpeta de control."""
+    coincide = _CARPETA_CONTROL.fullmatch(Path(carpeta).name.strip())
+    return int(coincide.group(1)) if coincide else None
+
+
+def nombre_carpeta_control(numero: int) -> str:
+    return f"{ordinal(numero)} control"
+
+
+def _modificado(ruta: Path) -> datetime:
+    return datetime.fromtimestamp(ruta.stat().st_mtime)
+
+
+def tiene_archivos(carpeta: Path) -> bool:
+    """True si el control dejó algún archivo (se considera realizado)."""
+    return any(hijo.is_file() for hijo in carpeta.iterdir())
+
+
+def controles_del_periodo(carpeta_control: Path | str) -> list[ControlPrevio]:
+    """Los controles realizados en el período: carpetas «1er control»,
+    «2do control»… que tienen algún archivo.
+
+    ``carpeta_control`` es <Cliente>/<MMAAAA>/Control de facturas.
+    """
+    raiz = Path(carpeta_control)
+    vistos: dict[int, ControlPrevio] = {}
+
+    def sumar(numero: int, ruta: Path) -> None:
+        previo = ControlPrevio(numero, ruta, _modificado(ruta))
+        actual = vistos.get(numero)
+        if actual is None or previo.modificado > actual.modificado:
+            vistos[numero] = previo
+
+    if raiz.is_dir():
+        for hijo in raiz.iterdir():
+            numero = numero_de_carpeta(hijo) if hijo.is_dir() else None
+            if numero and tiene_archivos(hijo):
+                sumar(numero, hijo)
+    return sorted(vistos.values(), key=lambda p: p.numero)
+
+
+def nueva_carpeta_control(carpeta_control: Path | str) -> tuple[Path, int]:
+    """La carpeta del próximo control («1er control», «2do control»…).
+
+    Si ya existe vacía (un control anterior que no llegó a bajar nada), se
+    reutiliza. Si existe con archivos sin contar como realizado (no debería
+    pasar), se pasa al número siguiente para no mezclar archivos.
+    """
+    raiz = Path(carpeta_control)
+    raiz.mkdir(parents=True, exist_ok=True)
+    numero = siguiente_numero(controles_del_periodo(raiz))
+    while True:
+        destino = raiz / nombre_carpeta_control(numero)
+        if not destino.exists():
+            destino.mkdir()
+            return destino, numero
+        if destino.is_dir() and not any(destino.iterdir()):
+            return destino, numero
+        numero += 1
+
+
+def descartar_si_vacia(carpeta: Path | str) -> bool:
+    """Borra la carpeta de un control que no generó nada. True si la borró."""
+    carpeta = Path(carpeta)
+    try:
+        if numero_de_carpeta(carpeta) and carpeta.is_dir() and not any(carpeta.iterdir()):
+            carpeta.rmdir()
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def ruta_siguiente_control(
     carpeta: Path | str, operacion: str, fecha_desde: str, cliente: str
 ) -> tuple[Path, int, list[ControlPrevio]]:
-    """Ruta del próximo AUX, su número y los controles que ya había."""
+    """Ruta del AUX, su número y los controles que ya había.
+
+    Si ``carpeta`` es la carpeta de un control («2do control»), el AUX lleva ese
+    número. Si no (uso suelto, tests, app de escritorio), se numera por los AUX
+    que ya hay en la carpeta, como antes.
+    """
+    carpeta = Path(carpeta)
     base = base_aux(operacion, fecha_desde, cliente)
-    previos = controles_previos(carpeta, base)
-    numero = siguiente_numero(previos)
-    ruta = Path(carpeta) / f"{base} - {ordinal(numero)} control.xlsx"
+    numero = numero_de_carpeta(carpeta)
+    if numero:
+        previos = [p for p in controles_del_periodo(carpeta.parent) if p.numero < numero]
+    else:
+        previos = controles_previos(carpeta, base)
+        numero = siguiente_numero(previos)
+    ruta = carpeta / f"{base} - {ordinal(numero)} control.xlsx"
     return ruta, numero, previos
 
 
 def carpeta_periodo(base_salida: Path | str, cliente: str, fecha_desde: str) -> Path:
-    """Donde quedan los AUX del período, sin crearla (misma regla que
-    `carpeta_cliente`): <Cliente>/<MMAAAA>/Control de facturas."""
+    """<Cliente>/<MMAAAA>/Control de facturas, sin crearla (misma regla que
+    `carpeta_cliente`): ahí adentro están las carpetas de cada control."""
     _, mes, anio = fecha_desde.split("/")
     return Path(base_salida) / nombre_carpeta(cliente) / f"{mes}{anio}" / SUBCARPETA_CONTROL
 
@@ -126,15 +226,17 @@ def carpeta_periodo(base_salida: Path | str, cliente: str, fecha_desde: str) -> 
 def resumen_controles(
     base_salida: Path | str, cliente: str, fecha_desde: str, operacion: str
 ) -> dict[str, object]:
-    """Lo que ve el front: cuántos controles hubo y cuál sería el próximo."""
-    carpeta = carpeta_periodo(base_salida, cliente, fecha_desde)
-    previos = controles_previos(carpeta, base_aux(operacion, fecha_desde, cliente))
+    """Lo que ve el front: cuántos controles hubo y cuál sería el próximo.
+
+    Un control nuevo es una carpeta con Ventas y Compras juntos, así que el
+    número es el mismo para las dos operaciones.
+    """
+    previos = controles_del_periodo(carpeta_periodo(base_salida, cliente, fecha_desde))
     numero = siguiente_numero(previos)
+    ultimo = max((p.modificado for p in previos), default=None)
     return {
         "realizados": len(previos),
         "proximo": numero,
         "proximo_texto": f"{ordinal(numero)} control",
-        "ultimo": previos[-1].modificado.isoformat(timespec="seconds")
-        if previos
-        else None,
+        "ultimo": ultimo.isoformat(timespec="seconds") if ultimo else None,
     }

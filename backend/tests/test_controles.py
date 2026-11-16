@@ -15,6 +15,13 @@ from backend.app.core.controles import (
 
 from .test_auditor import _crear_arca, _crear_xubio
 
+def _realizado(carpeta: Path) -> Path:
+    """Simula un control que terminó: la carpeta con un archivo adentro."""
+    carpeta.mkdir(parents=True, exist_ok=True)
+    (carpeta / "IVA VENTAS - X.xlsx").write_bytes(b"x")
+    return carpeta
+
+
 ARCA = {"cuit_login": "20-23510216-2", "clave": "secreta", "cuit_representado": "30-71080988-3"}
 
 
@@ -61,47 +68,10 @@ def test_auditar_dos_veces_conserva_los_dos(tmp_path: Path):
     assert any("2do control (el 1er fue el" in linea for linea in log)
 
 
-def test_endpoint_controles(entorno):
-    client, _ = entorno
-    client.post("/api/clientes", json={"nombre": "Acme", "arca": ARCA})
-    carpeta = carpeta_periodo(config.OUTPUT_DIR, "Acme", "01/10/2026")
-    carpeta.mkdir(parents=True)
-    (carpeta / f"{base_aux('Ventas', '01/10/2026', 'Acme')} - 1er control.xlsx").write_bytes(b"x")
-
-    r = client.post("/api/controles", json={"clientes": ["Acme", "No existe"], "desde": "01/10/2026"})
-    assert r.status_code == 200
-    datos = r.json()
-    assert list(datos) == ["Acme"]
-    assert datos["Acme"]["ventas"]["realizados"] == 1
-    assert datos["Acme"]["ventas"]["proximo_texto"] == "2do control"
-    assert datos["Acme"]["compras"]["proximo_texto"] == "1er control"
-    assert datos["Acme"]["compras"]["ultimo"] is None
-
-
 def test_endpoint_controles_fecha_invalida(entorno):
     client, _ = entorno
     r = client.post("/api/controles", json={"clientes": [], "desde": "2026-10-01"})
     assert r.status_code == 422
-
-
-def test_endpoint_cuenta_los_aux_de_control_de_facturas(entorno):
-    """Los AUX se guardan en <Cliente>/<mmaaaa>/Control de facturas: el contador
-    tiene que encontrarlos ahí (antes miraba solo <mmaaaa> y siempre decía 1er)."""
-    client, _ = entorno
-    client.post("/api/clientes", json={"nombre": "Acme", "arca": {}})
-    periodo = Path(config.OUTPUT_DIR) / "Acme" / "102026"
-    nueva = periodo / "Control de facturas"
-    nueva.mkdir(parents=True)
-    base = base_aux("Ventas", "01/10/2026", "Acme")
-    # Uno de antes de la subcarpeta (en el período) y uno nuevo (en la subcarpeta).
-    (periodo / f"{base}.xlsx").write_bytes(b"x")
-    (nueva / f"{base} - 2do control.xlsx").write_bytes(b"x")
-
-    r = client.post("/api/controles", json={"clientes": ["Acme"], "desde": "01/10/2026"})
-
-    ventas = r.json()["Acme"]["ventas"]
-    assert ventas["realizados"] == 2
-    assert ventas["proximo_texto"] == "3er control"
 
 
 def test_el_proximo_aux_sigue_la_numeracion_del_anterior(tmp_path: Path):
@@ -116,3 +86,119 @@ def test_el_proximo_aux_sigue_la_numeracion_del_anterior(tmp_path: Path):
 
     assert numero == 2 and len(previos) == 1
     assert ruta.parent == nueva and ruta.name.endswith("2do control.xlsx")
+
+
+# --- Carpetas por control ----------------------------------------------------------
+
+
+def test_cada_control_crea_su_carpeta(tmp_path: Path):
+    from backend.app.core.controles import nueva_carpeta_control
+
+    raiz = tmp_path / "Acme" / "102026" / "Control de facturas"
+    primera, n1 = nueva_carpeta_control(raiz)
+    _realizado(primera)
+    segunda, n2 = nueva_carpeta_control(raiz)
+    assert (n1, primera.name) == (1, "1er control")
+    assert (n2, segunda.name) == (2, "2do control")
+    assert primera.is_dir() and segunda.is_dir()
+
+
+def test_el_aux_lleva_el_numero_de_su_carpeta(tmp_path: Path):
+    from backend.app.core.controles import nueva_carpeta_control
+
+    raiz = tmp_path / "Acme" / "102026" / "Control de facturas"
+    _realizado(nueva_carpeta_control(raiz)[0])
+    segunda, _ = nueva_carpeta_control(raiz)
+    arca, xubio = segunda / "arca.xlsx", segunda / "xubio.xlsx"
+    _crear_arca(arca)
+    _crear_xubio(xubio)
+    log: list[str] = []
+
+    salida = procesar_cruce(
+        "Acme", "Ventas", "01/03/2025", "31/03/2025", str(segunda),
+        ruta_arca_manual=str(arca), ruta_xubio_manual=str(xubio), log=log.append,
+    )
+
+    assert Path(salida).parent == segunda
+    assert Path(salida).name.endswith(" - 2do control.xlsx")
+    assert any("2do control (el 1er fue el" in linea for linea in log)
+
+
+def test_endpoint_cuenta_las_carpetas_de_control(entorno):
+    client, _ = entorno
+    client.post("/api/clientes", json={"nombre": "Acme", "arca": ARCA})
+    raiz = carpeta_periodo(config.OUTPUT_DIR, "Acme", "01/10/2026")
+    _realizado(raiz / "1er control")
+    _realizado(raiz / "2do control")
+    _realizado(raiz / "otra carpeta")
+
+    datos = client.post("/api/controles", json={"clientes": ["Acme"], "desde": "01/10/2026"}).json()
+
+    for op in ("ventas", "compras"):
+        assert datos["Acme"][op]["realizados"] == 2
+        assert datos["Acme"][op]["proximo_texto"] == "3er control"
+
+
+def test_los_aux_sueltos_de_antes_no_cuentan(tmp_path: Path):
+    """Solo cuentan las carpetas de control: el primero con carpeta es el 1er."""
+    from backend.app.core.controles import nueva_carpeta_control
+
+    periodo = tmp_path / "Acme" / "102026"
+    raiz = periodo / "Control de facturas"
+    raiz.mkdir(parents=True)
+    (periodo / f"{base_aux('Ventas', '01/10/2026', 'Acme')}.xlsx").write_bytes(b"x")
+    (raiz / f"{base_aux('Compras', '01/10/2026', 'Acme')} - 5to control.xlsx").write_bytes(b"x")
+
+    carpeta, numero = nueva_carpeta_control(raiz)
+    assert (numero, carpeta.name) == (1, "1er control")
+
+
+def test_endpoint_controles(entorno):
+    client, _ = entorno
+    client.post("/api/clientes", json={"nombre": "Acme", "arca": ARCA})
+    raiz = carpeta_periodo(config.OUTPUT_DIR, "Acme", "01/10/2026")
+    raiz.mkdir(parents=True)
+    # Un AUX suelto viejo no cuenta; la carpeta «1er control» sí.
+    (raiz / f"{base_aux('Ventas', '01/10/2026', 'Acme')} - 4to control.xlsx").write_bytes(b"x")
+
+    r = client.post("/api/controles", json={"clientes": ["Acme", "No existe"], "desde": "01/10/2026"})
+    assert r.status_code == 200
+    datos = r.json()
+    assert list(datos) == ["Acme"]
+    assert datos["Acme"]["ventas"]["proximo_texto"] == "1er control"
+    assert datos["Acme"]["ventas"]["ultimo"] is None
+
+    _realizado(raiz / "1er control")
+    datos = client.post("/api/controles", json={"clientes": ["Acme"], "desde": "01/10/2026"}).json()
+    for op in ("ventas", "compras"):
+        assert datos["Acme"][op]["realizados"] == 1
+        assert datos["Acme"][op]["proximo_texto"] == "2do control"
+
+
+def test_un_control_sin_archivos_no_cuenta_y_se_reutiliza(tmp_path: Path):
+    """Si un control falla antes de bajar nada, el próximo usa su número."""
+    from backend.app.core.controles import controles_del_periodo, nueva_carpeta_control
+
+    raiz = tmp_path / "Acme" / "102026" / "Control de facturas"
+    _realizado(nueva_carpeta_control(raiz)[0])
+    fallido, n_fallido = nueva_carpeta_control(raiz)
+    assert (n_fallido, fallido.name) == (2, "2do control")
+    assert [p.numero for p in controles_del_periodo(raiz)] == [1]
+
+    reintento, n_reintento = nueva_carpeta_control(raiz)
+    assert (n_reintento, reintento) == (2, fallido)
+
+
+def test_descartar_si_vacia(tmp_path: Path):
+    from backend.app.core.controles import descartar_si_vacia
+
+    vacia = tmp_path / "1er control"
+    vacia.mkdir()
+    con_algo = _realizado(tmp_path / "2do control")
+    otra = tmp_path / "otra carpeta"
+    otra.mkdir()
+
+    assert descartar_si_vacia(vacia) is True and not vacia.exists()
+    assert descartar_si_vacia(con_algo) is False and con_algo.exists()
+    # Solo borra carpetas de control.
+    assert descartar_si_vacia(otra) is False and otra.exists()

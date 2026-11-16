@@ -59,6 +59,13 @@ def restar_un_mes(fecha_str):
     ultimo_dia_mes_anterior = primer_dia_mes_actual - timedelta(days=1)
     return ultimo_dia_mes_anterior.strftime("%d/%m/%Y")
 
+def limitar_a_hoy(fecha_str: str, hoy: datetime | None = None) -> str:
+    """«30/11/2026» -> la fecha de hoy si todavía no llegó; si no, igual."""
+    hoy = (hoy or datetime.now()).replace(hour=0, minute=0, second=0, microsecond=0)
+    fecha = datetime.strptime(fecha_str, "%d/%m/%Y")
+    return (hoy if fecha > hoy else fecha).strftime("%d/%m/%Y")
+
+
 def sumar_un_dia(fecha_str):
     d = datetime.strptime(fecha_str, "%d/%m/%Y") + timedelta(days=1)
     return d.strftime("%d/%m/%Y")
@@ -465,6 +472,8 @@ class SesionArca:
         self.log(f"   -> Apretando botón '{tipo_comprobante}'...")
         self._apretar_tipo(servicio, boton_tipo, tipo_comprobante)
 
+        # ARCA no acepta fechas futuras: si el mes no terminó, hasta hoy.
+        fecha_hasta = limitar_a_hoy(fecha_hasta)
         fecha_desde_actual = fecha_desde
         fecha_hasta_actual = fecha_hasta
         excels_parciales: list[str] = []

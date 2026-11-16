@@ -257,7 +257,7 @@ export class EjecucionPantalla {
   }
 
   /**
-   * Modo servidor: un .zip con Cliente/mmaaaa/Control de facturas. Modo local:
+   * Modo servidor: un .zip con Cliente/mmaaaa/Control de facturas/N° control. Modo local:
    * el servidor (esta misma PC) abre la ventana para elegir carpeta. Elegida: adentro van
    * mmaaaa con los archivos. Cerrada sin elegir: se crea Descargas/Cliente/mmaaaa.
    */

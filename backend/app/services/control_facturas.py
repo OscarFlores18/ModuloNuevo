@@ -24,6 +24,7 @@ from ..bots import extraer_arca, extraer_xubio
 from ..bots.sesiones import GestorSesiones
 from ..core.errors import BotError, Cancelado, ConfigInvalida, SesionVencida
 from ..core.models import JobError, JobProgress, JobRequest, JobResult
+from ..core.controles import nueva_carpeta_control
 from ..core.paths import carpeta_cliente
 from .credenciales import ProveedorCredenciales
 
@@ -212,7 +213,9 @@ def ejecutar_control_facturas(
             cuit_login = clave_arca = cuit_repres = ""
         url_xubio = (datos.get("xubio", {}) or {}).get("url", "")
 
-        carpeta_final = carpeta_cliente(base_salida, cliente, mes, anio)
+        carpeta_final, _ = nueva_carpeta_control(
+            carpeta_cliente(base_salida, cliente, mes, anio)
+        )
         log(f" -> Directorio Destino: {carpeta_final}")
 
         # -- 1. ARCA -------------------------------------------------------

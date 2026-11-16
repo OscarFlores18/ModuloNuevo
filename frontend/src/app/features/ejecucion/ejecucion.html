@@ -137,9 +137,9 @@
                       <div class="ej-carpeta-ruta">
                         <span class="mf-tenue min-w-0 flex-1">
                           @if (dialogosLocales()) {
-                            Descargar todos: elegí la carpeta del cliente y adentro se crea la del período (mmaaaa) con la subcarpeta «Control de facturas», donde van Ventas y Compras juntos. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.
+                            Descargar todos: elegí la carpeta del cliente y adentro se crea la del período (mmaaaa) con «Control de facturas» y la carpeta de este control (1er control, 2do control…), donde van Ventas y Compras juntos. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.
                           } @else {
-                            Descargar todos baja un .zip con las carpetas del cliente, del período y «Control de facturas» (Ventas y Compras juntos).
+                            Descargar todos baja un .zip con las carpetas del cliente, del período, «Control de facturas» y la de este control (Ventas y Compras juntos).
                           }
                         </span>
                         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'">

@@ -253,3 +253,86 @@ def test_arca_y_xubio_corren_en_paralelo(cliente_demo, sin_pausa, tmp_path, monk
     assert pasos["arca_ventas"] == "ok", detalle
     assert pasos["xubio"] == "ok", detalle
     assert hilos["arca"] != hilos["xubio"]
+
+
+def test_dos_controles_del_mismo_periodo_van_en_carpetas_distintas(cliente_demo, sin_pausa, tmp_path, monkeypatch):
+    import io
+    import zipfile
+
+    monkeypatch.setattr(config, "DIALOGOS_LOCALES", False)
+    salidas = tmp_path / "salidas"
+    pedido = {
+        "clientes": ["Acme"],
+        "desde": "01/03/2025",
+        "hasta": "31/03/2025",
+        "ventas": True,
+        "compras": True,
+        "pasos": {"arca": True, "xubio": True, "auditoria": True},
+        "carpeta": str(salidas),
+        "xubio": {"usuario": "operador", "clave": "clave-xubio"},
+    }
+    carpetas = []
+    for _ in range(2):
+        ejecucion_id = cliente_demo.post("/api/ejecuciones", json=pedido).json()["id"]
+        for _ in range(200):
+            detalle = cliente_demo.get(f"/api/ejecuciones/{ejecucion_id}").json()
+            if detalle["estado"] in {"finalizada", "cancelada", "error"}:
+                break
+            time.sleep(0.02)
+        assert detalle["estado"] == "finalizada", detalle["mensaje"]
+        carpetas.append(Path(detalle["detalle_clientes"][0]["carpeta"]))
+
+    raiz = salidas / "Acme" / "032025" / "Control de facturas"
+    assert carpetas == [raiz / "1er control", raiz / "2do control"]
+    # Cada control conserva sus propios archivos.
+    assert (raiz / "1er control" / "Mis comprobantes - Emitidos.xlsx").is_file()
+    assert (raiz / "2do control" / "Mis comprobantes - Emitidos.xlsx").is_file()
+
+    r = cliente_demo.get(f"/api/ejecuciones/{ejecucion_id}/clientes/0/archivos.zip")
+    nombres = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+    assert nombres and all(n.startswith("Acme/032025/Control de facturas/2do control/") for n in nombres)
+
+
+def test_control_que_no_genera_nada_libera_su_numero(cliente_demo, sin_pausa, tmp_path, monkeypatch):
+    """ARCA y Xubio fallan sin bajar nada: la carpeta se borra y el próximo
+    control del período vuelve a ser el 1er."""
+
+    class _ArcaQueFalla(_SesionArcaFalsa):
+        def descargar(self, *args, **kwargs):
+            raise RuntimeError("ARCA no responde")
+
+    class _XubioQueFalla(_SesionXubioFalsa):
+        def descargar(self, *args, **kwargs):
+            raise RuntimeError("Xubio no responde")
+
+    class _Gestor(_GestorFalso):
+        def arca(self, cuit_login, clave):
+            return _ArcaQueFalla()
+
+        def xubio(self, usuario, password):
+            return _XubioQueFalla()
+
+    monkeypatch.setattr(ejecuciones_srv, "GestorSesiones", _Gestor)
+    salidas = tmp_path / "salidas"
+    pedido = {
+        "clientes": ["Acme"],
+        "desde": "01/03/2025",
+        "hasta": "31/03/2025",
+        "ventas": True,
+        "compras": False,
+        "pasos": {"arca": True, "xubio": True, "auditoria": False},
+        "carpeta": str(salidas),
+        "xubio": {"usuario": "operador", "clave": "clave-xubio"},
+    }
+    ejecucion_id = cliente_demo.post("/api/ejecuciones", json=pedido).json()["id"]
+    for _ in range(200):
+        detalle = cliente_demo.get(f"/api/ejecuciones/{ejecucion_id}").json()
+        if detalle["estado"] in {"finalizada", "cancelada", "error"}:
+            break
+        time.sleep(0.02)
+
+    raiz = salidas / "Acme" / "032025" / "Control de facturas"
+    assert not (raiz / "1er control").exists()
+    assert any("se borró la carpeta «1er control»" in l["texto"] for l in detalle["log"])
+    datos = cliente_demo.post("/api/controles", json={"clientes": ["Acme"], "desde": "01/03/2025"}).json()
+    assert datos["Acme"]["ventas"]["proximo_texto"] == "1er control"

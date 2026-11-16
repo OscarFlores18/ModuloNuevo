@@ -35,6 +35,7 @@ from ..auditor.cruce_fo import texto_letras_distintas
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
+from ..core.controles import descartar_si_vacia, nueva_carpeta_control, numero_de_carpeta
 from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente, nombre_carpeta
 from ..core.saneo import sanear
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
@@ -280,6 +281,15 @@ def iniciar(
     hasta = _validar_fecha(pedido.get("hasta", ""), "Hasta")
     if hasta < desde:
         raise ErrorEjecucion("La fecha «Hasta» es anterior a «Desde».", 422)
+    # ARCA no acepta fechas futuras: si el mes no terminó (ej. hoy es 26 y se
+    # pidió hasta el 30), se toma la fecha más alta posible, que es hoy.
+    hoy = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    if desde > hoy:
+        raise ErrorEjecucion(
+            f"El período empieza el {desde:%d/%m/%Y}, que todavía no llegó.", 422
+        )
+    hasta_pedido = hasta
+    hasta = min(hasta, hoy)
 
     ventas, compras = bool(pedido.get("ventas")), bool(pedido.get("compras"))
     if not (ventas or compras):
@@ -335,6 +345,12 @@ def iniciar(
         parametros=parametros,
         clientes=[ClienteEnCurso(n, _pasos_para(parametros)) for n in nombres],
     )
+    if hasta < hasta_pedido:
+        ej.registrar(
+            f"[AVISO] El período pedía hasta el {hasta_pedido:%d/%m/%Y}, que todavía no "
+            f"llegó: se controla hasta hoy, {hasta:%d/%m/%Y}.",
+            "aviso",
+        )
     with _lock:
         _ejecuciones[ej.id] = ej
         _orden.append(ej.id)
@@ -525,10 +541,13 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
             else:
                 cuit_login = clave_arca = cuit_repres = ""
 
-            carpeta = carpeta_cliente(Path(p["carpeta"]), cli.nombre, mes, anio)
+            # Cada control tiene su carpeta: Control de facturas/1er control, 2do...
+            carpeta, _ = nueva_carpeta_control(
+                carpeta_cliente(Path(p["carpeta"]), cli.nombre, mes, anio)
+            )
             cli.carpeta = str(carpeta)
             inicio_cliente = time.time()
-            ej.registrar(f" -> Carpeta: {carpeta}")
+            ej.registrar(f" -> Carpeta: {carpeta} ({carpeta.name})")
 
             servicio_arca = None
 
@@ -667,6 +686,14 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                     )
 
             cli.archivos = listar_archivos(carpeta, inicio_cliente)
+            if not cli.archivos and descartar_si_vacia(carpeta):
+                # No bajó nada: el control no cuenta y el próximo usa este número.
+                ej.registrar(
+                    f" -> No se generó ningún archivo: se borró la carpeta «{carpeta.name}» "
+                    "y el próximo control del período usa ese número.",
+                    "aviso",
+                )
+                cli.carpeta = ""
             cli.estado = (
                 "con_errores"
                 if any(x.estado in ("error", "aviso") for x in cli.pasos)
@@ -764,16 +791,17 @@ def operacion_de(nombre: str) -> str | None:
 
 def plan_de_archivos(ej: Ejecucion, indice: int) -> tuple[Path, list[tuple[str, Path]]]:
     """La carpeta de origen y, por archivo, su ruta relativa dentro de <mmaaaa>:
-    todos juntos (Ventas y Compras) en `Control de facturas/…`."""
+    `Control de facturas/<N° control>/…`, todos juntos (Ventas y Compras)."""
     origen, archivos = archivos_del_cliente(ej, indice)
-    return origen, [
-        (a["nombre"], Path(SUBCARPETA_CONTROL, a["nombre"])) for a in archivos
-    ]
+    destino = Path(SUBCARPETA_CONTROL)
+    if numero_de_carpeta(origen):
+        destino = destino / origen.name
+    return origen, [(a["nombre"], destino / a["nombre"]) for a in archivos]
 
 
 def zip_de_archivos(ej: Ejecucion, indice: int) -> tuple[str, bytes]:
     """«Descargar todos» sin ventanas (servidor): un .zip con
-    <Cliente>/<mmaaaa>/Control de facturas/…"""
+    <Cliente>/<mmaaaa>/Control de facturas/<N° control>/…"""
     origen, plan = plan_de_archivos(ej, indice)
     _, mes, anio = ej.parametros["desde"].split("/")
     raiz = Path(nombre_carpeta(ej.clientes[indice].nombre), f"{mes}{anio}")
@@ -829,12 +857,13 @@ def exportar_archivos(
     for nombre, relativa in plan:
         destino_archivo = carpeta / relativa
         try:
-            destino_archivo.parent.mkdir(exist_ok=True)
+            destino_archivo.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(origen / nombre, destino_archivo)
             copiados.append(nombre)
         except PermissionError:
             fallas.append({"nombre": nombre, "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})
         except OSError as exc:
             fallas.append({"nombre": nombre, "motivo": str(exc)})
-    return {"carpeta": str(carpeta / SUBCARPETA_CONTROL), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
+    carpeta_final = carpeta / plan[0][1].parent if plan else carpeta / SUBCARPETA_CONTROL
+    return {"carpeta": str(carpeta_final), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
 

@@ -68,7 +68,7 @@ export class ApiService {
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
   }
-  /** Modo servidor: todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas. */
+  /** Modo servidor: todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas/N° control. */
   zip(id: string, indice: number): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
   }

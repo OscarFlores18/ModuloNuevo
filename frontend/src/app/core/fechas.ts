@@ -2,14 +2,16 @@
 
 const dos = (n: number) => String(n).padStart(2, '0');
 
-/** '2026-10' -> {desde: '01/10/2026', hasta: '31/10/2026'} */
-export function rangoDelMes(mes: string): { desde: string; hasta: string } | null {
+/**
+ * '2026-10' -> {desde: '01/10/2026', hasta: '31/10/2026'}.
+ * Si el mes está en curso, «hasta» es hoy: ARCA no acepta fechas futuras.
+ */
+export function rangoDelMes(mes: string, hoy = new Date()): { desde: string; hasta: string } | null {
   const m = /^(\d{4})-(\d{2})$/.exec(mes);
   if (!m) return null;
   const anio = Number(m[1]);
   const numero = Number(m[2]);
-  const ultimo = new Date(anio, numero, 0).getDate();
-  return { desde: `01/${m[2]}/${anio}`, hasta: `${ultimo}/${m[2]}/${anio}` };
+  return { desde: `01/${m[2]}/${anio}`, hasta: hastaSinPasarHoy(new Date(anio, numero, 0), hoy) };
 }
 
 /** '2026-10-05' (input date) -> '05/10/2026' */
