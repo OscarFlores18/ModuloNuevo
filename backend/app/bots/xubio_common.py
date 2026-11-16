@@ -20,6 +20,7 @@ from urllib.parse import urljoin
 
 from ..core import config
 from ..core.errors import EmpresaNoEncontrada, SelectorEmpresaNoDisponible
+from .navegador import capturas_permitidas, como_fuente, inyectar
 
 
 def crear_matar_popup(page):
@@ -40,7 +41,13 @@ def crear_matar_popup(page):
 
 
 def login_xubio(page, usuario, password, matar_popup, log: Callable[[str], None] = print):
-    """ Login completo contra connect.visma.com / Xubio. """
+    """Login completo contra connect.visma.com / Xubio.
+
+    ``password`` puede ser un ``str``/``Secreto`` o la tupla ``(fuente, es_jit)``
+    de :func:`bots.navegador.como_fuente`; la contraseña se pide recién al
+    escribirla y se borra de la memoria enseguida.
+    """
+    fuente, es_jit = password if isinstance(password, tuple) else como_fuente(password)
     log(f"   -> Iniciando sesión en Xubio con el usuario {usuario}...")
     page.goto("https://connect.visma.com/?returnUrl=%2Fconnect%2Fauthorize%2Fcallback%3Fredirect_uri%3Dhttps%253A%252F%252Fxubio.com%252FNXV%252FvismaConnect%252Fcallback%26response_type%3Dcode%2520id_token%26scope%3Dopenid%2520email%26response_mode%3Dform_post%26client_id%3Dxubio%26state%3Dxubio%26nonce%3D6890436f8d7e8befea5fd4302e574b5d")
     cookies = page.locator("#onetrust-accept-btn-handler")
@@ -63,7 +70,7 @@ def login_xubio(page, usuario, password, matar_popup, log: Callable[[str], None]
         aceptar_cookies()
         page.click(".form-login-button-email")
     page.wait_for_selector("#Password", state="visible")
-    page.fill("#Password", password)
+    inyectar(page, "#Password", fuente, es_jit)
     page.click(".form-login-button-password")
 
     # Se espera lo que llegue primero: «Continuar inicio» (a veces) o Xubio ya adentro.
@@ -123,7 +130,12 @@ def _esperar_buscador(page, timeout_ms: int):
 
 
 def _guardar_diagnostico(page, log: Callable[[str], None]) -> None:
-    """Captura + HTML cuando el selector no abre, para poder diagnosticarlo."""
+    """Captura + HTML cuando el selector no abre, para poder diagnosticarlo.
+
+    Solo con ``MODULONUEVO_CAPTURAS_DIAGNOSTICO=1`` y nunca durante el login.
+    """
+    if not capturas_permitidas():
+        return
     try:
         carpeta = Path(config.LOG_DIR) / "diagnostico"
         carpeta.mkdir(parents=True, exist_ok=True)

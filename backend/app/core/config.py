@@ -71,6 +71,55 @@ DIALOGOS_LOCALES = (
     else os.name == "nt" and not PLAYWRIGHT_HEADLESS and not BASIC_AUTH
 )
 
+def _bandera(nombre: str, default: bool) -> bool:
+    valor = os.getenv(nombre, "").strip().lower()
+    if not valor:
+        return default
+    return valor in ("1", "true", "si", "sí", "yes")
+
+
+# --- Seguridad de credenciales -------------------------------------------------
+
+# Rotación automática de la KEK (días). 0 = no rotar sola.
+KEK_ROTACION_DIAS = int(os.getenv("MODULONUEVO_KEK_ROTACION_DIAS", "90"))
+
+# Minutos que dura el consentimiento dado al iniciar una ejecución (JIT).
+CONSENTIMIENTO_MIN = int(os.getenv("MODULONUEVO_CONSENTIMIENTO_MIN", "240"))
+
+# Filtro de salida del navegador de los bots: "bloquear" (por defecto),
+# "auditar" (solo avisa) u "off".
+EGRESS_MODO = (os.getenv("MODULONUEVO_EGRESS", "bloquear") or "bloquear").strip().lower()
+
+# Dominios permitidos para el navegador de los bots (y sus subdominios). Un
+# valor con "/" limita además el camino (google.com solo para el captcha).
+EGRESS_DOMINIOS = (
+    "afip.gob.ar",
+    "arca.gob.ar",
+    "xubio.com",
+    "visma.com",
+    "visma.net",
+    # Cartel de cookies y captcha que usan los portales en el login.
+    "cookielaw.org",
+    "onetrust.com",
+    "recaptcha.net",
+    "google.com/recaptcha/",
+    "gstatic.com",
+    "fonts.googleapis.com",
+)
+EGRESS_EXTRA = tuple(
+    d.strip().lower().lstrip(".")
+    for d in os.getenv("MODULONUEVO_EGRESS_EXTRA", "").split(",")
+    if d.strip()
+)
+
+# No bajar imágenes ni video en el navegador de los bots (más rápido).
+BLOQUEAR_RECURSOS = _bandera("MODULONUEVO_BLOQUEAR_RECURSOS", True)
+
+# Capturas + HTML de diagnóstico cuando falla el selector de Xubio. Apagado
+# por defecto: nunca se capturan pantallas durante el login.
+CAPTURAS_DIAGNOSTICO = _bandera("MODULONUEVO_CAPTURAS_DIAGNOSTICO", False)
+
+
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:4200",
     "http://127.0.0.1:4200",

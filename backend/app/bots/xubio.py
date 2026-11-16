@@ -21,6 +21,7 @@ from playwright.sync_api import Page, sync_playwright
 from ..core import config
 from ..core.errors import TimeoutDescarga
 from ..core.models import BotResult
+from .navegador import como_fuente, lanzar, nuevo_contexto
 from .xubio_common import cambiar_empresa, crear_matar_popup, login_xubio
 
 
@@ -171,7 +172,7 @@ class SesionXubio:
         playwright=None,
     ) -> None:
         self.usuario = usuario or ""
-        self.password = password or ""
+        self._fuente_pass, self._pass_jit = como_fuente(password)
         self.log = log
         # Playwright sync admite uno solo por hilo: si viene de afuera, no es nuestro.
         self._pw_ajeno = playwright
@@ -186,17 +187,14 @@ class SesionXubio:
             return self
         self._pw = self._pw_ajeno or sync_playwright().start()
         try:
-            opciones: dict[str, object] = {"headless": config.PLAYWRIGHT_HEADLESS}
-            if config.PLAYWRIGHT_CHANNEL:
-                opciones["channel"] = config.PLAYWRIGHT_CHANNEL
-            self._browser = self._pw.chromium.launch(**opciones)
-            self._context = self._browser.new_context(accept_downloads=True)
+            self._browser = lanzar(self._pw)
+            self._context = nuevo_contexto(self._browser, self.log, accept_downloads=True)
             self._page = self._context.new_page()
             self._matar_popup = crear_matar_popup(self._page)
             login_xubio(
                 self._page,
                 self.usuario,
-                self.password,
+                (self._fuente_pass, self._pass_jit),
                 self._matar_popup,
                 log=self.log,
             )
@@ -210,6 +208,8 @@ class SesionXubio:
             if self._browser is not None:
                 self._browser.close()
         finally:
+            if not self._pass_jit:
+                self._fuente_pass().borrar()
             self._browser = None
             self._context = None
             self._page = None
