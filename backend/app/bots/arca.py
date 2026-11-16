@@ -63,6 +63,19 @@ def sumar_un_dia(fecha_str):
     d = datetime.strptime(fecha_str, "%d/%m/%Y") + timedelta(days=1)
     return d.strftime("%d/%m/%Y")
 
+def contar_comprobantes(ruta) -> int:
+    """Filas con datos debajo del título y los encabezados del Excel de ARCA."""
+    wb = openpyxl.load_workbook(ruta, read_only=True)
+    try:
+        return sum(
+            1
+            for fila in wb.active.iter_rows(min_row=3, values_only=True)
+            if any(celda is not None for celda in fila)
+        )
+    finally:
+        wb.close()
+
+
 def unificar_excels(archivos_parciales, ruta_final):
     if not archivos_parciales:
         return
@@ -389,6 +402,40 @@ class SesionArca:
             detalle={"tipo": tipo_comprobante},
         )
 
+    def _escribir_rango(self, servicio: Page, caja_fecha, rango_fechas: str) -> None:
+        """Escribe el rango en el filtro y confirma que ARCA lo tomó.
+
+        Con esperas cortas el selector de fechas a veces no registraba el texto
+        y ARCA buscaba con su fecha por defecto: el Excel salía vacío. Se usan
+        las esperas originales y se verifica el valor (hasta 3 intentos).
+        """
+        for intento in (1, 2, 3):
+            caja_fecha.click(timeout=3000)
+            servicio.wait_for_timeout(800)
+            caja_fecha.click(click_count=3, timeout=3000)
+            servicio.wait_for_timeout(200)
+            servicio.keyboard.press("Backspace")
+            servicio.wait_for_timeout(200)
+            caja_fecha.press_sequentially(rango_fechas, delay=5)
+            servicio.wait_for_timeout(400)
+            caja_fecha.press("Enter")
+            servicio.wait_for_timeout(400)
+            try:
+                valor = (caja_fecha.input_value(timeout=2000) or "").strip()
+            except Exception:
+                valor = ""
+            # Se comparan solo los dígitos: no importa si ARCA cambia espacios o guiones.
+            if re.sub(r"\D", "", valor) == re.sub(r"\D", "", rango_fechas):
+                return
+            self.log(
+                f"      [AVISO]: ARCA no tomó el período (quedó «{valor or 'vacío'}»). "
+                f"Reintento {intento}/3..."
+            )
+        raise TimeoutDescarga(
+            f"ARCA no aceptó el período {rango_fechas} en el filtro de fechas.",
+            detalle={"rango": rango_fechas},
+        )
+
     def descargar(
         self,
         servicio: Page,
@@ -434,22 +481,19 @@ class SesionArca:
             self.log(f"   -> Solicitando periodo en ARCA: {rango_fechas}")
 
             caja_fecha = servicio.locator("#fechaEmision")
-
-            caja_fecha.click(timeout=3000)
-            servicio.wait_for_timeout(250)
-
-            caja_fecha.click(click_count=3, timeout=3000)
-            servicio.keyboard.press("Backspace")
-
-            caja_fecha.press_sequentially(rango_fechas, delay=5)
-            servicio.wait_for_timeout(150)
-
-            caja_fecha.press("Enter")
-            servicio.wait_for_timeout(150)
+            self._escribir_rango(servicio, caja_fecha, rango_fechas)
 
             boton_buscar = servicio.locator("#buscarComprobantes")
             boton_buscar.scroll_into_view_if_needed()
+            servicio.wait_for_timeout(150)
             boton_buscar.click(timeout=3000)
+            # Que ARCA termine de traer los resultados antes de exportar: si se
+            # exporta antes, el Excel sale con los encabezados y sin comprobantes.
+            servicio.wait_for_timeout(700)
+            try:
+                servicio.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass
 
             # --- PROCESO DE DESCARGA ---
             if bajar_csv and not bajar_excel:
@@ -578,7 +622,20 @@ class SesionArca:
             ruta_final = os.path.join(directorio_guardado, nombre_archivo_final)
             unificar_excels(excels_parciales, ruta_final)
             resultado.archivos.append(ruta_final)
-            self.log(f"      [OK]: Consolidado: {nombre_archivo_final}")
+            cantidad = contar_comprobantes(ruta_final)
+            if cantidad:
+                self.log(
+                    f"      [OK]: Consolidado: {nombre_archivo_final} "
+                    f"({cantidad} comprobante(s))"
+                )
+            else:
+                # No es un error seguro (puede no haber movimientos), pero si el
+                # período debería tener datos, la auditoría va a salir vacía.
+                self.log(
+                    f"      [AVISO]: ARCA devolvió 0 comprobantes {tipo_comprobante} "
+                    f"para {fecha_desde} al {fecha_hasta}. Si el período tiene "
+                    "movimientos, volvé a correr el control."
+                )
 
         if bajar_csv and csv_parciales:
             nombre_csv_final = (

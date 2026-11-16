@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from .paths import limpiar_nombre, nombre_carpeta
+from .paths import SUBCARPETA_CONTROL, limpiar_nombre, nombre_carpeta
 
 _ORDINALES = {
     1: "1er",
@@ -70,14 +70,21 @@ def _patron(base: str) -> re.Pattern[str]:
     )
 
 
+def _carpetas_a_revisar(carpeta: Path) -> list[Path]:
+    """La carpeta de los AUX y, si es «Control de facturas», también la del
+    período: ahí quedaron los AUX de antes de crear esa subcarpeta."""
+    carpetas = [carpeta]
+    if carpeta.name.casefold() == SUBCARPETA_CONTROL.casefold():
+        carpetas.append(carpeta.parent)
+    return [c for c in carpetas if c.is_dir()]
+
+
 def controles_previos(carpeta: Path | str, base: str) -> list[ControlPrevio]:
     """Los AUX que ya existen para esa base, ordenados por número."""
-    carpeta = Path(carpeta)
-    if not carpeta.is_dir():
-        return []
     patron = _patron(base)
     previos: list[ControlPrevio] = []
-    for archivo in carpeta.iterdir():
+    archivos = [a for c in _carpetas_a_revisar(Path(carpeta)) for a in c.iterdir()]
+    for archivo in archivos:
         if not archivo.is_file():
             continue
         coincide = patron.fullmatch(archivo.name)
@@ -110,9 +117,10 @@ def ruta_siguiente_control(
 
 
 def carpeta_periodo(base_salida: Path | str, cliente: str, fecha_desde: str) -> Path:
-    """La carpeta del período sin crearla (misma regla que `carpeta_cliente`)."""
+    """Donde quedan los AUX del período, sin crearla (misma regla que
+    `carpeta_cliente`): <Cliente>/<MMAAAA>/Control de facturas."""
     _, mes, anio = fecha_desde.split("/")
-    return Path(base_salida) / nombre_carpeta(cliente) / f"{mes}{anio}"
+    return Path(base_salida) / nombre_carpeta(cliente) / f"{mes}{anio}" / SUBCARPETA_CONTROL
 
 
 def resumen_controles(

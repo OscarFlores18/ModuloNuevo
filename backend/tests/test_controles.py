@@ -82,3 +82,37 @@ def test_endpoint_controles_fecha_invalida(entorno):
     client, _ = entorno
     r = client.post("/api/controles", json={"clientes": [], "desde": "2026-10-01"})
     assert r.status_code == 422
+
+
+def test_endpoint_cuenta_los_aux_de_control_de_facturas(entorno):
+    """Los AUX se guardan en <Cliente>/<mmaaaa>/Control de facturas: el contador
+    tiene que encontrarlos ahí (antes miraba solo <mmaaaa> y siempre decía 1er)."""
+    client, _ = entorno
+    client.post("/api/clientes", json={"nombre": "Acme", "arca": {}})
+    periodo = Path(config.OUTPUT_DIR) / "Acme" / "102026"
+    nueva = periodo / "Control de facturas"
+    nueva.mkdir(parents=True)
+    base = base_aux("Ventas", "01/10/2026", "Acme")
+    # Uno de antes de la subcarpeta (en el período) y uno nuevo (en la subcarpeta).
+    (periodo / f"{base}.xlsx").write_bytes(b"x")
+    (nueva / f"{base} - 2do control.xlsx").write_bytes(b"x")
+
+    r = client.post("/api/controles", json={"clientes": ["Acme"], "desde": "01/10/2026"})
+
+    ventas = r.json()["Acme"]["ventas"]
+    assert ventas["realizados"] == 2
+    assert ventas["proximo_texto"] == "3er control"
+
+
+def test_el_proximo_aux_sigue_la_numeracion_del_anterior(tmp_path: Path):
+    from backend.app.core.controles import ruta_siguiente_control
+
+    periodo = tmp_path / "Acme" / "102026"
+    nueva = periodo / "Control de facturas"
+    nueva.mkdir(parents=True)
+    (periodo / f"{base_aux('Compras', '01/10/2026', 'Acme')}.xlsx").write_bytes(b"x")
+
+    ruta, numero, previos = ruta_siguiente_control(nueva, "Compras", "01/10/2026", "Acme")
+
+    assert numero == 2 and len(previos) == 1
+    assert ruta.parent == nueva and ruta.name.endswith("2do control.xlsx")
