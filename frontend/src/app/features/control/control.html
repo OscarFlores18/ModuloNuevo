@@ -86,16 +86,16 @@
             }
           </div>
           @if (modo() === 'mes') {
-            <input class="mf-input !w-44" type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
+            <input class="mf-input mf-ajustable [--min-ancho:11rem]" type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
           } @else if (modo() === 'anio') {
-            <select class="mf-select !w-28" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
+            <select class="mf-select mf-ajustable [--min-ancho:7rem]" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
               <option value="" disabled>Año…</option>
               @for (a of anios; track a) { <option [value]="a">{{ a }}</option> }
             </select>
           } @else {
-            <input class="mf-input !w-40" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
+            <input class="mf-input mf-ajustable [--min-ancho:10rem]" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
             <span class="mf-tenue">a</span>
-            <input class="mf-input !w-40" type="date" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
+            <input class="mf-input mf-ajustable [--min-ancho:10rem]" type="date" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
           }
         </div>
       </fieldset>
@@ -137,8 +137,11 @@
     <p class="mf-tenue m-0 min-w-0 flex-1 truncate text-sm">
       <strong class="text-texto">{{ elegidos().length || 'Ningún' }} {{ elegidos().length === 1 || !elegidos().length ? 'cliente' : 'clientes' }}</strong>@if (resumen()) { · {{ resumen() }} }
     </p>
-    <button type="submit" class="mf-btn mf-btn-grande" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()">
-      {{ ejecucion.enviando() ? 'Iniciando…' : 'Ejecutar control' }}
+    <button type="submit" class="mf-btn mf-btn-grande inline-flex items-center gap-2" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()" [attr.aria-busy]="ejecucion.enviando() || ejecucion.hayActiva()">
+      @if (ejecucion.enviando() || ejecucion.hayActiva()) {
+        <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
+      }
+      {{ ejecucion.enviando() ? 'Iniciando…' : ejecucion.hayActiva() ? 'Control en curso…' : 'Ejecutar control' }}
     </button>
   </div>
 </form>

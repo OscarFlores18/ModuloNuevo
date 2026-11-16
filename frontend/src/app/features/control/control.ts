@@ -11,11 +11,12 @@ import {
   rangoDelAnio,
   rangoDelMes,
 } from '../../core/fechas';
-import { Ajustes, Cliente, ControlesPorCliente, PasoId, ResumenControl, mensajeDeError } from '../../core/models';
+import { Ajustes, Cliente, ControlesPorCliente, ErrorApi, PasoId, ResumenControl, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { SesionService } from '../../core/services/sesion.service';
+import { AlertasService } from '../../core/ui/alertas.service';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 
@@ -51,6 +52,7 @@ export class NuevoControl {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
+  private readonly alertas = inject(AlertasService);
   private readonly destroyRef = inject(DestroyRef);
   protected readonly clientes = inject(ClientesStore);
   protected readonly ejecucion = inject(EjecucionStore);
@@ -357,7 +359,8 @@ export class NuevoControl {
       this.toast.ok('Control iniciado', `${v.clientes.length} cliente(s) · ${this.resumen()}`);
       void this.router.navigate(['/ejecuciones', ej.id]);
     } catch (e) {
-      this.toast.error('No se pudo iniciar el control', mensajeDeError(e));
+      // Mensaje claro para el contador y, plegado, el detalle técnico.
+      void this.alertas.mostrarErrorHumano('No se pudo iniciar el control', e instanceof ErrorApi ? e.tecnico : '', mensajeDeError(e));
     }
   }
 }

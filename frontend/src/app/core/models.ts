@@ -168,7 +168,23 @@ export function estaActiva(estado: EstadoEjecucion | undefined | null): boolean 
 }
 
 /** El mensaje de error que manda la API ({detail: {mensaje}} o {detail: "..."}). */
+/**
+ * Un error de la API ya traducido: `message` es lo que se le muestra al contador
+ * y `tecnico` el detalle (código HTTP, respuesta del backend) para reportarlo.
+ */
+export class ErrorApi extends Error {
+  constructor(
+    mensaje: string,
+    readonly tecnico: string,
+    readonly estado: number,
+  ) {
+    super(mensaje);
+    this.name = 'ErrorApi';
+  }
+}
+
 export function mensajeDeError(e: unknown, porDefecto = 'Algo falló. Probá de nuevo.'): string {
+  if (e instanceof ErrorApi) return e.message;
   const err = e as { status?: number; error?: { detail?: unknown } };
   if (err?.status === 0) return 'No se pudo hablar con el servidor. Revisá que el backend esté corriendo.';
   const d = err?.error?.detail;

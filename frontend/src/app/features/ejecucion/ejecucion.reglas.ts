@@ -49,8 +49,8 @@ export interface Etapa {
 
 export const TEXTO_ETAPA: Record<EstadoEtapa, string> = {
   pendiente: 'Pendiente',
-  procesando: 'Procesando',
-  ok: 'OK',
+  procesando: 'Procesando…',
+  ok: 'Completado',
   aviso: 'Con avisos',
   error: 'Error',
   omitido: 'No se hizo',

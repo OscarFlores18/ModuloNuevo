@@ -1,8 +1,8 @@
-import { HttpClient } from '@angular/common/http';
+import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { firstValueFrom } from 'rxjs';
+import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { AccionPausa, Ajustes, Cliente, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, PedidoEjecucion, ResumenEjecucion } from '../models';
+import { AccionPausa, Ajustes, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, PedidoEjecucion, ResumenEjecucion } from '../models';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -48,8 +48,11 @@ export class ApiService {
   activa(): Promise<ResumenEjecucion | null> {
     return firstValueFrom(this.http.get<ResumenEjecucion | null>(`${this.url}/ejecuciones/activa`));
   }
+  /** Arranca un control. Los errores llegan como `ErrorApi`, listos para mostrar. */
   iniciar(pedido: PedidoEjecucion): Promise<DetalleEjecucion> {
-    return firstValueFrom(this.http.post<DetalleEjecucion>(`${this.url}/ejecuciones`, pedido));
+    return firstValueFrom(
+      this.http.post<DetalleEjecucion>(`${this.url}/ejecuciones`, pedido).pipe(timeout(ESPERA_INICIAR_MS), errorLegible('No se pudo iniciar el control.')),
+    );
   }
   ejecucion(id: string, logDesde = 0): Promise<DetalleEjecucion> {
     return firstValueFrom(this.http.get<DetalleEjecucion>(`${this.url}/ejecuciones/${id}`, { params: { log_desde: logDesde } }));
@@ -91,6 +94,40 @@ export interface ResultadoPrecarga {
   /** Precargados que ya estaban sin clave y se completaron con la compartida. */
   completados: string[];
   clientes: Cliente[];
+}
+
+/** Iniciar valida credenciales y crea carpetas: más de 30 s es que el servidor no responde. */
+const ESPERA_INICIAR_MS = 30_000;
+
+/**
+ * Operador de RxJS que traduce cualquier falla del pedido a un `ErrorApi` con un
+ * mensaje que entiende el contador (sin códigos), y guarda el detalle técnico.
+ */
+export function errorLegible<T>(porDefecto: string) {
+  return (fuente: Observable<T>): Observable<T> =>
+    fuente.pipe(catchError((e: unknown) => throwError(() => traducirError(e, porDefecto))));
+}
+
+export function traducirError(e: unknown, porDefecto: string): ErrorApi {
+  if (e instanceof ErrorApi) return e;
+  if (e instanceof TimeoutError) {
+    return new ErrorApi('El servidor tardó demasiado en responder. Revisá que el backend esté funcionando y probá de nuevo.', 'Timeout esperando la respuesta del servidor.', 0);
+  }
+  if (!(e instanceof HttpErrorResponse)) {
+    return new ErrorApi(porDefecto, e instanceof Error ? e.message : String(e), 0);
+  }
+  const detalle = e.error?.detail;
+  const delBackend = typeof detalle === 'string' ? detalle : typeof detalle?.mensaje === 'string' ? detalle.mensaje : '';
+  const cuerpo = typeof e.error === 'string' ? e.error : JSON.stringify(e.error ?? {}, null, 2);
+  const tecnico = `HTTP ${e.status} ${e.statusText || ''} · ${e.url ?? ''}
+${cuerpo}`.trim();
+  let mensaje: string;
+  if (e.status === 0) mensaje = 'No se pudo hablar con el servidor. Revisá que el backend esté corriendo.';
+  else if (e.status === 401 || e.status === 403) mensaje = delBackend || 'No tenés permiso para hacer esto.';
+  else if (e.status === 404) mensaje = delBackend || 'No se encontró lo que se pidió en el servidor.';
+  else if (e.status >= 500) mensaje = 'El servidor tuvo un error interno. Probá de nuevo; si sigue, pasá el detalle técnico.';
+  else mensaje = delBackend || porDefecto;
+  return new ErrorApi(mensaje, tecnico, e.status);
 }
 
 /** `elegida`: false si se cerró la ventana y se creó la carpeta del cliente en Descargas. */

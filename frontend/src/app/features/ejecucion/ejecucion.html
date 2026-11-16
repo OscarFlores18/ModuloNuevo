@@ -20,8 +20,11 @@
         <p class="m-0 mt-0.5 font-semibold">Período {{ e.periodo }}</p>
       </div>
       @if (activa()) {
-        <button type="button" class="mf-btn mf-btn-rojo" (click)="confirmarCancelar.set(true)" [disabled]="e.cancelar_pedido">
-          {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar control' }}
+        <button type="button" class="mf-btn mf-btn-rojo inline-flex items-center gap-2" (click)="detener()" [disabled]="e.cancelar_pedido">
+          @if (e.cancelar_pedido) {
+            <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
+          }
+          {{ e.cancelar_pedido ? 'Deteniendo…' : 'Detener bot' }}
         </button>
       } @else {
         <a routerLink="/control" class="mf-btn">Nuevo control</a>
@@ -115,7 +118,10 @@
                       }
                     </span>
                     <span class="ej-etapa-nombre">{{ et.titulo }}</span>
-                    <span class="ej-etapa-estado">{{ textoEtapa[et.estado] }}</span>
+                    <span [class]="claseEtapa[et.estado]">
+                      @if (et.estado === 'procesando') { <span class="mf-punto mf-latido" aria-hidden="true"></span> }
+                      {{ textoEtapa[et.estado] }}
+                    </span>
                   </li>
                 }
               </ol>
@@ -170,7 +176,4 @@
     </ul>
   </section>
 
-  <app-confirm-modal [(abierto)]="confirmarCancelar" titulo="¿Cancelar el control?" textoConfirmar="Sí, cancelar" textoCancelar="Seguir" [peligro]="true" (confirmado)="cancelar()">
-    El paso que se está haciendo <strong class="text-texto">termina igual</strong>; después se frena y los clientes que faltan quedan sin hacer.
-  </app-confirm-modal>
 }

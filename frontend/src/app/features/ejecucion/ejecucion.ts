@@ -6,10 +6,10 @@ import { descargarBlob } from '../../core/descargar';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
-import { ConfirmModal } from '../../core/ui/confirm-modal';
+import { AlertasService } from '../../core/ui/alertas.service';
 import { ToastService } from '../../core/ui/toast';
 import { mostrarErroresDeSintaxis } from './errores-sintaxis';
-import { ETIQUETA_ARCHIVO, Etapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
+import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
 
 /** Ejecuciones cuyo aviso de errores de sintaxis ya se abrió (para no repetirlo). */
 const CLAVE_AVISADOS = 'cf-errores-sintaxis-vistos';
@@ -75,13 +75,14 @@ function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
  */
 @Component({
   selector: 'app-ejecucion',
-  imports: [RouterLink, Alerta, ConfirmModal],
+  imports: [RouterLink, Alerta],
   templateUrl: './ejecucion.html',
 })
 export class EjecucionPantalla {
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
   private readonly toast = inject(ToastService);
+  private readonly alertas = inject(AlertasService);
   protected readonly store = inject(EjecucionStore);
 
   /** De la ruta /ejecuciones/:id. */
@@ -90,9 +91,17 @@ export class EjecucionPantalla {
   protected readonly insigniaEjecucion = INSIGNIA_EJECUCION;
   protected readonly etiquetaArchivo = ETIQUETA_ARCHIVO;
   protected readonly textoEtapa = TEXTO_ETAPA;
+  /** Verde terminado, azul (con latido) procesando, gris pendiente. */
+  protected readonly claseEtapa: Record<EstadoEtapa, string> = {
+    ok: 'mf-badge mf-badge-ok',
+    procesando: 'mf-badge mf-badge-acento',
+    pendiente: 'mf-badge mf-badge-tenue',
+    omitido: 'mf-badge mf-badge-tenue',
+    aviso: 'mf-badge mf-badge-aviso',
+    error: 'mf-badge mf-badge-error',
+  };
   protected readonly tamanoLegible = tamanoLegible;
 
-  protected readonly confirmarCancelar = signal(false);
   protected readonly descargando = signal<string | null>(null);
   /** true: backend en esta PC, se guarda con ventanas de Windows. false (servidor): por el navegador. */
   protected readonly dialogosLocales = signal(false);
@@ -209,10 +218,18 @@ export class EjecucionPantalla {
     }
   }
 
-  // --- Cancelar ----------------------------------------------------------------------
+  // --- Detener ----------------------------------------------------------------------
 
-  /** Se llama recién después de confirmar en el diálogo. */
-  protected async cancelar(): Promise<void> {
+  /** Pide confirmación (SweetAlert2) y, si se confirma, frena el control. */
+  protected async detener(): Promise<void> {
+    const ok = await this.alertas.confirmarAccionPeligrosa(
+      '¿Detener el bot?',
+      'El paso que se está haciendo termina igual; después se frena y los clientes que faltan quedan sin hacer.',
+    );
+    if (ok) await this.cancelar();
+  }
+
+  private async cancelar(): Promise<void> {
     await this.store.cancelar();
     if (this.ej()?.cancelar_pedido) {
       this.toast.aviso('Cancelación pedida', 'El paso en curso termina y después el control se frena.');

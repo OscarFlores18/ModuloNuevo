@@ -179,6 +179,18 @@ code {
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
 
+/* Campos que crecen con su contenido (ej. «noviembre de 2026» en el selector de
+   mes): toman el ancho del texto, con un mínimo para cuando están vacíos y sin
+   pasarse del contenedor. Sin `field-sizing` (Firefox) queda el ancho por
+   defecto del navegador, que ya alcanza para el texto. */
+.mf-input.mf-ajustable,
+.mf-select.mf-ajustable {
+  field-sizing: content;
+  width: auto;
+  min-width: var(--min-ancho, 8.5rem);
+  max-width: 100%;
+}
+
 .mf-select:hover,
 .mf-input:hover {
   border-color: rgba(37, 99, 235, 0.45);
