@@ -143,6 +143,164 @@ def texto_letras_distintas(cliente: str, operacion: str, letras: list[dict]) -> 
     )
 
 
+MAX_FILAS_POR_ERROR = 10
+
+
+def _clave_cuit(cuit, comprobante) -> tuple[str, str]:
+    return (_solo_digitos(cuit), str(comprobante))
+
+
+def diagnosticar(
+    operacion: str,
+    df_arca,
+    df_xubio,
+    df_faltantes_arca,
+    df_faltantes_xubio,
+    letras_distintas: list[dict],
+    col_cuit_arca,
+    col_prov_arca,
+    col_fecha_arca,
+    col_total_arca,
+) -> list[dict]:
+    """Los errores que encontró la auditoría, cada uno con cómo solucionarlo.
+
+    Tipos: ``arca_vacio``, ``xubio_vacio``, ``letra_distinta``,
+    ``faltante_en_xubio``, ``faltante_en_arca`` y ``duplicado``. Cada error
+    trae hasta ``MAX_FILAS_POR_ERROR`` filas tal como están en la planilla.
+    """
+    libro = f"Libro IVA {operacion}"
+    tercero = "proveedor" if operacion == "Compras" else "cliente"
+    columnas_arca = [
+        ("Fecha", col_fecha_arca),
+        ("Tipo", 'Tipo' if 'Tipo' in df_arca.columns else None),
+        ("Comprobante", 'Clave_Py'),
+        ("Nro. Doc.", col_cuit_arca),
+        ("Denominación", col_prov_arca),
+        ("Imp. Total", col_total_arca),
+    ]
+    columnas_xubio = [
+        ("Fecha", 'Fecha'),
+        ("Tipo", 'Tipo'),
+        ("Comprobante", 'Comprobante'),
+        ("CUIT", 'CUIT'),
+        ("Proveedor" if operacion == "Compras" else "Cliente", 'Proveedor'),
+        ("Total", 'Total'),
+    ]
+
+    def filas(df, columnas, origen, excluir=frozenset(), col_cuit=None, col_comp=None):
+        salida = []
+        for _, fila in df.iterrows():
+            if excluir and _clave_cuit(fila.get(col_cuit), fila.get(col_comp)) in excluir:
+                continue
+            salida.append({"origen": origen, "fila": _fila_vista(fila, columnas)})
+        return salida
+
+    def error(tipo, gravedad, titulo, detalle, acciones, items, hoja=None):
+        return {
+            "tipo": tipo,
+            "gravedad": gravedad,  # «grave»: el control no sirve; «corregir»: cargar bien en Xubio
+            "operacion": operacion,
+            "titulo": titulo,
+            "detalle": detalle,
+            "acciones": acciones,  # qué hacer, en etiquetas cortas («Corregir en Xubio»)
+            "total": len(items),
+            "comprobantes": items[:MAX_FILAS_POR_ERROR],
+            "hoja": hoja,
+        }
+
+    errores: list[dict] = []
+
+    # Un lado vacío: el cruce entero queda mal, no tiene sentido listar faltantes.
+    if len(df_arca) == 0 and len(df_xubio) > 0:
+        errores.append(error(
+            "arca_vacio", "grave",
+            "ARCA no devolvió comprobantes",
+            f"Xubio tiene {len(df_xubio)} en el {libro}; ARCA, ninguno. "
+            "El CUIT representado tiene que ser el de la empresa.",
+            ["Corregir CUIT del cliente"],
+            [],
+        ))
+        return errores
+    if len(df_xubio) == 0 and len(df_arca) > 0:
+        errores.append(error(
+            "xubio_vacio", "grave",
+            f"Xubio no devolvió el {libro}",
+            f"ARCA tiene {len(df_arca)}; Xubio, ninguno. "
+            "La empresa en Xubio tiene que llamarse igual que el cliente.",
+            ["Revisar empresa en Xubio"],
+            [],
+        ))
+        return errores
+
+    if letras_distintas:
+        errores.append(error(
+            "letra_distinta", "corregir",
+            "Letra distinta entre ARCA y Xubio",
+            "Mismo CUIT, punto de venta y número; cambia solo la letra.",
+            ["Corregir en Xubio"],
+            letras_distintas,
+        ))
+
+    # Las letras distintas ya se informan aparte: no se repiten como faltantes.
+    letras_arca = {(l["cuit"], l["comprobante_arca"]) for l in letras_distintas}
+    letras_xubio = {(l["cuit"], l["comprobante_xubio"]) for l in letras_distintas}
+
+    falta_x = filas(df_faltantes_arca, columnas_arca, "arca", letras_arca, col_cuit_arca, 'Clave_Py')
+    if falta_x:
+        errores.append(error(
+            "faltante_en_xubio", "corregir",
+            f"En ARCA y no en el {libro}",
+            "ARCA los informa y no están cargados en Xubio.",
+            ["Cargar en Xubio", "Consultar al cliente"],
+            falta_x,
+            hoja=f"Faltantes en Libro IVA {operacion}",
+        ))
+
+    # Tiques (peajes, combustible...) y extractos bancarios casi nunca figuran en
+    # Mis Comprobantes: se informan aparte para que no parezcan errores.
+    es_tique = df_faltantes_xubio['Tipo'].astype(str).str.lower().str.contains('tique|extracto', na=False)
+    tiques = filas(df_faltantes_xubio[es_tique], columnas_xubio, "xubio", letras_xubio, 'CUIT', 'Comprobante')
+    falta_a = filas(df_faltantes_xubio[~es_tique], columnas_xubio, "xubio", letras_xubio, 'CUIT', 'Comprobante')
+    if falta_a:
+        errores.append(error(
+            "faltante_en_arca", "corregir",
+            f"En el {libro} y no en ARCA",
+            "Están en Xubio y ARCA no los informa en este período.",
+            ["Revisar en Xubio", "Consultar al cliente"],
+            falta_a,
+            hoja="Libro Iva",
+        ))
+
+    # Duplicados reales: mismo comprobante y mismo CUIT cargado más de una vez.
+    # (El mismo número de proveedores distintos no es un error.)
+    repetidos = []
+    if 'CUIT' in df_xubio.columns:
+        claves = df_xubio['CUIT'].map(_solo_digitos) + "|" + df_xubio['Comprobante'].astype(str)
+        mask = claves.duplicated(keep=False) & (df_xubio['CUIT'].map(_solo_digitos) != "")
+        repetidos = filas(df_xubio[mask], columnas_xubio, "xubio")
+    if repetidos:
+        errores.append(error(
+            "duplicado", "corregir",
+            f"Cargado dos veces en el {libro}",
+            "Mismo comprobante y mismo CUIT repetido en Xubio.",
+            ["Eliminar en Xubio"],
+            repetidos,
+            hoja="Libro Iva",
+        ))
+
+    if tiques:
+        errores.append(error(
+            "tique_sin_arca", "info",
+            "Tiques y extractos bancarios sin ARCA",
+            "ARCA no los informa en Mis Comprobantes. Es normal.",
+            ["Sin acción"],
+            tiques,
+            hoja="Libro Iva",
+        ))
+
+    return errores
+
+
 def procesar_cruce(
     empresa,
     operacion,
@@ -153,6 +311,7 @@ def procesar_cruce(
     ruta_xubio_manual=None,
     log: Callable[[str], None] = print,
     avisar_letras_distintas: Callable[[list[dict]], None] | None = None,
+    avisar_errores: Callable[[list[dict]], None] | None = None,
 ) -> str:
     """Genera el control de facturas y devuelve la ruta del Excel.
 
@@ -376,6 +535,15 @@ def procesar_cruce(
     # 3. IDENTIFICACIÓN DE FALTANTES
     df_faltantes_arca = df_arca_temp[(~df_arca_temp['Clave_Unica'].isin(df_xubio['Clave_Unica'])) & (~df_arca_temp['Clave_Py'].isin(all_dups))].copy()
     df_faltantes_xubio = df_xubio[(~df_xubio['Clave_Unica'].isin(df_arca_temp['Clave_Unica'])) & (~df_xubio['Comprobante'].isin(all_dups))].copy()
+
+    # Ventana de errores de la web: qué está mal y cómo solucionarlo. Se arma
+    # antes de convertir los USD para mostrar los importes como en la planilla.
+    if avisar_errores is not None:
+        avisar_errores(diagnosticar(
+            operacion, df_arca_temp, df_xubio, df_faltantes_arca, df_faltantes_xubio,
+            letras_distintas, col_doc_arca, arca_map['prov'], arca_map['fecha'],
+            next((c for c in df_arca_temp.columns if 'imp. total' in str(c).lower()), arca_map['tot']),
+        ))
 
     df_faltantes_usd_original = pd.DataFrame()
     col_tc_faltantes = [c for c in df_faltantes_arca.columns if 'tipo cambio' in str(c).lower()]

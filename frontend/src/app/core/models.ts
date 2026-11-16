@@ -145,13 +145,38 @@ export interface ComprobanteLetraDistinta {
   fila_xubio: CeldaVista[];
 }
 
+/** Una fila de ARCA o de Xubio que forma parte de un error. */
+export interface FilaConError {
+  origen: 'arca' | 'xubio';
+  fila: CeldaVista[];
+}
+
+export type TipoError =
+  | 'arca_vacio'
+  | 'xubio_vacio'
+  | 'letra_distinta'
+  | 'faltante_en_xubio'
+  | 'faltante_en_arca'
+  | 'duplicado'
+  | 'tique_sin_arca'
+  | 'paso_error';
+
+/** Un error del control (ventana de errores), con cómo solucionarlo. */
 export interface Advertencia {
-  tipo: 'letra_distinta';
+  tipo: TipoError;
+  /** grave: el control no sirve · corregir: hay que cargar bien en Xubio · info: no hace falta hacer nada. */
+  gravedad: 'grave' | 'corregir' | 'info';
   cliente: string;
-  operacion: 'Ventas' | 'Compras';
-  /** El aviso listo para mostrar. */
-  texto: string;
-  comprobantes: ComprobanteLetraDistinta[];
+  operacion: 'Ventas' | 'Compras' | null;
+  titulo: string;
+  detalle: string;
+  /** Qué hacer, en etiquetas cortas («Corregir en Xubio», «Consultar al cliente»). */
+  acciones: string[];
+  /** Cuántos comprobantes hay en total (en `comprobantes` llegan hasta 10). */
+  total: number;
+  comprobantes: (ComprobanteLetraDistinta | FilaConError)[];
+  /** La hoja del Excel de la auditoría donde se ven todos. */
+  hoja: string | null;
 }
 
 /** Pausa entre un cliente y el siguiente (cuenta regresiva). */

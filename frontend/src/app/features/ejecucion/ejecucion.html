@@ -53,14 +53,17 @@
     </div>
   </section>
 
-  <!-- Advertencias que no frenan el control: se muestran al terminar -->
+  <!-- Errores que no frenan el control: se muestran al terminar (ventana de errores) -->
   @if (!activa() && e.advertencias?.length) {
+    @let n = conteoErrores();
     <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-3" aria-labelledby="t-advertencias">
-      <span class="mf-badge mf-badge-aviso shrink-0">Error de sintaxis</span>
+      @if (n.grave) { <span class="mf-badge shrink-0" style="background: var(--color-error); color: #fff">{{ n.grave }} grave{{ n.grave === 1 ? '' : 's' }}</span> }
+      @if (n.corregir) { <span class="mf-badge mf-badge-aviso shrink-0">{{ n.corregir }} a corregir</span> }
+      @if (n.info) { <span class="mf-badge shrink-0">{{ n.info }} informativo{{ n.info === 1 ? '' : 's' }}</span> }
       <strong id="t-advertencias" class="min-w-0 flex-1 text-sm">
-        El control se hizo, pero hay {{ comprobantesConError() === 1 ? 'un comprobante' : comprobantesConError() + ' comprobantes' }} con la letra mal cargada en Xubio.
+        {{ n.grave + n.corregir ? 'El control se hizo, pero hay errores para revisar y corregir.' : 'El control se hizo sin errores. Hay avisos informativos.' }}
       </strong>
-      <button type="button" class="mf-btn mf-btn-mini" (click)="verErroresDeSintaxis()">Ver el error</button>
+      <button type="button" class="mf-btn mf-btn-mini" (click)="verErrores()">Ver errores</button>
     </section>
   }
 
