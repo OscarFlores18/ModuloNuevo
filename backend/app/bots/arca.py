@@ -417,9 +417,28 @@ class SesionArca:
         las esperas originales y se verifica el valor (hasta 3 intentos).
         """
         for intento in (1, 2, 3):
-            caja_fecha.click(timeout=3000)
-            servicio.wait_for_timeout(800)
-            caja_fecha.click(click_count=3, timeout=3000)
+            try:
+                caja_fecha.wait_for(state="visible", timeout=20000)
+                caja_fecha.click(timeout=10000)
+                servicio.wait_for_timeout(800)
+                caja_fecha.click(click_count=3, timeout=10000)
+            except Exception as exc:
+                if self._es_sesion_vencida(servicio):
+                    raise SesionVencida(
+                        "ARCA pidió volver a iniciar sesión al cargar el período."
+                    ) from exc
+                if intento == 3:
+                    raise TimeoutDescarga(
+                        "El filtro de fechas de ARCA no respondió después de 3 intentos. "
+                        "ARCA puede estar lento: probá de nuevo en unos minutos.",
+                        detalle={"rango": rango_fechas},
+                    ) from exc
+                self.log(
+                    f"      [AVISO]: El filtro de fechas de ARCA todavía no estaba listo. "
+                    f"Reintento {intento + 1}/3..."
+                )
+                servicio.wait_for_timeout(2000)
+                continue
             servicio.wait_for_timeout(200)
             servicio.keyboard.press("Backspace")
             servicio.wait_for_timeout(200)
@@ -464,6 +483,7 @@ class SesionArca:
             tab_consulta = servicio.locator('a[href="#tabConsulta"]')
             if tab_consulta.count() and tab_consulta.first.is_visible():
                 tab_consulta.first.click()
+                servicio.wait_for_timeout(500)
         except Exception:
             pass
 
@@ -471,6 +491,9 @@ class SesionArca:
         boton_tipo = servicio.locator(boton_id).first
         self.log(f"   -> Apretando botón '{tipo_comprobante}'...")
         self._apretar_tipo(servicio, boton_tipo, tipo_comprobante)
+        # El filtro aparece antes de que ARCA termine de prepararlo: la espera
+        # original. Sin ella, el click en la fecha a veces no llegaba.
+        servicio.wait_for_timeout(1500)
 
         # ARCA no acepta fechas futuras: si el mes no terminó, hasta hoy.
         fecha_hasta = limitar_a_hoy(fecha_hasta)
@@ -537,6 +560,7 @@ class SesionArca:
                     ) from exc
 
                 servicio.click('a[href="#tabConsulta"]')
+                servicio.wait_for_timeout(1000)
                 continue
 
             try:
@@ -574,6 +598,7 @@ class SesionArca:
                     break
 
                 servicio.click('a[href="#tabConsulta"]')
+                servicio.wait_for_timeout(1000)
 
             except Exception as exc:
                 if self._es_sesion_vencida(servicio):
@@ -617,6 +642,7 @@ class SesionArca:
                     )
 
                 servicio.click('a[href="#tabConsulta"]')
+                servicio.wait_for_timeout(1000)
 
         # --- UNIFICACIÓN ---
         mes_anio_desde = formatear_mes_anio(fecha_desde)
@@ -675,6 +701,7 @@ class SesionArca:
             except Exception:
                 pass
 
+        servicio.wait_for_timeout(1500)
         return resultado
 
 

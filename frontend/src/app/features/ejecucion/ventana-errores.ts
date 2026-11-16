@@ -1,10 +1,17 @@
 import Swal from 'sweetalert2';
+import { formatearCuit } from '../../core/cuit.pipe';
 import { Advertencia, CeldaVista, ComprobanteLetraDistinta, FilaConError } from '../../core/models';
 
 /**
- * Ventana de errores al terminar un control: qué encontró la auditoría (y qué
+ * Ventana de hallazgos al terminar un control: qué encontró la auditoría (y qué
  * pasos fallaron), qué hacer y las filas tal como están en el Excel, con el
  * error remarcado. Solo muestra: no modifica nada.
+ *
+ * - Las píldoras del encabezado («X corregir», «Y info») filtran las tarjetas.
+ * - Las acciones que llevan a algún lado son botones a la derecha; las demás son
+ *   etiquetas de estado debajo del título.
+ * - Las tarjetas INFO arrancan plegadas («Ver detalle ▾»).
+ * - Un solo scroll (el de la lista) y «Entendido» siempre a la vista.
  */
 
 const ORDEN_GRAVEDAD: Record<Advertencia['gravedad'], number> = { grave: 0, corregir: 1, info: 2 };
@@ -46,6 +53,12 @@ function texto(v: CeldaVista['valor'] | undefined): string {
   return String(v);
 }
 
+/** La CUIT siempre como XX-XXXXXXXX-X (ARCA la manda sin guiones y Xubio con). */
+function cuit(v: CeldaVista['valor'] | undefined): string {
+  if (v === null || v === undefined) return '';
+  return formatearCuit(typeof v === 'number' ? String(Math.trunc(v)) : String(v));
+}
+
 function normalizar(fila: CeldaVista[]): Partial<Record<Columna, CeldaVista['valor']>> {
   const salida: Partial<Record<Columna, CeldaVista['valor']>> = {};
   for (const c of fila) {
@@ -66,16 +79,17 @@ interface FilaVista {
 /** Una grilla estilo Excel con las filas de ARCA y Xubio juntas. */
 function grilla(filas: FilaVista[]): string {
   if (!filas.length) return '';
-  const cab = ['', ...COLUMNAS].map((c) => `<th>${esc(c)}</th>`).join('');
+  const cab = ['', ...COLUMNAS].map((c) => `<th${c === 'Total' ? ' class="num"' : ''}>${esc(c)}</th>`).join('');
   const cuerpo = filas
     .map((f) => {
       const celdas = COLUMNAS.map((col) => {
-        const num = col === 'Total' ? ' num' : '';
         if (col === 'Comprobante') {
           const clase = f.marca ? ` ${f.marca}` : '';
           return `<td class="comp${clase}">${f.comprobante ?? esc(texto(f.datos[col]))}</td>`;
         }
-        return `<td class="${num.trim()}">${esc(texto(f.datos[col]))}</td>`;
+        if (col === 'CUIT') return `<td class="cuit">${esc(cuit(f.datos[col]))}</td>`;
+        if (col === 'Total') return `<td class="num">${esc(texto(f.datos[col]))}</td>`;
+        return `<td>${esc(texto(f.datos[col]))}</td>`;
       }).join('');
       return `<tr><td class="origen origen-${f.origen.toLowerCase()}">${f.origen}</td>${celdas}</tr>`;
     })
@@ -113,6 +127,39 @@ function ordenesLetra(e: Advertencia): string {
     .join('');
 }
 
+// --- Acciones: botones (llevan a algún lado) vs. etiquetas (estado) ----------------
+
+function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | null {
+  const a = accion.toLowerCase();
+  if (a.includes('xubio')) return { href: 'https://xubio.com/NXV/', nuevaPestana: true };
+  if (a.includes('clave de arca') || a.includes('cuit del cliente')) return { href: '/clientes', nuevaPestana: false };
+  if (a.includes('volver a correr')) return { href: '/control', nuevaPestana: false };
+  return null;
+}
+
+function botonesYEtiquetas(e: Advertencia): { botones: string; etiquetas: string } {
+  const botones: string[] = [];
+  const etiquetas: string[] = [];
+  for (const accion of e.acciones) {
+    const destino = destinoDe(accion);
+    if (destino) {
+      const pestana = destino.nuevaPestana ? ' target="_blank" rel="noopener"' : '';
+      botones.push(`<a class="ve-boton" href="${esc(destino.href)}"${pestana}>→ ${esc(accion)}</a>`);
+    } else {
+      const nada = accion === 'Sin acción';
+      etiquetas.push(`<span class="ve-etiqueta">${nada ? '✓ ' : ''}${esc(accion)}</span>`);
+    }
+  }
+  return { botones: botones.join(''), etiquetas: etiquetas.join('') };
+}
+
+/** Los filtros del encabezado: «corregir» junta grave y corregir; «info» aparte. */
+type Grupo = 'corregir' | 'info';
+
+function grupoDe(g: Advertencia['gravedad']): Grupo {
+  return g === 'info' ? 'info' : 'corregir';
+}
+
 function tarjeta(e: Advertencia): string {
   const meta = [e.operacion, e.total ? `${e.total} comprobante${e.total === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
   const mas =
@@ -120,15 +167,23 @@ function tarjeta(e: Advertencia): string {
       ? `<p class="ve-mas">${e.comprobantes.length} de ${e.total}${e.hoja ? ` · el resto en la hoja «${esc(e.hoja)}»` : ''}</p>`
       : '';
   const letras = ordenesLetra(e);
+  const { botones, etiquetas } = botonesYEtiquetas(e);
+  // Las INFO arrancan plegadas: una fila compacta con «Ver detalle ▾».
   return `
-    <details class="ve-error ve-${e.gravedad}" ${e.gravedad === 'info' ? '' : 'open'}>
+    <details class="ve-error ve-${e.gravedad}" data-grupo="${grupoDe(e.gravedad)}" ${e.gravedad === 'info' ? '' : 'open'}>
       <summary>
         <span class="ve-insignia">${ETIQUETA_GRAVEDAD[e.gravedad]}</span>
-        <span class="ve-titulo">${esc(e.titulo)}</span>
-        <span class="ve-meta">${esc(meta)}</span>
+        <span class="ve-cab">
+          <span class="ve-titulo">${esc(e.titulo)}</span>
+          ${etiquetas ? `<span class="ve-etiquetas">${etiquetas}</span>` : ''}
+        </span>
+        <span class="ve-derecha">
+          <span class="ve-meta">${esc(meta)}</span>
+          ${botones}
+          <span class="ve-plegar" aria-hidden="true"></span>
+        </span>
       </summary>
       <div class="ve-cuerpo">
-        <div class="ve-acciones">${e.acciones.map((a) => `<span class="ve-accion${a === 'Sin acción' ? ' ve-accion-nada' : ''}">${esc(a)}</span>`).join('')}</div>
         ${e.detalle ? `<p class="ve-detalle">${esc(e.detalle)}</p>` : ''}
         ${letras ? `<ul class="ve-ordenes">${letras}</ul>` : ''}
         ${grilla(filasDe(e))}${mas}
@@ -138,24 +193,42 @@ function tarjeta(e: Advertencia): string {
 
 const ESTILOS = `
   <style>
+    /* Pie fijo: scrollea la lista y «Entendido» queda siempre a la vista. */
+    /* El popup es una grilla: ícono, título, lista y pie. La lista toma el alto que
+       queda (minmax(0, 1fr)) y scrollea; el pie nunca se va de la pantalla. */
+    .ve-popup { max-height: 94vh; grid-template-rows: auto auto minmax(0, 1fr) auto; }
+    .ve-popup .swal2-icon { margin: 16px auto 0; width: 3.4em; height: 3.4em; }
+    .ve-popup .swal2-icon .swal2-icon-content { font-size: 2.4em; }
+    .ve-popup .swal2-title { padding-top: 8px; }
+    .ve-popup .swal2-html-container { margin: 8px 0 0; padding: 0 18px; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+    .ve-popup .swal2-actions { margin: 0; padding: 12px 0 14px; width: 100%; border-top: 1px solid #e2e8f0; background: #fff; }
     .ve { text-align: left; color: #1f2a37; font-size: 13.5px; }
-    .ve-intro { margin: 0 0 6px; text-align: center; color: #475569; }
-    .ve-resumen { display: flex; justify-content: center; gap: 6px; margin-bottom: 12px; }
-    .ve-chip { border-radius: 999px; padding: 2px 9px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-    .ve-lista { max-height: min(55vh, 600px); overflow-y: auto; padding: 10px; background: #f6f8fc; border-radius: 8px; }
+    .ve-intro { margin: 0 0 8px; text-align: center; color: #475569; }
+    .ve-resumen { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .ve-chip { border-radius: 999px; padding: 3px 12px; font-family: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1.5px solid transparent; transition: box-shadow .15s, opacity .15s; }
+    .ve-chip:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .ve-chip[aria-pressed="true"] { border-color: currentColor; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
+    .ve-resumen.filtrando .ve-chip[aria-pressed="false"] { opacity: .5; }
+    .ve-lista { padding: 10px; background: #f6f8fc; border-radius: 8px; }
+    .ve-grupo[hidden], .ve-error[hidden] { display: none; }
     .ve-cliente { margin: 4px 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
     .ve-error { background: #fff; border: 1px solid #e1e7f2; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
-    .ve-error summary { cursor: pointer; display: flex; align-items: center; gap: 10px; padding: 10px 14px; list-style: none; }
+    .ve-error summary { cursor: pointer; display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; list-style: none; }
     .ve-error summary::-webkit-details-marker { display: none; }
-    .ve-insignia { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; }
-    .ve-titulo { font-weight: 700; flex: 1; }
+    .ve-insignia { flex: none; margin-top: 1px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; }
+    .ve-cab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+    .ve-titulo { font-weight: 700; }
+    .ve-etiquetas { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ve-etiqueta { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; padding: 1px 9px; border-radius: 999px; background: #eef2f7; color: #475569; border: 1px solid #dfe5ee; }
+    .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     .ve-meta { font-size: 12px; color: #64748b; white-space: nowrap; }
+    .ve-boton { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, .15); white-space: nowrap; }
+    .ve-boton:hover { background: #1d4ed8; }
+    .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
+    .ve-plegar { font-size: 12px; font-weight: 700; color: #2563eb; white-space: nowrap; }
+    .ve-plegar::after { content: 'Ver detalle ▾'; }
+    details[open] > summary .ve-plegar::after { content: 'Ocultar ▴'; }
     .ve-cuerpo { padding: 0 14px 12px; }
-    .ve-acciones { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 6px; }
-    .ve-accion { display: inline-flex; align-items: center; gap: 5px; background: #1d4ed8; color: #fff; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
-    .ve-accion::before { content: '➜'; font-size: 11px; }
-    .ve-accion-nada { background: #e2e8f0; color: #475569; }
-    .ve-accion-nada::before { content: '✓'; }
     .ve-ordenes { margin: -2px 0 8px; padding: 0; list-style: none; }
     .ve-ordenes li { margin: 2px 0; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12.5px; }
     .ve-detalle { margin: 0 0 8px; color: #64748b; font-size: 12.5px; }
@@ -166,11 +239,14 @@ const ESTILOS = `
     .ve-grave { border-left: 3px solid #c53030; }
     .ve-corregir { border-left: 3px solid #b7791f; }
     .ve-info { border-left: 3px solid #93a8d6; }
-    .ve-grilla { border: 1px solid #d4d4d4; border-radius: 4px; overflow: auto; max-height: 240px; }
+    /* Sin alto máximo: un solo scroll (el de la lista), nunca dos anidados. */
+    .ve-grilla { border: 1px solid #d4d4d4; border-radius: 4px; overflow-x: auto; }
     .ve-grilla table { border-collapse: collapse; width: 100%; font: 12px Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap; }
-    .ve-grilla th { position: sticky; top: 0; background: #f3f3f3; color: #444; font-weight: 600; text-align: left; padding: 4px 8px; border-bottom: 1px solid #d4d4d4; border-right: 1px solid #e4e4e4; }
+    .ve-grilla th { background: #f3f3f3; color: #444; font-weight: 600; text-align: left; padding: 4px 8px; border-bottom: 1px solid #d4d4d4; border-right: 1px solid #e4e4e4; }
+    .ve-grilla th.num { text-align: right; }
     .ve-grilla td { padding: 4px 8px; border-bottom: 1px solid #ececec; border-right: 1px solid #f0f0f0; }
     .ve-grilla td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ve-grilla td.cuit { font-family: Consolas, 'Cascadia Mono', monospace; font-variant-numeric: tabular-nums; }
     .ve-grilla td.origen { font-weight: 700; font-size: 11px; color: #fff; text-align: center; width: 1%; }
     .ve-grilla td.origen-arca { background: #1b2f57; }
     .ve-grilla td.origen-xubio { background: #217346; }
@@ -180,6 +256,10 @@ const ESTILOS = `
     .letra { display: inline-block; min-width: 16px; text-align: center; border-radius: 3px; color: #fff; font-weight: 700; padding: 0 3px; }
     .letra-error { background: #c53030; }
     .letra-ok { background: #15803d; }
+    @media (max-width: 640px) {
+      .ve-error summary { flex-wrap: wrap; }
+      .ve-derecha { width: 100%; justify-content: flex-start; }
+    }
   </style>`;
 
 /** Cuántos errores hay por gravedad. */
@@ -189,10 +269,40 @@ export function contarErrores(errores: readonly Advertencia[]): Record<Advertenc
   return n;
 }
 
-/** Abre la ventana de errores. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla). */
+/** Las píldoras filtran las tarjetas: una activa muestra solo esas; otro click, todas. */
+function activarFiltros(raiz: HTMLElement): void {
+  const resumen = raiz.querySelector<HTMLElement>('.ve-resumen');
+  const chips = [...raiz.querySelectorAll<HTMLButtonElement>('.ve-chip[data-filtro]')];
+  let actual: string | null = null;
+
+  const aplicar = () => {
+    resumen?.classList.toggle('filtrando', !!actual);
+    for (const c of chips) c.setAttribute('aria-pressed', String(c.dataset['filtro'] === actual));
+    for (const grupo of raiz.querySelectorAll<HTMLElement>('.ve-grupo')) {
+      let visibles = 0;
+      for (const t of grupo.querySelectorAll<HTMLElement>('.ve-error')) {
+        const ver = !actual || t.dataset['grupo'] === actual;
+        t.hidden = !ver;
+        if (ver) visibles++;
+      }
+      grupo.hidden = visibles === 0;
+    }
+  };
+
+  for (const c of chips) {
+    c.addEventListener('click', () => {
+      actual = actual === c.dataset['filtro'] ? null : (c.dataset['filtro'] ?? null);
+      aplicar();
+    });
+  }
+  aplicar();
+}
+
+/** Abre la ventana de hallazgos. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla). */
 export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
   const n = contarErrores(errores);
   const aCorregir = n.grave + n.corregir;
+  const total = errores.length;
   const ordenados = [...errores].sort((a, b) => ORDEN_GRAVEDAD[a.gravedad] - ORDEN_GRAVEDAD[b.gravedad]);
   const porCliente = new Map<string, Advertencia[]>();
   for (const e of ordenados) porCliente.set(e.cliente, [...(porCliente.get(e.cliente) ?? []), e]);
@@ -202,27 +312,31 @@ export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
     : aCorregir
       ? 'El control se hizo correctamente. Hay datos para corregir.'
       : 'El control se hizo correctamente.';
-  const chips = (['grave', 'corregir', 'info'] as const)
-    .filter((g) => n[g])
-    .map((g) => `<span class="ve-chip ve-chip-${g}">${n[g]} ${ETIQUETA_GRAVEDAD[g].toLowerCase()}</span>`)
-    .join('');
+  const chips = [
+    aCorregir
+      ? `<button type="button" class="ve-chip ve-chip-${n.grave ? 'grave' : 'corregir'}" data-filtro="corregir" aria-pressed="false">${aCorregir} corregir</button>`
+      : '',
+    n.info ? `<button type="button" class="ve-chip ve-chip-info" data-filtro="info" aria-pressed="false">${n.info} info</button>` : '',
+  ].join('');
   const lista = [...porCliente.entries()]
-    .map(([cliente, items]) => `<p class="ve-cliente">${esc(cliente)}</p>${items.map(tarjeta).join('')}`)
+    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map(tarjeta).join('')}</section>`)
     .join('');
 
   return Swal.fire({
     icon: n.grave ? 'error' : aCorregir ? 'warning' : 'info',
-    title: aCorregir ? `Errores del control (${aCorregir})` : 'Control sin errores',
+    title: total ? `Hallazgos del control (${total})` : 'Control sin hallazgos',
     html: `${ESTILOS}
       <div class="ve">
         <p class="ve-intro">${sub}</p>
-        <div class="ve-resumen">${chips}</div>
+        ${chips ? `<div class="ve-resumen" role="group" aria-label="Filtrar hallazgos">${chips}</div>` : ''}
         <div class="ve-lista">${lista}</div>
       </div>`,
     width: 'min(980px, 96vw)',
+    customClass: { popup: 've-popup' },
     confirmButtonText: 'Entendido',
     confirmButtonColor: '#2563eb',
     focusConfirm: true,
+    didOpen: (popup) => activarFiltros(popup),
     // Sin animación: si la pestaña está atrás (mirando el Chrome del bot), el
     // navegador congela las animaciones y la ventana quedaba transparente.
     showClass: { popup: '', backdrop: 'swal2-backdrop-show', icon: '' },

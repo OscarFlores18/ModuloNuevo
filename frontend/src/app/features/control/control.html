@@ -86,16 +86,16 @@
             }
           </div>
           @if (modo() === 'mes') {
-            <input class="mf-input mf-ajustable [--min-ancho:11rem]" type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
+            <input class="mf-input mf-ajustable [--min-ancho:9rem]" appAnchoAjustable type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
           } @else if (modo() === 'anio') {
-            <select class="mf-select mf-ajustable [--min-ancho:7rem]" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
+            <select class="mf-select !w-28" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
               <option value="" disabled>Año…</option>
               @for (a of anios; track a) { <option [value]="a">{{ a }}</option> }
             </select>
           } @else {
-            <input class="mf-input mf-ajustable [--min-ancho:10rem]" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
+            <input class="mf-input !w-40" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
             <span class="mf-tenue">a</span>
-            <input class="mf-input mf-ajustable [--min-ancho:10rem]" type="date" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
+            <input class="mf-input !w-40" type="date" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
           }
         </div>
       </fieldset>

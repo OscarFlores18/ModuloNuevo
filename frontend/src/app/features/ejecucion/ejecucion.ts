@@ -8,13 +8,8 @@ import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { ToastService } from '../../core/ui/toast';
-<<<<<<< HEAD
-import { mostrarErroresDeSintaxis } from './errores-sintaxis';
-import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
-=======
 import { contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
-import { ETIQUETA_ARCHIVO, Etapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
->>>>>>> 18e3072a3540bb13a1e32afcff781e29269da151
+import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
 
 /**
  * Aviso de errores de sintaxis: se abre solo hasta que el usuario lo cierra.

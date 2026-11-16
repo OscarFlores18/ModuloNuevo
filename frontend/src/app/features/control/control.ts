@@ -17,6 +17,7 @@ import { ClientesStore } from '../../core/services/clientes.store';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { SesionService } from '../../core/services/sesion.service';
 import { AlertasService } from '../../core/ui/alertas.service';
+import { AnchoAjustable } from '../../core/ui/ancho-ajustable';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 
@@ -44,7 +45,7 @@ const rangoOrdenado: ValidatorFn = (g: AbstractControl): ValidationErrors | null
 
 @Component({
   selector: 'app-nuevo-control',
-  imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado],
+  imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado, AnchoAjustable],
   templateUrl: './control.html',
 })
 export class NuevoControl {
