@@ -24,3 +24,12 @@ services:
       # para que quede sin autenticación (solo para pruebas internas).
       - key: MODULONUEVO_BASIC_AUTH
         sync: false
+      # Secretos: se cargan a mano en el panel de Render (nunca en el repo).
+      # Clave maestra del cifrado de credenciales. Sin ella se usa un archivo
+      # en /data, al lado de los datos cifrados (y se pierde en cada deploy).
+      - key: MODULONUEVO_MASTER_KEY
+        sync: false
+      # Contraseña de la sección Clientes (mínimo 8 caracteres). Si no está,
+      # la primera persona que entra a Clientes la define.
+      - key: MODULONUEVO_CLIENTES_CLAVE
+        sync: false

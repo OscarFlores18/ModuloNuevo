@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from .api.router import api_router
-from .core import config
+from .core import acceso_clientes, config
 from .core.errors import BotError
 from .core.logging import configure_logging, get_logger
 from .core.storage import ClientesRepository, CredencialesXubioRepository
@@ -86,6 +87,13 @@ def create_app() -> FastAPI:
         configure_logging(config.LOG_DIR)
         logger = get_logger()
         logger.info("Iniciando backend. data=%s output=%s", config.DATA_DIR, config.OUTPUT_DIR)
+        clave_clientes = os.getenv("MODULONUEVO_CLIENTES_CLAVE", "")
+        if clave_clientes and len(clave_clientes) < acceso_clientes.MIN_LARGO:
+            logger.warning(
+                "MODULONUEVO_CLIENTES_CLAVE es muy corta (mínimo %s caracteres): "
+                "se puede adivinar probando.",
+                acceso_clientes.MIN_LARGO,
+            )
 
         clientes = ClientesRepository(config.CONFIG_PATH, config.XUBIO_CRED_PATH)
         credenciales_xubio = CredencialesXubioRepository(config.XUBIO_CRED_PATH)

@@ -25,7 +25,7 @@ from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...services import ejecuciones as ejecuciones_srv
 from ...services import precarga as precarga_srv
-from ..deps import get_clientes, get_credenciales_xubio
+from ..deps import exigir_acceso_clientes, get_clientes, get_credenciales_xubio
 
 router = APIRouter(tags=["web"])
 
@@ -130,20 +130,6 @@ def _validar_nombre(nombre: str) -> str:
 
 
 # --- Contraseña de la sección Clientes ---------------------------------------------
-
-
-def exigir_acceso_clientes(
-    x_clientes_token: str | None = Header(default=None),
-) -> None:
-    """Alta, edición y borrado de clientes piden la contraseña de la sección."""
-    if not acceso_clientes.autorizado(x_clientes_token):
-        raise HTTPException(
-            status_code=401,
-            detail={
-                "code": "clientes_bloqueado",
-                "mensaje": "La sección Clientes está bloqueada: escribí la contraseña.",
-            },
-        )
 
 
 class EntrarClientes(BaseModel):
@@ -336,7 +322,11 @@ def ajustes(
     }
 
 
-@router.delete("/ajustes/xubio", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/ajustes/xubio",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(exigir_acceso_clientes)],
+)
 def olvidar_xubio(
     creds: CredencialesXubioRepository = Depends(get_credenciales_xubio),
 ) -> None:

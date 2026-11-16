@@ -16,7 +16,7 @@ CLAVE_FISCAL = "Clave-Fiscal-Compartida-9"
 def _limpio(monkeypatch):
     monkeypatch.delenv("MODULONUEVO_CLIENTES_CLAVE", raising=False)
     acceso_clientes._tokens.clear()
-    acceso_clientes._fallos.update(cantidad=0, hasta=0.0)
+    acceso_clientes._fallos.update(cantidad=0, hasta=0.0, bloqueos=0)
 
 
 def _alta(client, headers=None):
@@ -72,6 +72,23 @@ def test_contrasena_incorrecta_y_bloqueo_por_intentos(entorno):
         assert client.post("/api/clientes/acceso", json={"clave": "mal"}).status_code == 401
     # Bloqueado un rato aunque ahora la clave sea la correcta.
     assert client.post("/api/clientes/acceso", json={"clave": "estudio2026"}).status_code == 429
+
+
+def test_cada_bloqueo_seguido_duplica_la_espera(entorno, monkeypatch):
+    client, _ = entorno
+    client.post("/api/clientes/acceso", json={"clave": "estudio2026"})
+    ahora = [1000.0]
+    monkeypatch.setattr(acceso_clientes.time, "time", lambda: ahora[0])
+    esperas = []
+    for _ in range(3):
+        for _ in range(acceso_clientes.MAX_FALLOS):
+            client.post("/api/clientes/acceso", json={"clave": "mal"})
+        esperas.append(acceso_clientes._fallos["hasta"] - ahora[0])
+        ahora[0] = acceso_clientes._fallos["hasta"] + 1
+    assert esperas == [30, 60, 120]
+    # Entrar bien reinicia la espera.
+    assert client.post("/api/clientes/acceso", json={"clave": "estudio2026"}).status_code == 200
+    assert acceso_clientes._fallos["bloqueos"] == 0
 
 
 def test_contrasena_corta_no_se_acepta(entorno):
@@ -148,3 +165,22 @@ def test_precargar_de_nuevo_completa_la_clave_que_faltaba(entorno):
     datos = client.post("/api/clientes/precargar").json()
     assert len(datos["completados"]) == len(CLIENTES_PRECARGADOS) - 1
     assert all(c["arca"]["tiene_clave"] for c in datos["clientes"])
+
+
+def test_cuenta_de_xubio_y_api_de_jobs_piden_la_contrasena(entorno):
+    """Con contraseña configurada, nadie sin token cambia la cuenta de Xubio ni
+    corre bots por la API de jobs."""
+    client, _ = entorno
+    token = client.post("/api/clientes/acceso", json={"clave": "estudio2026"}).json()["token"]
+    sin = {}
+    con = {"X-Clientes-Token": token}
+
+    assert client.put("/api/xubio/credenciales", json={"user": "x", "pass": "y"}, headers=sin).status_code == 401
+    assert client.delete("/api/ajustes/xubio", headers=sin).status_code == 401
+    assert client.get("/api/jobs", headers=sin).status_code == 401
+
+    assert client.put("/api/xubio/credenciales", json={"user": "x", "pass": "y"}, headers=con).status_code == 200
+    assert client.delete("/api/ajustes/xubio", headers=con).status_code == 204
+    assert client.get("/api/jobs", headers=con).status_code == 200
+    # Leer sigue abierto y nunca devuelve la contraseña.
+    assert "pass" not in client.get("/api/xubio/credenciales").json()

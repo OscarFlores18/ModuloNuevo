@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 
 from ...core.models import CredencialesXubioIn, CredencialesXubioOut
 from ...core.storage import CredencialesXubioRepository
-from ..deps import get_credenciales_xubio
+from ..deps import exigir_acceso_clientes, get_credenciales_xubio
 
 router = APIRouter(tags=["xubio"])
 
@@ -27,7 +27,11 @@ def obtener_credenciales(
     )
 
 
-@router.put("/xubio/credenciales", response_model=CredencialesXubioOut)
+@router.put(
+    "/xubio/credenciales",
+    response_model=CredencialesXubioOut,
+    dependencies=[Depends(exigir_acceso_clientes)],
+)
 def guardar_credenciales(
     body: CredencialesXubioIn,
     repo: CredencialesXubioRepository = Depends(get_credenciales_xubio),

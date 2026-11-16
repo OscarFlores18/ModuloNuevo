@@ -16,9 +16,11 @@ from ...core.models import (
 )
 from ...core.storage import ClientesRepository
 from ...services.jobs import JobManager
-from ..deps import get_clientes, get_jobs
+from ..deps import exigir_acceso_clientes, get_clientes, get_jobs
 
-router = APIRouter(tags=["jobs"])
+# API programática: corre los bots con las claves guardadas, así que pide la
+# contraseña de la sección Clientes (X-Clientes-Token).
+router = APIRouter(tags=["jobs"], dependencies=[Depends(exigir_acceso_clientes)])
 
 
 def _obtener_o_404(manager: JobManager, job_id: str) -> Job:

@@ -10,7 +10,8 @@ claves fiscales). «Nuevo control» sigue funcionando sin pedirla.
   puede crear otra desde la página.
 - Entrar devuelve un token de sesión (8 h, en memoria del backend) que el
   front manda en ``X-Clientes-Token``.
-- Tras 5 intentos fallidos se bloquea 30 s.
+- Tras 5 intentos fallidos se bloquea 30 s; cada bloqueo seguido duplica la
+  espera (30 s, 1 min, 2 min...) hasta 1 h. Entrar bien lo reinicia.
 - Mientras no haya contraseña configurada, la sección queda abierta.
 """
 
@@ -29,13 +30,14 @@ from pathlib import Path
 from . import config
 
 DURACION_S = 8 * 3600
-MIN_LARGO = 4
+MIN_LARGO = 8
 MAX_FALLOS = 5
 ESPERA_FALLOS_S = 30
+ESPERA_MAXIMA_S = 3600
 
 _lock = threading.Lock()
 _tokens: dict[str, float] = {}
-_fallos = {"cantidad": 0, "hasta": 0.0}
+_fallos = {"cantidad": 0, "hasta": 0.0, "bloqueos": 0}
 
 
 class AccesoDenegado(Exception):
@@ -126,9 +128,12 @@ def entrar(clave: str) -> tuple[str, float, bool]:
             _fallos["cantidad"] += 1
             if _fallos["cantidad"] >= MAX_FALLOS:
                 _fallos["cantidad"] = 0
-                _fallos["hasta"] = ahora + ESPERA_FALLOS_S
+                espera = min(ESPERA_FALLOS_S * 2 ** _fallos.get("bloqueos", 0), ESPERA_MAXIMA_S)
+                _fallos["bloqueos"] = _fallos.get("bloqueos", 0) + 1
+                _fallos["hasta"] = ahora + espera
             raise AccesoDenegado("Contraseña incorrecta.")
         _fallos["cantidad"] = 0
+        _fallos["bloqueos"] = 0
         token, vence = _nuevo_token()
         return token, vence, False
 

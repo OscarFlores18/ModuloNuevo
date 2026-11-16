@@ -143,7 +143,8 @@ def texto_letras_distintas(cliente: str, operacion: str, letras: list[dict]) -> 
     )
 
 
-MAX_FILAS_POR_ERROR = 10
+# Se muestran todos; el tope solo evita mandar miles de filas a la web.
+MAX_FILAS_POR_ERROR = 500
 
 
 def _clave_cuit(cuit, comprobante) -> tuple[str, str]:
