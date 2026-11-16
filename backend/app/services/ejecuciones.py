@@ -34,7 +34,7 @@ from ..auditor import procesar_cruce
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
-from ..core.paths import carpeta_cliente, nombre_carpeta
+from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente, nombre_carpeta
 from ..core.saneo import sanear
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from .credenciales import ServicioCredenciales
@@ -745,18 +745,16 @@ def operacion_de(nombre: str) -> str | None:
 
 def plan_de_archivos(ej: Ejecucion, indice: int) -> tuple[Path, list[tuple[str, Path]]]:
     """La carpeta de origen y, por archivo, su ruta relativa dentro de <mmaaaa>:
-    `Ventas/…` o `Compras/…` si el control hizo las dos operaciones."""
+    todos juntos (Ventas y Compras) en `Control de facturas/…`."""
     origen, archivos = archivos_del_cliente(ej, indice)
-    separar = bool(ej.parametros.get("ventas")) and bool(ej.parametros.get("compras"))
-    plan = []
-    for a in archivos:
-        op = operacion_de(a["nombre"]) if separar else None
-        plan.append((a["nombre"], Path(op, a["nombre"]) if op else Path(a["nombre"])))
-    return origen, plan
+    return origen, [
+        (a["nombre"], Path(SUBCARPETA_CONTROL, a["nombre"])) for a in archivos
+    ]
 
 
 def zip_de_archivos(ej: Ejecucion, indice: int) -> tuple[str, bytes]:
-    """«Descargar todos» sin ventanas (servidor): un .zip con <Cliente>/<mmaaaa>/…"""
+    """«Descargar todos» sin ventanas (servidor): un .zip con
+    <Cliente>/<mmaaaa>/Control de facturas/…"""
     origen, plan = plan_de_archivos(ej, indice)
     _, mes, anio = ej.parametros["desde"].split("/")
     raiz = Path(nombre_carpeta(ej.clientes[indice].nombre), f"{mes}{anio}")
@@ -780,11 +778,12 @@ def exportar_archivos(
     """Copia los archivos del cliente con el formato de la app de escritorio y DRLiqui.
 
     - Con carpeta elegida (por ejemplo, la del cliente que ya existe):
-      `<elegida>/<mmaaaa>/`.
+      `<elegida>/<mmaaaa>/Control de facturas/`.
     - Sin carpeta elegida: se crea la del cliente en Descargas:
-      `<Descargas>/<Cliente>/<mmaaaa>/`. Si vuelve Descargas misma (la ventana abre
-      ahí y se tocó «Seleccionar carpeta» sin entrar a ninguna) cuenta como sin elegir.
-    - Si el control fue de Ventas y Compras, adentro de <mmaaaa> van `Ventas/` y `Compras/`.
+      `<Descargas>/<Cliente>/<mmaaaa>/Control de facturas/`. Si vuelve Descargas
+      misma (la ventana abre ahí y se tocó «Seleccionar carpeta» sin entrar a
+      ninguna) cuenta como sin elegir.
+    - Ventas y Compras van juntos, sin subcarpetas por operación.
 
     Si uno no se puede copiar (por ejemplo, ya existe y está abierto en Excel),
     los demás se copian igual y ese queda en `fallas`.
@@ -801,7 +800,8 @@ def exportar_archivos(
             carpeta = Path(destino) / f"{mes}{anio}"
             carpeta.mkdir(parents=True, exist_ok=True)
         else:
-            carpeta = carpeta_cliente(base, ej.clientes[indice].nombre, mes, anio)
+            # carpeta_cliente ya incluye «Control de facturas»; el plan la agrega.
+            carpeta = carpeta_cliente(base, ej.clientes[indice].nombre, mes, anio).parent
     except OSError as exc:
         raise ErrorEjecucion(f"No se pudo crear la carpeta para los archivos: {exc}", 422) from exc
 
@@ -817,5 +817,5 @@ def exportar_archivos(
             fallas.append({"nombre": nombre, "motivo": "Ya existe y está abierto (¿en Excel?). Cerralo y volvé a descargar."})
         except OSError as exc:
             fallas.append({"nombre": nombre, "motivo": str(exc)})
-    return {"carpeta": str(carpeta), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
+    return {"carpeta": str(carpeta / SUBCARPETA_CONTROL), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
 

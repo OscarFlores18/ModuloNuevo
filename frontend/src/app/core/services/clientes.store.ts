@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Cliente, ClienteEntrada, mensajeDeError } from '../models';
-import { ApiService } from './api.service';
+import { ApiService, ResultadoPrecarga } from './api.service';
 
 /** La lista de clientes (config.json), compartida por «Nuevo control» y «Clientes». */
 @Injectable({ providedIn: 'root' })
@@ -34,6 +34,13 @@ export class ClientesStore {
     const resto = this.lista().filter((c) => c.nombre !== nombreOriginal && c.nombre !== cliente.nombre);
     this.lista.set([...resto, cliente].sort((a, b) => a.nombre.localeCompare(b.nombre, 'es', { sensitivity: 'base' })));
     return cliente;
+  }
+
+  async precargar(): Promise<ResultadoPrecarga> {
+    const r = await this.api.precargarClientes();
+    this.lista.set(r.clientes);
+    this.cargado.set(true);
+    return r;
   }
 
   async borrar(nombre: string): Promise<void> {

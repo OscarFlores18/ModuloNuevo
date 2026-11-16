@@ -20,6 +20,10 @@ export class ApiService {
   editarCliente(nombreOriginal: string, datos: ClienteEntrada): Promise<Cliente> {
     return firstValueFrom(this.http.put<Cliente>(`${this.url}/clientes/${encodeURIComponent(nombreOriginal)}`, datos));
   }
+  /** Agrega los clientes del estudio que falten (pide la contraseña de Clientes). */
+  precargarClientes(): Promise<ResultadoPrecarga> {
+    return firstValueFrom(this.http.post<ResultadoPrecarga>(`${this.url}/clientes/precargar`, {}));
+  }
   borrarCliente(nombre: string): Promise<void> {
     return firstValueFrom(this.http.delete<void>(`${this.url}/clientes/${encodeURIComponent(nombre)}`));
   }
@@ -59,7 +63,7 @@ export class ApiService {
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
   }
-  /** Modo servidor: todos los archivos del cliente en un .zip con Cliente/mmaaaa/(Ventas|Compras). */
+  /** Modo servidor: todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas. */
   zip(id: string, indice: number): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
   }
@@ -72,6 +76,16 @@ export class ApiService {
       ),
     );
   }
+}
+
+export interface ResultadoPrecarga {
+  agregados: string[];
+  ya_estaban: string[];
+  /** true si se reutilizó la clave fiscal de un cliente con el mismo CUIT de ingreso. */
+  con_clave: boolean;
+  /** Precargados que ya estaban sin clave y se completaron con la compartida. */
+  completados: string[];
+  clientes: Cliente[];
 }
 
 /** `elegida`: false si se cerró la ventana y se creó la carpeta del cliente en Descargas. */
