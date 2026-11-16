@@ -59,6 +59,9 @@
               <span class="mono w-5 shrink-0 text-center text-xs font-bold text-acento">{{ i + 1 }}</span>
               <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
               @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span> }
+              @for (e of etiquetasControl(c.nombre); track e.texto) {
+                <span class="mf-badge shrink-0" [class.mf-badge-aviso]="e.repetido" [class.mf-badge-ok]="!e.repetido" [title]="e.titulo">{{ e.texto }}</span>
+              }
               <button type="button" class="mf-icono-btn" (click)="mover(i, -1)" [disabled]="primero" [attr.aria-label]="'Subir ' + c.nombre">▴</button>
               <button type="button" class="mf-icono-btn" (click)="mover(i, 1)" [disabled]="ultimo" [attr.aria-label]="'Bajar ' + c.nombre">▾</button>
               <button type="button" class="mf-icono-btn mf-icono-btn-peligro" (click)="quitar(c.nombre)" [attr.aria-label]="'Quitar ' + c.nombre">✕</button>

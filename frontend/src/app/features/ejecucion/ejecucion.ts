@@ -8,7 +8,30 @@ import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { ConfirmModal } from '../../core/ui/confirm-modal';
 import { ToastService } from '../../core/ui/toast';
+import { mostrarErroresDeSintaxis } from './errores-sintaxis';
 import { ETIQUETA_ARCHIVO, Etapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
+
+/** Ejecuciones cuyo aviso de errores de sintaxis ya se abrió (para no repetirlo). */
+const CLAVE_AVISADOS = 'cf-errores-sintaxis-vistos';
+const avisados = new Set<string>();
+
+function yaAvisado(id: string): boolean {
+  if (avisados.has(id)) return true;
+  try {
+    return (JSON.parse(sessionStorage.getItem(CLAVE_AVISADOS) ?? '[]') as string[]).includes(id);
+  } catch {
+    return false;
+  }
+}
+
+function marcarAvisado(id: string): void {
+  avisados.add(id);
+  try {
+    sessionStorage.setItem(CLAVE_AVISADOS, JSON.stringify([...avisados]));
+  } catch {
+    // Sin sessionStorage alcanza con el Set en memoria.
+  }
+}
 
 /** Un paso que terminó mal o con avisos: lo único que se muestra del detalle si algo falló. */
 interface Problema {
@@ -124,6 +147,26 @@ export class EjecucionPantalla {
     const p = this.ej()?.pausa;
     return p ? Math.max(0, Math.ceil(p.vence - this.ahora() / 1000)) : 0;
   });
+  // --- Errores de sintaxis (letra distinta entre ARCA y Xubio) -----------------------
+
+  protected readonly comprobantesConError = computed(() =>
+    (this.ej()?.advertencias ?? []).reduce((n, a) => n + a.comprobantes.length, 0),
+  );
+
+  protected verErroresDeSintaxis(): void {
+    const a = this.ej()?.advertencias;
+    if (a?.length) void mostrarErroresDeSintaxis(a);
+  }
+
+  /** La pausa por comprobantes duplicados (null si no hay o es la de entre clientes). */
+  protected readonly pausaDuplicados = computed(() => {
+    const p = this.ej()?.pausa;
+    return p?.tipo === 'duplicados' ? p : null;
+  });
+  protected readonly pausaEntreClientes = computed(() => {
+    const p = this.ej()?.pausa;
+    return p && p.tipo !== 'duplicados' ? p : null;
+  });
   protected readonly siguienteCliente = computed(() => {
     const e = this.ej();
     if (!e?.pausa) return null;
@@ -146,6 +189,14 @@ export class EjecucionPantalla {
     effect(() => {
       const id = this.id();
       untracked(() => void this.abrir(id));
+    });
+
+    // Al terminar un control con errores de sintaxis, el aviso se abre solo una vez.
+    effect(() => {
+      const e = this.ej();
+      if (!e || this.activa() || !e.advertencias?.length || yaAvisado(e.id)) return;
+      marcarAvisado(e.id);
+      untracked(() => void mostrarErroresDeSintaxis(e.advertencias!));
     });
   }
 

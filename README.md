@@ -142,7 +142,7 @@ Queda en <http://localhost:4210> y consume la API de `http://localhost:8000/api`
 | `MODULONUEVO_OUTPUT_DIR` | `backend/salidas` | carpeta raíz de las salidas |
 | `MODULONUEVO_LOG_DIR` | `backend/logs` | `backend.log` |
 | `MODULONUEVO_FRONT_DIST` | `frontend/dist/control-fct-frontend/browser` | build de Angular que sirve el backend |
-| `MODULONUEVO_CORS` | `http://localhost:4200,...` | orígenes permitidos (Angular) |
+| `MODULONUEVO_CORS` | `http://localhost:4200,4210,...` | orígenes permitidos (Angular) |
 | `MODULONUEVO_PAUSA_S` | `15` | pausa entre clientes en la web |
 | `MODULONUEVO_ARCA_PING_MIN` | `9` | cada cuántos minutos se consulta ARCA para no perder la sesión |
 | `MODULONUEVO_ARCA_RENOVAR_MIN` | `50` | a los cuántos minutos se renueva el login de ARCA |

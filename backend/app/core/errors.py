@@ -84,3 +84,13 @@ class SinDatos(BotError):
 
 class Cancelado(BotError):
     code = "cancelado"
+
+
+class DuplicadosDetectados(BotError):
+    """La auditoría encontró comprobantes repetidos y el usuario eligió no seguir.
+
+    Suele pasar cuando las credenciales están mal cargadas (otro CUIT en ARCA u
+    otra empresa en Xubio) y los Excel mezclan datos.
+    """
+
+    code = "duplicados_detectados"

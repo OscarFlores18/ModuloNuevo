@@ -12,13 +12,19 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import datetime
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+<<<<<<< HEAD
 from ...core import acceso_clientes, config, dialogos
+=======
+from ...core import config, dialogos
+from ...core.controles import resumen_controles
+>>>>>>> 70d9056b48a05f3676d370d21ddb2f122c4f1ba2
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...services import ejecuciones as ejecuciones_srv
@@ -279,6 +285,38 @@ def borrar_cliente(
         raise HTTPException(
             status_code=404, detail={"mensaje": f"No existe el cliente «{nombre}»."}
         )
+
+
+# --- Controles (1er / 2do control) ------------------------------------------------
+
+
+class ControlesRequest(BaseModel):
+    clientes: list[str] = Field(default_factory=list)
+    desde: str = ""  # DD/MM/AAAA
+
+
+@router.post("/controles")
+def controles(
+    body: ControlesRequest,
+    clientes: ClientesRepository = Depends(get_clientes),
+) -> dict:
+    """Por cliente y operación: cuántos controles hubo en el período y cuál sigue."""
+    try:
+        datetime.strptime(body.desde, "%d/%m/%Y")
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail={"mensaje": "Fecha «desde» inválida (DD/MM/AAAA)."}
+        ) from exc
+    existentes = clientes.listar_publico()
+    salida: dict[str, dict] = {}
+    for nombre in dict.fromkeys(body.clientes):
+        if nombre not in existentes:
+            continue
+        salida[nombre] = {
+            op.lower(): resumen_controles(config.OUTPUT_DIR, nombre, body.desde, op)
+            for op in ("Ventas", "Compras")
+        }
+    return salida
 
 
 # --- Ajustes -------------------------------------------------------------------

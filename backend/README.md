@@ -57,8 +57,8 @@ python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 
 En Render/Docker: `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT`.
 
-No se usa `uvicorn[standard]` a propósito: en Python 3.15 `pyyaml` todavía no
-tiene wheel y obliga a compilar. `uvicorn` base alcanza (sin `--reload`).
+Se usa `uvicorn` base (sin `[standard]`): no hace falta compilar nada y
+`--reload` funciona igual (usa `StatReload`).
 
 ## Configuración por entorno
 
@@ -67,7 +67,7 @@ tiene wheel y obliga a compilar. `uvicorn` base alcanza (sin `--reload`).
 | `MODULONUEVO_DATA_DIR` | `backend/data` | `config.json` y `xubio_credenciales.json` |
 | `MODULONUEVO_OUTPUT_DIR` | `backend/salidas` | carpeta raíz por defecto de los jobs |
 | `MODULONUEVO_LOG_DIR` | `backend/logs` | `backend.log` |
-| `MODULONUEVO_CORS` | `http://localhost:4200,http://127.0.0.1:4200` | orígenes permitidos (Angular) |
+| `MODULONUEVO_CORS` | `http://localhost:4200`, `:4210` y `127.0.0.1` en ambos | orígenes permitidos (Angular) |
 | `MODULONUEVO_FRONT_DIST` | `frontend/dist/control-fct-frontend/browser` | build de Angular que sirve el backend |
 | `MODULONUEVO_PAUSA_S` | `15` | pausa entre clientes |
 | `MODULONUEVO_ARCA_PING_MIN` | `9` | cada cuántos minutos se consulta ARCA (keep-alive) |
@@ -172,7 +172,5 @@ Excel sintéticos de ARCA y Xubio. Los tests **no** abren Chrome.
   `127.0.0.1`; si se publica, hay que agregar auth y HTTPS.
 - **Persistencia de jobs**: el historial está en memoria. Se puede volcar a
   SQLite/JSON sin tocar la API.
-- **`--reload`**: requiere `uvicorn[standard]`, que en Python 3.15 intenta
-  compilar `pyyaml`. Mientras tanto, reiniciar el proceso a mano.
 - **Selectores**: siguen dentro de cada bot. Si ARCA/Xubio cambian el HTML,
   conviene moverlos a un módulo de selectores por bot.

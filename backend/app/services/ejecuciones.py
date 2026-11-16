@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..auditor import procesar_cruce
+from ..auditor.cruce_fo import texto_letras_distintas
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
@@ -116,6 +117,8 @@ class Ejecucion:
     mensaje: str = ""
     log: list[dict] = field(default_factory=list)
     log_base: int = 0  # líneas viejas descartadas (el front pide por índice absoluto)
+    # Avisos que no frenan el control y se muestran al terminar (letra distinta...).
+    advertencias: list[dict] = field(default_factory=list)
 
     # Interno: la respuesta a la pausa.
     _respuesta: str | None = None
@@ -184,6 +187,7 @@ class Ejecucion:
             "preguntar": self.preguntar,
             "cancelar_pedido": self.cancelar_pedido,
             "pausa": self.pausa,
+            "advertencias": self.advertencias,
             "detalle_clientes": [
                 {
                     "nombre": c.nombre,
@@ -352,11 +356,19 @@ def iniciar(
     return ej
 
 
+ACCIONES_POR_PAUSA = {
+    "entre_clientes": ("continuar", "cancelar", "no_preguntar"),
+    # Duplicados: seguir igual, saltear esa auditoría o cancelar todo.
+    "duplicados": ("continuar", "omitir", "cancelar"),
+}
+
+
 def responder_pausa(ej: Ejecucion, accion: str) -> None:
-    if accion not in ("continuar", "cancelar", "no_preguntar"):
-        raise ErrorEjecucion("Acción desconocida.", 422)
     if ej.pausa is None:
         raise ErrorEjecucion("La ejecución no está esperando una respuesta.", 409)
+    tipo = ej.pausa.get("tipo", "entre_clientes")
+    if accion not in ACCIONES_POR_PAUSA.get(tipo, ()):
+        raise ErrorEjecucion("Acción desconocida.", 422)
     ej._respuesta = accion
     ej._evento.set()
 
@@ -443,6 +455,7 @@ def _pausa(ej: Ejecucion, cliente: str) -> str:
     ej._respuesta = None
     ej._evento.clear()
     ej.pausa = {
+        "tipo": "entre_clientes",
         "cliente": cliente,
         "vence": time.time() + segundos,
         "segundos": segundos,
@@ -611,6 +624,30 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             p["compras"],
                             str(carpeta),
                         )
+                        mensajes: list[str] = []
+                        if siguio_con_duplicados and paso.estado in ("ok", "aviso"):
+                            total = len(siguio_con_duplicados["arca"]) + len(
+                                siguio_con_duplicados["xubio"]
+                            )
+                            mensajes.append(
+                                f"Se generó con {total} comprobante(s) duplicado(s): "
+                                "revisá las credenciales del cliente."
+                            )
+                        if letras:
+                            texto = texto_letras_distintas(cli.nombre, operacion, letras)
+                            mensajes.append(texto)
+                            ej.advertencias.append(
+                                {
+                                    "tipo": "letra_distinta",
+                                    "cliente": cli.nombre,
+                                    "operacion": operacion,
+                                    "texto": texto,
+                                    "comprobantes": list(letras),
+                                }
+                            )
+                        if mensajes and paso.estado in ("ok", "aviso"):
+                            paso.estado = "aviso"
+                            paso.mensaje = " ".join(mensajes)
 
                     if _correr_paso(ej, paso, hacer_xubio) is not None:
                         gestor.descartar_xubio()

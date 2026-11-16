@@ -32,6 +32,19 @@ export interface Ajustes {
   xubio: { usuario: string; tiene_clave: boolean; recordar: boolean; del_servidor: boolean };
 }
 
+/** Cuántos controles hubo de una operación en el período y cuál sería el próximo. */
+export interface ResumenControl {
+  realizados: number;
+  proximo: number;
+  /** «1er control», «2do control»… */
+  proximo_texto: string;
+  /** Fecha ISO del último AUX, o null si nunca se controló. */
+  ultimo: string | null;
+}
+
+/** Por nombre de cliente. */
+export type ControlesPorCliente = Record<string, { ventas: ResumenControl; compras: ResumenControl }>;
+
 export type PasoId = 'arca' | 'xubio' | 'auditoria';
 
 export interface PedidoEjecucion {
@@ -104,12 +117,68 @@ export interface DetalleEjecucion extends ResumenEjecucion {
   cliente_actual: number;
   preguntar: boolean;
   cancelar_pedido: boolean;
-  /** La pausa entre clientes: `vence` en segundos epoch. */
-  pausa: { cliente: string; vence: number; segundos: number } | null;
+  /** El control espera una respuesta: `vence` en segundos epoch. */
+  pausa: Pausa | null;
+  /** Avisos que no frenan el control; se muestran al terminar. */
+  advertencias?: Advertencia[];
   detalle_clientes: ClienteEjecucion[];
   log: LineaLog[];
   log_total: number;
 }
+
+/** Una celda de una fila de Excel tal como la manda el backend. */
+export interface CeldaVista {
+  columna: string;
+  valor: string | number | null;
+}
+
+/** Un comprobante que en Xubio quedó con otra letra que en ARCA. */
+export interface ComprobanteLetraDistinta {
+  proveedor: string;
+  cuit: string;
+  comprobante_arca: string;
+  comprobante_xubio: string;
+  letra_arca: string;
+  letra_xubio: string;
+  /** La fila en «Mis Comprobantes» (ARCA) y en el Libro IVA (Xubio). */
+  fila_arca: CeldaVista[];
+  fila_xubio: CeldaVista[];
+}
+
+export interface Advertencia {
+  tipo: 'letra_distinta';
+  cliente: string;
+  operacion: 'Ventas' | 'Compras';
+  /** El aviso listo para mostrar. */
+  texto: string;
+  comprobantes: ComprobanteLetraDistinta[];
+}
+
+/** Pausa entre un cliente y el siguiente (cuenta regresiva). */
+export interface PausaEntreClientes {
+  tipo?: 'entre_clientes';
+  cliente: string;
+  vence: number;
+  segundos: number;
+}
+
+/** La auditoría encontró comprobantes duplicados: espera que el usuario decida. */
+export interface PausaDuplicados {
+  tipo: 'duplicados';
+  cliente: string;
+  operacion: 'Ventas' | 'Compras';
+  /** Hasta 15 comprobantes por origen; los totales dicen cuántos hay en realidad. */
+  arca: string[];
+  xubio: string[];
+  total_arca: number;
+  total_xubio: number;
+  vence: number;
+  segundos: number;
+}
+
+export type Pausa = PausaEntreClientes | PausaDuplicados;
+
+export type AccionPausa = 'continuar' | 'cancelar' | 'no_preguntar' | 'omitir';
 
 export function estaActiva(estado: EstadoEjecucion | undefined | null): boolean {
   return estado === 'en_curso' || estado === 'esperando';
