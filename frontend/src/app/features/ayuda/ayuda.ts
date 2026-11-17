@@ -123,7 +123,7 @@ import { Encabezado } from '../../core/ui/encabezado';
         <li>Mismo CUIT y número con otra clase → <strong>tipo distinto</strong>.</li>
         <li>Liquidaciones de ARCA cuyo banco está en Xubio como <em>Extracto bancario</em> → informativo.</li>
         <li>Factura + NC del mismo CUIT y mismo importe, ambas sin cargar → se anulan, informativo.</li>
-        <li>CUIT genérico del exterior (<code>50-</code>, <code>51-</code>, <code>55-</code>) y tiques / extractos → ARCA no los informa: van con las partidas sin ARCA, marcados como «Normal».</li>
+        <li>CUIT genérico del exterior (<code>50-</code>, <code>51-</code>, <code>55-</code>) y tiques / extractos → ARCA no los informa: van con las partidas sin ARCA, sin marcar en rojo.</li>
       </ul>
       <p>Lo que queda sin par es faltante de un lado o del otro. Si un lado vino vacío, no se listan faltantes: se informa como grave.</p>
     </section>
@@ -147,7 +147,7 @@ import { Encabezado } from '../../core/ui/encabezado';
             <tr><td>Letra distinta</td><td><span class="gravedad corregir">Corregir</span></td><td>Cambiar la letra en Xubio; el recuadro amarillo indica de cuál a cuál.</td><td><span class="color" style="background:#D9C3F0"></span></td></tr>
             <tr><td>Tipo distinto</td><td><span class="gravedad corregir">Corregir</span></td><td>Corregir el tipo (FC / NC / ND) en Xubio.</td><td><span class="color" style="background:#BDD7EE"></span></td></tr>
             <tr><td>En ARCA y no en el Libro IVA</td><td><span class="gravedad corregir">Corregir</span></td><td>Cargar en Xubio o consultar al cliente.</td><td><span class="color" style="background:#FF9999"></span></td></tr>
-            <tr><td>Partidas del Libro IVA no encontradas en ARCA</td><td><span class="gravedad corregir">Corregir</span></td><td>Revisar fecha, CUIT o número cargados; si están bien, consultar al cliente. Incluye los tiques, extractos y proveedores del exterior, marcados como «Normal» (sin acción). Si solo hay de esos, queda como Info.</td><td><span class="color" style="background:#FFD966"></span></td></tr>
+            <tr><td>Partidas del Libro IVA no encontradas en ARCA</td><td><span class="gravedad corregir">Corregir</span></td><td>Revisar fecha, CUIT o número cargados; si están bien, consultar al cliente. Incluye los tiques, extractos y proveedores del exterior, sin marcar en rojo (sin acción). Si solo hay de esos, queda como Info.</td><td><span class="color" style="background:#FFD966"></span></td></tr>
             <tr><td>Cargado dos veces</td><td><span class="gravedad corregir">Corregir</span></td><td>Mismo CUIT, número y tipo repetido. Eliminar el duplicado.</td><td><span class="color" style="background:#F4B084"></span></td></tr>
             <tr><td>Liquidación bancaria como extracto</td><td><span class="gravedad info">Info</span></td><td>Verificar que el importe esté en el extracto.</td><td><span class="color" style="background:#C6E0B4"></span></td></tr>
             <tr><td>Factura anulada con NC</td><td><span class="gravedad info">Info</span></td><td>Sin acción.</td><td><span class="color" style="background:#D9D9D9"></span></td></tr>

@@ -78,8 +78,8 @@ interface FilaVista {
   nota?: string;
 }
 
-const NOTA_MOTIVO: Record<NonNullable<FilaConError['motivo']>, string> = {
-  tique: 'Normal · tique o extracto',
+/** Solo el exterior lleva etiqueta: en tiques y extractos ya lo dice la columna Tipo. */
+const NOTA_MOTIVO: Partial<Record<NonNullable<FilaConError['motivo']>, string>> = {
   exterior: 'Normal · del exterior',
 };
 
