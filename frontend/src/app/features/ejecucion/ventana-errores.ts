@@ -129,20 +129,98 @@ function ordenesLetra(e: Advertencia): string {
 
 // --- Acciones: botones (llevan a algún lado) vs. etiquetas (estado) ----------------
 
+const XUBIO = 'https://xubio.com';
+
+/** Lo que tarda Xubio en cambiar de empresa antes de ir al Libro IVA. */
+const ESPERA_CAMBIO_EMPRESA_MS = 5000;
+
+/** Solo direcciones https de xubio.com (el link de la empresa viene del bot). */
+function esUrlDeXubio(url: string | undefined): url is string {
+  try {
+    const u = new URL(url ?? '');
+    return u.protocol === 'https:' && (u.hostname === 'xubio.com' || u.hostname.endsWith('.xubio.com'));
+  } catch {
+    return false;
+  }
+}
+
+/** El primer comprobante de la tarjeta tal como está en Xubio (para pegarlo en el buscador). */
+function numeroParaBuscar(e: Advertencia): string {
+  const primero = e.comprobantes[0];
+  if (!primero) return '';
+  if (e.tipo === 'letra_distinta') return (primero as ComprobanteLetraDistinta).comprobante_xubio ?? '';
+  return texto(normalizar((primero as FilaConError).fila).Comprobante);
+}
+
+/**
+ * «Corregir en Xubio»: abre Xubio en otra pestaña ya en la empresa del cliente y,
+ * cuando cambió de empresa, lo lleva al Libro IVA de esa operación. Además copia
+ * el número del comprobante para pegarlo en el buscador.
+ *
+ * Xubio no da un link al comprobante (el Excel no trae su código interno): por
+ * eso se llega a la empresa y al listado, no a la pantalla del comprobante.
+ */
+function abrirEnXubio(boton: HTMLElement): void {
+  const empresa = boton.dataset['empresa'];
+  const listado = `${XUBIO}/NXV/impuestos/libro-iva-${boton.dataset['operacion'] === 'Ventas' ? 'ventas' : 'compras'}`;
+  const numero = boton.dataset['numero'] ?? '';
+  const aviso = boton.closest('.ve-error')?.querySelector<HTMLElement>('.ve-copiado');
+  const avisar = (mensaje: string) => {
+    if (aviso) aviso.textContent = mensaje;
+  };
+
+  if (numero && navigator.clipboard) {
+    navigator.clipboard.writeText(numero).then(
+      () => avisar(`Número copiado: ${numero}. Pegalo en el buscador de Xubio.`),
+      () => avisar(`Buscá en Xubio el comprobante ${numero}.`),
+    );
+  } else if (numero) {
+    avisar(`Buscá en Xubio el comprobante ${numero}.`);
+  }
+
+  // Se abre en blanco para cortarle a Xubio el acceso a esta página (opener) y
+  // después se navega: primero a la empresa y, ya cambiada, al Libro IVA.
+  const pestana = window.open('about:blank', '_blank');
+  if (!pestana) {
+    window.open(esUrlDeXubio(empresa) ? empresa : listado, '_blank', 'noopener');
+    return;
+  }
+  pestana.opener = null;
+  if (esUrlDeXubio(empresa)) {
+    pestana.location.href = empresa;
+    window.setTimeout(() => {
+      try {
+        pestana.location.href = listado;
+      } catch {
+        // La pestaña se cerró: no hay nada que hacer.
+      }
+    }, ESPERA_CAMBIO_EMPRESA_MS);
+  } else {
+    pestana.location.href = listado;
+  }
+}
+
 function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | null {
   const a = accion.toLowerCase();
-  if (a.includes('xubio')) return { href: 'https://xubio.com/NXV/', nuevaPestana: true };
   if (a.includes('clave de arca') || a.includes('cuit del cliente')) return { href: '/clientes', nuevaPestana: false };
   if (a.includes('volver a correr')) return { href: '/control', nuevaPestana: false };
   return null;
 }
 
-function botonesYEtiquetas(e: Advertencia): { botones: string; etiquetas: string } {
+function botonesYEtiquetas(e: Advertencia, enlaces: Readonly<Record<string, string>>): { botones: string; etiquetas: string } {
   const botones: string[] = [];
   const etiquetas: string[] = [];
   for (const accion of e.acciones) {
     const destino = destinoDe(accion);
-    if (destino) {
+    if (accion.toLowerCase().includes('xubio')) {
+      const empresa = esUrlDeXubio(enlaces[e.cliente]) ? enlaces[e.cliente] : '';
+      const ayuda = empresa
+        ? 'Abre Xubio en la empresa del cliente y el Libro IVA, y copia el número del comprobante'
+        : 'Abre el Libro IVA de Xubio y copia el número del comprobante';
+      botones.push(
+        `<button type="button" class="ve-boton" data-xubio data-empresa="${esc(empresa)}" data-operacion="${esc(e.operacion ?? '')}" data-numero="${esc(numeroParaBuscar(e))}" title="${ayuda}">→ ${esc(accion)}</button>`,
+      );
+    } else if (destino) {
       const pestana = destino.nuevaPestana ? ' target="_blank" rel="noopener"' : '';
       botones.push(`<a class="ve-boton" href="${esc(destino.href)}"${pestana}>→ ${esc(accion)}</a>`);
     } else {
@@ -160,14 +238,14 @@ function grupoDe(g: Advertencia['gravedad']): Grupo {
   return g === 'info' ? 'info' : 'corregir';
 }
 
-function tarjeta(e: Advertencia): string {
+function tarjeta(e: Advertencia, enlaces: Readonly<Record<string, string>>): string {
   const meta = [e.operacion, e.total ? `${e.total} comprobante${e.total === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
   const mas =
     e.total > e.comprobantes.length
       ? `<p class="ve-mas">${e.comprobantes.length} de ${e.total}${e.hoja ? ` · el resto en la hoja «${esc(e.hoja)}»` : ''}</p>`
       : '';
   const letras = ordenesLetra(e);
-  const { botones, etiquetas } = botonesYEtiquetas(e);
+  const { botones, etiquetas } = botonesYEtiquetas(e, enlaces);
   // Las INFO arrancan plegadas: una fila compacta con «Ver detalle ▾».
   return `
     <details class="ve-error ve-${e.gravedad}" data-grupo="${grupoDe(e.gravedad)}" ${e.gravedad === 'info' ? '' : 'open'}>
@@ -184,6 +262,7 @@ function tarjeta(e: Advertencia): string {
         </span>
       </summary>
       <div class="ve-cuerpo">
+        <p class="ve-copiado" role="status" aria-live="polite"></p>
         ${e.detalle ? `<p class="ve-detalle">${esc(e.detalle)}</p>` : ''}
         ${letras ? `<ul class="ve-ordenes">${letras}</ul>` : ''}
         ${grilla(filasDe(e))}${mas}
@@ -222,7 +301,9 @@ const ESTILOS = `
     .ve-etiqueta { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; padding: 1px 9px; border-radius: 999px; background: #eef2f7; color: #475569; border: 1px solid #dfe5ee; }
     .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     .ve-meta { font-size: 12px; color: #64748b; white-space: nowrap; }
-    .ve-boton { display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, .15); white-space: nowrap; }
+    .ve-copiado { margin: 0 0 6px; font-size: 12.5px; font-weight: 700; color: #15803d; }
+    .ve-copiado:empty { display: none; }
+    .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, .15); white-space: nowrap; }
     .ve-boton:hover { background: #1d4ed8; }
     .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
     .ve-plegar { font-size: 12px; font-weight: 700; color: #2563eb; white-space: nowrap; }
@@ -270,6 +351,17 @@ export function contarErrores(errores: readonly Advertencia[]): Record<Advertenc
 }
 
 /** Las píldoras filtran las tarjetas: una activa muestra solo esas; otro click, todas. */
+function activarBotonesXubio(raiz: HTMLElement): void {
+  for (const boton of raiz.querySelectorAll<HTMLElement>('[data-xubio]')) {
+    boton.addEventListener('click', (ev) => {
+      // El botón está dentro del <summary>: que no pliegue la tarjeta.
+      ev.preventDefault();
+      ev.stopPropagation();
+      abrirEnXubio(boton);
+    });
+  }
+}
+
 function activarFiltros(raiz: HTMLElement): void {
   const resumen = raiz.querySelector<HTMLElement>('.ve-resumen');
   const chips = [...raiz.querySelectorAll<HTMLButtonElement>('.ve-chip[data-filtro]')];
@@ -299,7 +391,7 @@ function activarFiltros(raiz: HTMLElement): void {
 }
 
 /** Abre la ventana de hallazgos. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla). */
-export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
+export function mostrarVentanaDeErrores(errores: readonly Advertencia[], enlacesXubio: Readonly<Record<string, string>> = {}) {
   const n = contarErrores(errores);
   const aCorregir = n.grave + n.corregir;
   const total = errores.length;
@@ -319,7 +411,7 @@ export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
     n.info ? `<button type="button" class="ve-chip ve-chip-info" data-filtro="info" aria-pressed="false">${n.info} info</button>` : '',
   ].join('');
   const lista = [...porCliente.entries()]
-    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map(tarjeta).join('')}</section>`)
+    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map((e) => tarjeta(e, enlacesXubio)).join('')}</section>`)
     .join('');
 
   return Swal.fire({
@@ -336,7 +428,10 @@ export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
     confirmButtonText: 'Entendido',
     confirmButtonColor: '#2563eb',
     focusConfirm: true,
-    didOpen: (popup) => activarFiltros(popup),
+    didOpen: (popup) => {
+      activarFiltros(popup);
+      activarBotonesXubio(popup);
+    },
     // Sin animación: si la pestaña está atrás (mirando el Chrome del bot), el
     // navegador congela las animaciones y la ventana quedaba transparente.
     showClass: { popup: '', backdrop: 'swal2-backdrop-show', icon: '' },

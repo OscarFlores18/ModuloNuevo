@@ -96,6 +96,8 @@ export interface ClienteEjecucion {
   carpeta: string;
   archivos: ArchivoGenerado[];
   pasos: PasoEjecucion[];
+  /** Link de Xubio ya parado en la empresa del cliente (lo guarda el bot). */
+  xubio_url?: string | null;
 }
 
 export interface LineaLog {

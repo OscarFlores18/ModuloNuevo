@@ -22,7 +22,7 @@ from ..core import config
 from ..core.errors import TimeoutDescarga
 from ..core.models import BotResult
 from .navegador import como_fuente, lanzar, nuevo_contexto
-from .xubio_common import cambiar_empresa, crear_matar_popup, login_xubio
+from .xubio_common import cambiar_empresa, crear_matar_popup, enlace_empresa, login_xubio
 
 
 def procesar_informe_individual(
@@ -181,6 +181,7 @@ class SesionXubio:
         self._context = None
         self._page: Page | None = None
         self._matar_popup = None
+        self.url_empresa: str | None = None
 
     def abrir(self) -> "SesionXubio":
         if self._browser is not None:
@@ -227,12 +228,18 @@ class SesionXubio:
     def __exit__(self, *exc) -> None:
         self.cerrar()
 
-    def cambiar_empresa(self, nombre_cliente: str) -> None:
+    def cambiar_empresa(self, nombre_cliente: str) -> str | None:
+        """Cambia a la empresa y devuelve su link de Xubio (para «Corregir en Xubio»)."""
         if self._page is None:
             raise RuntimeError("La sesión de Xubio no está abierta.")
         cambiar_empresa(
             self._page, nombre_cliente, self._matar_popup, log=self.log
         )
+        try:
+            self.url_empresa = enlace_empresa(self._page, nombre_cliente)
+        except Exception:
+            self.url_empresa = None
+        return self.url_empresa
 
     def descargar(
         self,

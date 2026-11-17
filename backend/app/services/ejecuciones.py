@@ -34,6 +34,7 @@ from ..auditor import procesar_cruce
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
+from ..bots.xubio_common import es_url_de_xubio
 from ..core.controles import descartar_si_vacia, nueva_carpeta_control, numero_de_carpeta
 from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente, nombre_carpeta
 from ..core.saneo import sanear
@@ -99,6 +100,8 @@ class ClienteEnCurso:
     estado: str = "pendiente"
     carpeta: str = ""
     archivos: list[dict] = field(default_factory=list)
+    # Link de Xubio ya parado en la empresa del cliente (Relogin?tenant=...).
+    xubio_url: str | None = None
 
 
 @dataclass
@@ -194,6 +197,7 @@ class Ejecucion:
                     "estado": c.estado,
                     "carpeta": c.carpeta,
                     "archivos": c.archivos,
+                    "xubio_url": c.xubio_url,
                     "pasos": [p.__dict__ for p in c.pasos],
                 }
                 for c in self.clientes
@@ -654,7 +658,9 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
 
                     def hacer_xubio():
                         sesion = gestor.xubio(p["xubio_usuario"], xubio_clave)
-                        sesion.cambiar_empresa(cli.nombre)
+                        url = sesion.cambiar_empresa(cli.nombre)
+                        if isinstance(url, str) and es_url_de_xubio(url):
+                            cli.xubio_url = url
                         return sesion.descargar(
                             cli.nombre,
                             p["desde"],

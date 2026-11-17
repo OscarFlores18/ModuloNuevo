@@ -247,6 +247,34 @@ def _link_compania_en_dom(page, nombre: str):
     return None
 
 
+def enlace_empresa(page, nombre: str) -> str | None:
+    """El link para entrar a Xubio ya parado en la empresa del cliente
+    (``https://xubio.com/NXV/Relogin?tenant=...``), o None si no se encuentra.
+
+    Lo usa la ventana de hallazgos: «Corregir en Xubio» abre la empresa correcta
+    en el navegador del usuario. Solo se aceptan direcciones de xubio.com.
+    """
+    enlace = _link_compania_en_dom(page, nombre)
+    if enlace is None:
+        return None
+    try:
+        href = enlace.get_attribute("href")
+    except Exception:
+        return None
+    if not href:
+        return None
+    destino = urljoin(page.url, href)
+    return destino if es_url_de_xubio(destino) else None
+
+
+def es_url_de_xubio(url: str) -> bool:
+    from urllib.parse import urlsplit
+
+    partes = urlsplit(url or "")
+    host = (partes.hostname or "").lower()
+    return partes.scheme == "https" and (host == "xubio.com" or host.endswith(".xubio.com"))
+
+
 def _empresa_activa(page) -> str:
     return _texto_seguro(page.locator("#resaltarCompania").first)
 
