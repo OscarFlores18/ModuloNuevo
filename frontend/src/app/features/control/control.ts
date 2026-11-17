@@ -257,13 +257,18 @@ export class NuevoControl {
     const ops = [o?.ventas && (['Ventas', c.ventas] as const), o?.compras && (['Compras', c.compras] as const)].filter(
       (x): x is readonly ['Ventas' | 'Compras', ResumenControl] => !!x,
     );
-    return ops.map(([op, r]) => ({
-      texto: ops.length > 1 ? `${op === 'Ventas' ? 'V' : 'C'}: ${r.proximo_texto}` : r.proximo_texto,
-      titulo: r.ultimo
+    if (!ops.length) return [];
+    const detalle = ([op, r]: readonly ['Ventas' | 'Compras', ResumenControl]) =>
+      r.ultimo
         ? `${op}: ya hubo ${r.realizados} control(es) en este período, el último el ${new Date(r.ultimo).toLocaleString('es-AR')}. Este será el ${r.proximo_texto}.`
-        : `${op}: todavía no se controló este período.`,
-      repetido: r.realizados > 0,
-    }));
+        : `${op}: todavía no se controló este período.`;
+    // Una sola etiqueta por cliente: si Ventas y Compras van por el mismo
+    // control dice «4to control»; si no, «V: 4to · C: 2do control».
+    const mismos = ops.every(([, r]) => r.proximo === ops[0][1].proximo);
+    const texto = mismos
+      ? ops[0][1].proximo_texto
+      : ops.map(([op, r]) => `${op === 'Ventas' ? 'V' : 'C'}: ${r.proximo_texto.replace(' control', '')}`).join(' · ') + ' control';
+    return [{ texto, titulo: ops.map(detalle).join('\n'), repetido: ops.some(([, r]) => r.realizados > 0) }];
   }
 
   private async cargarControles(clientes: string[], desde: string): Promise<void> {

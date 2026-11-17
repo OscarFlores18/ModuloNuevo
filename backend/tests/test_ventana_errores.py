@@ -135,9 +135,8 @@ def test_compras_compara_por_cuit_y_tipo():
     assert falta_en_arca.empty  # Díaz: factura y NC cargadas, no son duplicado
 
 
-def test_el_excel_pinta_cada_error_con_su_color(tmp_path: Path):
+def test_el_excel_marca_los_errores_en_negrita_sin_colores_nuevos(tmp_path: Path):
     import openpyxl
-    from backend.app.auditor.cruce_fo import COLORES_ERROR
 
     arca, xubio = tmp_path / "arca.xlsx", tmp_path / "xubio.xlsx"
     _arca(arca, [("11 - Factura C", "23473905639", "SOTO STOCKMAYER FRANCO")])
@@ -147,38 +146,35 @@ def test_el_excel_pinta_cada_error_con_su_color(tmp_path: Path):
         ruta_arca_manual=str(arca), ruta_xubio_manual=str(xubio), log=lambda _: None,
     )
     wb = openpyxl.load_workbook(ruta)
-    violeta = COLORES_ERROR["letra_distinta"][0]
-    assert wb["Libro Iva"].cell(2, 1).fill.fgColor.rgb.endswith(violeta)
-    assert "Referencias" in wb.sheetnames
-    assert len(set(c for c, _ in COLORES_ERROR.values())) == len(COLORES_ERROR)  # sin colores repetidos
+    libro = wb["Libro Iva"]
+    assert libro.cell(2, 1).font.bold
+    assert libro.cell(2, 1).fill.fill_type is None  # sin color agregado
+    estado = {str(c.value).lower(): c.column for c in libro[1] if c.value}["estado conciliación"]
+    assert libro.cell(2, estado).value == "Letra distinta: en ARCA es C-00002-00000006"
+    assert "Referencias" not in wb.sheetnames
 
 
-def test_partidas_sin_arca_van_juntas_con_las_normales_marcadas(tmp_path: Path):
-    """Como en la sección del Excel: lo que falta revisar y lo normal (exterior,
-    tiques, extractos) en una sola tarjeta, con lo normal marcado y al final."""
-    errores = _errores(
-        tmp_path,
-        [("11 - Factura C", "27479591992", "GAZZO MARIA PAULA")],
-        [
-            ("C-0002-00000099", "23-47390563-9", "FRANCO SOTO STOCKMAYER"),
-            ("E-0001-00000010", "50-00000000-0", "PROVEEDOR DEL EXTERIOR"),
-        ],
+def test_mismo_numero_de_dos_proveedores_concilia_cada_uno_con_su_fila(tmp_path: Path):
+    """Gazzo y Fernández tienen C-00002-00000006: cada fila del Libro IVA tiene
+    que apuntar a SU fila de ARCA, no al primero que aparezca."""
+    import re
+    import openpyxl
+
+    arca, xubio = tmp_path / "arca.xlsx", tmp_path / "xubio.xlsx"
+    _arca(arca, [("11 - Factura C", "27479591992", "GAZZO"), ("11 - Factura C", "27942062635", "FERNANDEZ")])
+    _xubio(xubio, [("C-0002-00000006", "27-94206263-5", "FERNANDEZ"), ("C-0002-00000006", "27-47959199-2", "GAZZO")])
+    ruta = procesar_cruce(
+        "PICCININI", "Compras", "01/04/2026", "30/04/2026", str(tmp_path),
+        ruta_arca_manual=str(arca), ruta_xubio_manual=str(xubio), log=lambda _: None,
     )
-    assert "exterior_sin_arca" not in errores and "tique_sin_arca" not in errores
-    e = errores["faltante_en_arca"]
-    assert e["titulo"] == "Partidas del Libro IVA Compras no encontradas en ARCA"
-    assert e["gravedad"] == "corregir"
-    assert e["total"] == 2
-    assert [c.get("motivo") for c in e["comprobantes"]] == [None, "exterior"]
-    assert "1 a revisar" in e["detalle"] and "exterior" in e["detalle"]
-
-
-def test_partidas_sin_arca_solo_normales_es_info(tmp_path: Path):
-    errores = _errores(
-        tmp_path,
-        [("11 - Factura C", "27479591992", "GAZZO MARIA PAULA")],
-        [("E-0001-00000010", "50-00000000-0", "PROVEEDOR DEL EXTERIOR")],
-    )
-    e = errores["faltante_en_arca"]
-    assert e["gravedad"] == "info"
-    assert e["acciones"] == ["Sin acción"]
+    wb = openpyxl.load_workbook(ruta)
+    wa, wx = wb["Mis Comprobantes"], wb["Libro Iva"]
+    ca = {str(c.value).lower(): c.column for c in wa[1] if c.value}
+    cx = {str(c.value).lower(): c.column for c in wx[1] if c.value}
+    for r in (2, 3):
+        ref = str(wx.cell(r, cx["total monto s/arca"]).value)
+        fila_arca = int(re.search(r"(\d+)$", ref).group(1))
+        cuit_x = re.sub(r"\D", "", str(wx.cell(r, cx["cuit"]).value))
+        cuit_a = re.sub(r"\D", "", str(wa.cell(fila_arca, ca["nro. doc. emisor"]).value))
+        assert cuit_a == cuit_x
+        assert wx.cell(r, cx["estado conciliación"]).value.startswith("=IF(")  # no «Duplicado»

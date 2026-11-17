@@ -31,7 +31,6 @@ import { Encabezado } from '../../core/ui/encabezado';
     .grave { background: #fde2e2; color: #9b2c2c; }
     .corregir { background: #fdf0d9; color: #7a4f0f; }
     .info { background: #e8eef9; color: #1d4ed8; }
-    .color { display: inline-block; width: 26px; height: 16px; border-radius: 3px; border: 1px solid rgba(0,0,0,.15); vertical-align: middle; }
     code { font-family: Consolas, 'Cascadia Mono', monospace; font-size: .92em; background: #f1f5f9; padding: 0 4px; border-radius: 3px; }
     details { border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; background: #fff; }
     details + details { margin-top: 6px; }
@@ -138,20 +137,20 @@ import { Encabezado } from '../../core/ui/encabezado';
       <div class="mf-scroll">
         <table class="tabla">
           <thead>
-            <tr><th>Hallazgo</th><th>Gravedad</th><th>Qué hacer</th><th>Color Excel</th></tr>
+            <tr><th>Hallazgo</th><th>Gravedad</th><th>Qué hacer</th></tr>
           </thead>
           <tbody>
-            <tr><td>ARCA no devolvió comprobantes</td><td><span class="gravedad grave">Grave</span></td><td>Revisar el CUIT representado y volver a correr.</td><td>—</td></tr>
-            <tr><td>Xubio no devolvió el Libro IVA</td><td><span class="gravedad grave">Grave</span></td><td>El nombre del cliente no coincide con la empresa en Xubio.</td><td>—</td></tr>
-            <tr><td>Un paso falló (ARCA / Xubio)</td><td><span class="gravedad grave">Grave</span></td><td>El hallazgo indica la causa (clave, CUIT, sesión). Corregir y volver a correr ese cliente.</td><td>—</td></tr>
-            <tr><td>Letra distinta</td><td><span class="gravedad corregir">Corregir</span></td><td>Cambiar la letra en Xubio; el recuadro amarillo indica de cuál a cuál.</td><td><span class="color" style="background:#D9C3F0"></span></td></tr>
-            <tr><td>Tipo distinto</td><td><span class="gravedad corregir">Corregir</span></td><td>Corregir el tipo (FC / NC / ND) en Xubio.</td><td><span class="color" style="background:#BDD7EE"></span></td></tr>
-            <tr><td>En ARCA y no en el Libro IVA</td><td><span class="gravedad corregir">Corregir</span></td><td>Cargar en Xubio o consultar al cliente.</td><td><span class="color" style="background:#FF9999"></span></td></tr>
-            <tr><td>Partidas del Libro IVA no encontradas en ARCA</td><td><span class="gravedad corregir">Corregir</span></td><td>Revisar fecha, CUIT o número cargados; si están bien, consultar al cliente. Incluye los tiques, extractos y proveedores del exterior, sin marcar en rojo (sin acción). Si solo hay de esos, queda como Info.</td><td><span class="color" style="background:#FFD966"></span></td></tr>
-            <tr><td>Cargado dos veces</td><td><span class="gravedad corregir">Corregir</span></td><td>Mismo CUIT, número y tipo repetido. Eliminar el duplicado.</td><td><span class="color" style="background:#F4B084"></span></td></tr>
-            <tr><td>Liquidación bancaria como extracto</td><td><span class="gravedad info">Info</span></td><td>Verificar que el importe esté en el extracto.</td><td><span class="color" style="background:#C6E0B4"></span></td></tr>
-            <tr><td>Factura anulada con NC</td><td><span class="gravedad info">Info</span></td><td>Sin acción.</td><td><span class="color" style="background:#D9D9D9"></span></td></tr>
-            <tr><td>Proveedor del exterior (dentro de las partidas sin ARCA)</td><td><span class="gravedad info">Normal</span></td><td>Sin acción.</td><td><span class="color" style="background:#9BD3D0"></span></td></tr>
+            <tr><td>ARCA no devolvió comprobantes</td><td><span class="gravedad grave">Grave</span></td><td>Revisar el CUIT representado y volver a correr.</td></tr>
+            <tr><td>Xubio no devolvió el Libro IVA</td><td><span class="gravedad grave">Grave</span></td><td>El nombre del cliente no coincide con la empresa en Xubio.</td></tr>
+            <tr><td>Un paso falló (ARCA / Xubio)</td><td><span class="gravedad grave">Grave</span></td><td>El hallazgo indica la causa (clave, CUIT, sesión). Corregir y volver a correr ese cliente.</td></tr>
+            <tr><td>Letra distinta</td><td><span class="gravedad corregir">Corregir</span></td><td>Cambiar la letra en Xubio; el recuadro amarillo indica de cuál a cuál.</td></tr>
+            <tr><td>Tipo distinto</td><td><span class="gravedad corregir">Corregir</span></td><td>Corregir el tipo (FC / NC / ND) en Xubio.</td></tr>
+            <tr><td>No está subido a Xubio</td><td><span class="gravedad corregir">Corregir</span></td><td>Cargar en Xubio o consultar al cliente.</td></tr>
+            <tr><td>Partidas del Libro IVA no encontradas en ARCA</td><td><span class="gravedad corregir">Corregir</span></td><td>Revisar fecha, CUIT o número cargados; si están bien, consultar al cliente. Incluye los tiques, extractos y proveedores del exterior (sin acción). Si solo hay de esos, queda como Info.</td></tr>
+            <tr><td>Cargado dos veces</td><td><span class="gravedad corregir">Corregir</span></td><td>Mismo CUIT, número y tipo repetido. Eliminar el duplicado.</td></tr>
+            <tr><td>Liquidación bancaria como extracto</td><td><span class="gravedad info">Info</span></td><td>Verificar que el importe esté en el extracto.</td></tr>
+            <tr><td>Factura anulada con NC</td><td><span class="gravedad info">Info</span></td><td>Sin acción.</td></tr>
+            <tr><td>Proveedor del exterior (dentro de las partidas sin ARCA)</td><td><span class="gravedad info">Normal</span></td><td>Sin acción.</td></tr>
           </tbody>
         </table>
       </div>
@@ -161,12 +160,11 @@ import { Encabezado } from '../../core/ui/encabezado';
       <h3>7. Excel de auditoría y carpetas</h3>
       <h4>Hojas</h4>
       <ul>
-        <li><strong>Mis Comprobantes:</strong> lo bajado de ARCA. Al final se agregan las partidas del Libro IVA sin par en ARCA.</li>
-        <li><strong>Libro Iva:</strong> lo bajado de Xubio. La columna <em>Estado conciliación</em> marca «Letra distinta», «Tipo distinto» o «Duplicado».</li>
+        <li><strong>Mis Comprobantes:</strong> lo bajado de ARCA. Al final se agregan las partidas del Libro IVA sin par en ARCA, cada una con su <em>Motivo</em> (tique, extracto, exterior o «No está en ARCA»).</li>
+        <li><strong>Libro Iva:</strong> lo bajado de Xubio. Cada fila toma los importes de su fila exacta de ARCA (mismo CUIT, número y tipo). <em>Estado conciliación</em> dice «Ok» o qué pasa en palabras. Al final van las partidas de ARCA que no están en Xubio: «No está subido a Xubio», «Anulada con nota de crédito» o «Liquidación bancaria».</li>
         <li><strong>Faltantes en Libro IVA (Ventas / Compras):</strong> lo de ARCA que no está en Xubio.</li>
-        <li><strong>Referencias:</strong> qué significa cada color.</li>
       </ul>
-      <p>Las filas se pintan con el color del hallazgo (tabla de arriba); las columnas de totales quedan como estaban.</p>
+      <p>Las filas que hay que corregir van en <strong>negrita</strong>.</p>
       <h4>Descarga</h4>
       <p>
         En Ejecuciones, por cliente, <span class="boton">Ver archivos</span>: planillas de ARCA, Xubio y auditoría.

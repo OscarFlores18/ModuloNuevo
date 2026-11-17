@@ -379,8 +379,8 @@ def diagnosticar(
     if falta_x:
         errores.append(error(
             "faltante_en_xubio", "corregir",
-            f"En ARCA y no en el {libro}",
-            "ARCA los informa y no están cargados en Xubio.",
+            "No está subido a Xubio",
+            f"ARCA los informa y no están cargados en el {libro} de Xubio.",
             ["Cargar en Xubio", "Consultar al cliente"],
             falta_x,
             hoja=f"Faltantes en Libro IVA {operacion}",
@@ -457,18 +457,15 @@ def diagnosticar(
     return errores
 
 
-# --- Colores de los errores en el Excel ---------------------------------------
-# Cada tipo de error pinta la fila con su color (solo las columnas de datos; las
-# amarillas de totales quedan como estaban) y se agrega la hoja «Referencias».
-COLORES_ERROR = {
-    "duplicado": ("F4B084", "Cargado dos veces en Xubio (mismo CUIT, número y tipo)"),
-    "letra_distinta": ("D9C3F0", "Letra distinta entre ARCA y Xubio"),
-    "tipo_distinto": ("BDD7EE", "Tipo distinto (factura / nota de crédito / débito)"),
-    "faltante_en_xubio": ("FF9999", "Está en ARCA y no en el Libro IVA"),
-    "faltante_en_arca": ("FFD966", "Está en el Libro IVA y no en ARCA"),
-    "anulada_con_nc": ("D9D9D9", "Factura anulada con nota de crédito (informativo)"),
-    "liquidacion_bancaria": ("C6E0B4", "Liquidación bancaria cargada como extracto (informativo)"),
-    "exterior_sin_arca": ("9BD3D0", "Proveedor del exterior (informativo)"),
+# --- Errores marcados en el Excel --------------------------------------------
+# Las filas con error van en negrita (sin colores nuevos: los del Excel de
+# siempre quedan como estaban). Solo los que hay que corregir, no los informativos.
+ERRORES_EN_NEGRITA = {
+    "duplicado": "Duplicado",
+    "letra_distinta": "Letra distinta",
+    "tipo_distinto": "Tipo distinto",
+    "faltante_en_xubio": "No está subido a Xubio",
+    "faltante_en_arca": "Faltante en ARCA",
 }
 
 
@@ -498,31 +495,20 @@ def _columnas(ws) -> dict[str, int]:
     return {str(c.value).strip().lower(): c.column for c in ws[1] if c.value is not None}
 
 
-def colorear_errores(wb, errores: list[dict], operacion: str) -> None:
-    """Pinta en «Mis Comprobantes» y «Libro Iva» las filas de cada error."""
-    # Las partidas normales (exterior, tiques) vienen dentro de «faltante_en_arca»:
-    # se pintan con su propio color, o sin color los tiques y extractos.
-    separados: list[dict] = []
-    for e in errores:
-        if e["tipo"] != "faltante_en_arca":
-            separados.append(e)
-            continue
-        por_motivo: dict[str, list] = {}
-        for item in e.get("comprobantes", []):
-            por_motivo.setdefault(item.get("motivo", ""), []).append(item)
-        if por_motivo.get(""):
-            separados.append({**e, "comprobantes": por_motivo[""]})
-        if por_motivo.get("exterior"):
-            separados.append({**e, "tipo": "exterior_sin_arca", "comprobantes": por_motivo["exterior"]})
-    a_pintar = [e for e in separados if e["tipo"] in COLORES_ERROR]
-    if not a_pintar:
+def marcar_errores(wb, errores: list[dict], operacion: str) -> None:
+    """Pone en negrita, en «Mis Comprobantes» y «Libro Iva», las filas con error."""
+    a_marcar = [e for e in errores if e["tipo"] in ERRORES_EN_NEGRITA]
+    if not a_marcar:
         return
-    claves = {e["tipo"]: _claves_de_error(e) for e in a_pintar}
+    claves = {
+        e["tipo"]: _claves_de_error({**e, "comprobantes": [c for c in e["comprobantes"] if not c.get("motivo")]})
+        for e in a_marcar
+    }
+    negrita = Font(bold=True)
 
-    def pintar(ws, fila, color, hasta):
-        relleno = PatternFill(start_color=color, end_color=color, fill_type="solid")
+    def resaltar(ws, fila, hasta):
         for c in range(1, hasta + 1):
-            ws.cell(row=fila, column=c).fill = relleno
+            ws.cell(row=fila, column=c).font = negrita
 
     if "Mis Comprobantes" in wb.sheetnames:
         ws = wb["Mis Comprobantes"]
@@ -531,7 +517,7 @@ def colorear_errores(wb, errores: list[dict], operacion: str) -> None:
         c_pto = col.get("punto de venta")
         c_num = col.get("número desde")
         c_doc = next((v for k, v in col.items() if k.startswith("nro. doc")), None)
-        hasta = col.get("iva ajustado", ws.max_column) - 1
+        hasta = col.get("total ajustado", ws.max_column)
         if c_tipo and c_pto and c_num and c_doc:
             for fila in range(2, ws.max_row + 1):
                 if str(ws.cell(fila, 1).value or "").startswith("Partidas del Libro IVA"):
@@ -545,17 +531,15 @@ def colorear_errores(wb, errores: list[dict], operacion: str) -> None:
                 except (TypeError, ValueError):
                     continue
                 clave = _clave_fila(ws.cell(fila, c_doc).value, comp, tipo)
-                for tipo_error, (arca, _) in claves.items():
-                    if clave in arca:
-                        pintar(ws, fila, COLORES_ERROR[tipo_error][0], hasta)
-                        break
+                if any(clave in arca for arca, _ in claves.values()):
+                    resaltar(ws, fila, hasta)
 
     if "Libro Iva" in wb.sheetnames:
         ws = wb["Libro Iva"]
         col = _columnas(ws)
         c_tipo, c_comp, c_cuit = col.get("tipo"), col.get("comprobante"), col.get("cuit")
         c_est = col.get("estado conciliación")
-        hasta = col.get("total iva s/libro", ws.max_column) - 1
+        hasta = c_est or ws.max_column
         if c_tipo and c_comp and c_cuit:
             for fila in range(2, ws.max_row + 1):
                 comp = ws.cell(fila, c_comp).value
@@ -564,27 +548,161 @@ def colorear_errores(wb, errores: list[dict], operacion: str) -> None:
                 clave = _clave_fila(ws.cell(fila, c_cuit).value, comp, ws.cell(fila, c_tipo).value)
                 for tipo_error, (_, xubio) in claves.items():
                     if clave in xubio:
-                        pintar(ws, fila, COLORES_ERROR[tipo_error][0], hasta)
+                        resaltar(ws, fila, hasta)
                         if c_est and tipo_error in ("letra_distinta", "tipo_distinto", "duplicado"):
-                            ws.cell(fila, c_est).value = {
-                                "letra_distinta": "Letra distinta",
-                                "tipo_distinto": "Tipo distinto",
-                                "duplicado": "Duplicado",
-                            }[tipo_error]
+                            ws.cell(fila, c_est).value = ERRORES_EN_NEGRITA[tipo_error]
                         break
 
-    # Referencias de los colores (hoja nueva al final; las demás no cambian).
-    ref = wb.create_sheet("Referencias")
-    ref["A1"] = "Color"
-    ref["B1"] = "Qué significa"
-    ref["A1"].font = ref["B1"].font = Font(bold=True)
-    usados = [t for t in COLORES_ERROR if t in claves]
-    for i, tipo_error in enumerate(usados, start=2):
-        color, texto = COLORES_ERROR[tipo_error]
-        ref.cell(i, 1).fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
-        ref.cell(i, 2, texto)
-    ref.column_dimensions["A"].width = 10
-    ref.column_dimensions["B"].width = 60
+
+def conciliar_exacto(wb) -> None:
+    """Compras: cada fila del Libro IVA toma los importes de SU fila de ARCA.
+    Los colores de siempre (rosa de duplicado, amarillo de totales) no se tocan.
+
+    El VLOOKUP por número solo agarraba el primer comprobante con ese número:
+    si dos proveedores (o una factura y su NC) comparten número, uno quedaba
+    como «Duplicado» en 0 o tomaba el importe del otro. Acá se busca por CUIT +
+    comprobante + tipo y se referencia la celda exacta de «Mis Comprobantes».
+    """
+    if "Mis Comprobantes" not in wb.sheetnames or "Libro Iva" not in wb.sheetnames:
+        return
+    wa, wx = wb["Mis Comprobantes"], wb["Libro Iva"]
+    ca, cx = _columnas(wa), _columnas(wx)
+    a_tipo, a_pto, a_num = ca.get("tipo"), ca.get("punto de venta"), ca.get("número desde")
+    a_doc = next((v for k, v in ca.items() if k.startswith("nro. doc")), None)
+    a_iva, a_tot = ca.get("iva ajustado"), ca.get("total ajustado")
+    x_tipo, x_comp, x_cuit = cx.get("tipo"), cx.get("comprobante"), cx.get("cuit")
+    x_viva, x_vtot = cx.get("total iva s/arca"), cx.get("total monto s/arca")
+    x_diva, x_dtot, x_est = cx.get("diferencia iva"), cx.get("diferencia monto"), cx.get("estado conciliación")
+    if not all((a_tipo, a_pto, a_num, a_doc, a_iva, a_tot, x_tipo, x_comp, x_cuit, x_viva, x_vtot, x_diva, x_dtot, x_est)):
+        return
+
+    filas_arca: dict[tuple, list[int]] = {}
+    for r in range(2, wa.max_row + 1):
+        if str(wa.cell(r, 1).value or "").startswith("Partidas del Libro IVA"):
+            break
+        tipo = str(wa.cell(r, a_tipo).value or "")
+        pto, num = wa.cell(r, a_pto).value, wa.cell(r, a_num).value
+        try:
+            comp = f"{tipo.strip()[-1:].upper()}-{int(float(pto)):05d}-{int(float(num)):08d}"
+        except (TypeError, ValueError):
+            continue
+        filas_arca.setdefault(_clave_fila(wa.cell(r, a_doc).value, comp, tipo), []).append(r)
+
+    l_iva, l_tot = get_column_letter(a_iva), get_column_letter(a_tot)
+    l_diva, l_dtot = get_column_letter(x_diva), get_column_letter(x_dtot)
+    for r in range(2, wx.max_row + 1):
+        if str(wx.cell(r, 1).value or "").startswith("Partidas de ARCA"):
+            break
+        comp = wx.cell(r, x_comp).value
+        tipo = str(wx.cell(r, x_tipo).value or "")
+        if not comp or "extracto" in tipo.lower():
+            continue
+        disponibles = filas_arca.get(_clave_fila(wx.cell(r, x_cuit).value, comp, tipo))
+        if disponibles:
+            fa = disponibles.pop(0)
+            wx.cell(r, x_viva).value = f"='Mis Comprobantes'!{l_iva}{fa}"
+            wx.cell(r, x_vtot).value = f"='Mis Comprobantes'!{l_tot}{fa}"
+        else:
+            wx.cell(r, x_viva).value = 0
+            wx.cell(r, x_vtot).value = 0
+        wx.cell(r, x_est).value = (
+            f'=IF(AND({l_diva}{r}>=-0.02, {l_diva}{r}<=0.02, {l_dtot}{r}>=-0.02, {l_dtot}{r}<=0.02), "Ok", "Faltante en ARCA")'
+        )
+
+
+def _etiqueta_xubio(item: dict) -> str:
+    f = {c["columna"]: c["valor"] for c in item.get("fila", [])}
+    tipo = str(f.get("Tipo") or "").lower()
+    if item.get("motivo") == "exterior":
+        return "Proveedor del exterior: no figura en ARCA (normal)"
+    if "extracto" in tipo:
+        return "Extracto bancario: no figura en ARCA (normal)"
+    if "tique" in tipo:
+        return "Tique: no figura en ARCA (normal)"
+    return "No está en ARCA: revisar la carga en Xubio"
+
+
+ETIQUETA_ARCA = {
+    "faltante_en_xubio": "No está subido a Xubio",
+    "anulada_con_nc": "Anulada con nota de crédito (no hace falta cargarla)",
+    "liquidacion_bancaria": "Liquidación bancaria: en Xubio está como extracto",
+    "letra_distinta": "Letra distinta: corregir en Xubio",
+    "tipo_distinto": "Tipo distinto: corregir en Xubio",
+}
+
+
+def etiquetar_filas(wb, errores: list[dict]) -> None:
+    """Escribe qué pasa con cada fila sin par, en palabras: en «Libro Iva» en
+    ESTADO CONCILIACIÓN y en el bloque naranja de «Mis Comprobantes» en una
+    columna «Motivo»."""
+    de_arca: dict[tuple, str] = {}
+    de_xubio: dict[tuple, str] = {}
+    for e in errores:
+        for item in e.get("comprobantes", []):
+            if "fila_arca" in item:
+                fa = {c["columna"]: c["valor"] for c in item["fila_arca"]}
+                fx = {c["columna"]: c["valor"] for c in item["fila_xubio"]}
+                de_arca[_clave_fila(item["cuit"], item["comprobante_arca"], fa.get("Tipo"))] = ETIQUETA_ARCA["letra_distinta"]
+                de_xubio[_clave_fila(item["cuit"], item["comprobante_xubio"], fx.get("Tipo"))] = (
+                    f"Letra distinta: en ARCA es {item['comprobante_arca']}"
+                )
+                continue
+            f = {c["columna"]: c["valor"] for c in item.get("fila", [])}
+            if item.get("origen") == "arca":
+                if e["tipo"] in ETIQUETA_ARCA:
+                    de_arca[_clave_fila(f.get("Nro. Doc."), f.get("Comprobante"), f.get("Tipo"))] = ETIQUETA_ARCA[e["tipo"]]
+            else:
+                clave = _clave_fila(f.get("CUIT"), f.get("Comprobante"), f.get("Tipo"))
+                if e["tipo"] == "tipo_distinto":
+                    de_xubio[clave] = "Tipo distinto: corregir en Xubio"
+                elif e["tipo"] == "duplicado":
+                    de_xubio[clave] = "Duplicado: cargado dos veces en Xubio"
+                elif e["tipo"] == "faltante_en_arca":
+                    de_xubio[clave] = _etiqueta_xubio(item)
+    if not (de_arca or de_xubio):
+        return
+
+    if "Libro Iva" in wb.sheetnames:
+        ws = wb["Libro Iva"]
+        col = _columnas(ws)
+        c_tipo, c_comp, c_cuit, c_est = col.get("tipo"), col.get("comprobante"), col.get("cuit"), col.get("estado conciliación")
+        if c_tipo and c_comp and c_cuit and c_est:
+            en_bloque_arca = False
+            for fila in range(2, ws.max_row + 1):
+                if str(ws.cell(fila, 1).value or "").startswith("Partidas de ARCA"):
+                    en_bloque_arca = True
+                    continue
+                comp = ws.cell(fila, c_comp).value
+                if not comp:
+                    continue
+                clave = _clave_fila(ws.cell(fila, c_cuit).value, comp, ws.cell(fila, c_tipo).value)
+                texto = (de_arca if en_bloque_arca else de_xubio).get(clave)
+                if texto:
+                    ws.cell(fila, c_est).value = texto
+
+    if "Mis Comprobantes" in wb.sheetnames:
+        ws = wb["Mis Comprobantes"]
+        col = _columnas(ws)
+        c_tipo = col.get("tipo")
+        c_doc = next((v for k, v in col.items() if k.startswith("nro. doc")), None)
+        c_motivo = col.get("total ajustado", ws.max_column) + 1
+        titulo = None
+        for fila in range(2, ws.max_row + 1):
+            a = str(ws.cell(fila, 1).value or "")
+            if a.startswith("Partidas del Libro IVA"):
+                titulo = fila
+                ws.cell(fila + 1, c_motivo, "Motivo").font = Font(bold=True)
+                continue
+            if titulo is None or fila <= titulo + 1 or not c_tipo or not c_doc:
+                continue
+            if not a or a.upper().startswith("TOTALES") or a.upper().startswith("DIFERENCIA"):
+                continue
+            clave = _clave_fila(ws.cell(fila, c_doc).value, a, ws.cell(fila, c_tipo).value)
+            texto = de_xubio.get(clave)
+            if texto:
+                ws.cell(fila, c_motivo, texto)
+        if titulo is not None:
+            ws.column_dimensions[get_column_letter(c_motivo)].width = 52
 
 
 def procesar_cruce(
@@ -821,6 +939,12 @@ def procesar_cruce(
     # 3. IDENTIFICACIÓN DE FALTANTES
     df_faltantes_arca = df_arca_temp[(~df_arca_temp['Clave_Unica'].isin(df_xubio['Clave_Unica'])) & (~df_arca_temp['Clave_Py'].isin(all_dups))].copy()
     df_faltantes_xubio = df_xubio[(~df_xubio['Clave_Unica'].isin(df_arca_temp['Clave_Unica'])) & (~df_xubio['Comprobante'].isin(all_dups))].copy()
+    # En Compras la clave sin CUIT dejaba afuera comprobantes que comparten número
+    # con otro proveedor (o factura y NC con el mismo número): el Excel usa la
+    # misma comparación exacta que la ventana de errores.
+    if operacion == "Compras" and col_doc_arca is not None and 'CUIT' in df_xubio.columns:
+        df_faltantes_arca, df_faltantes_xubio = _faltantes_por_cuit(df_arca_temp, df_xubio, col_doc_arca)
+        df_faltantes_arca, df_faltantes_xubio = df_faltantes_arca.copy(), df_faltantes_xubio.copy()
 
     # Ventana de errores de la web: qué está mal y cómo solucionarlo. Se arma
     # antes de convertir los USD para mostrar los importes como en la planilla.
@@ -1327,7 +1451,10 @@ def procesar_cruce(
                 if adjusted_width > 50: adjusted_width = 50
                 ws.column_dimensions[letter].width = adjusted_width
 
-    colorear_errores(wb, errores_diag, operacion)
+    if operacion == "Compras":
+        conciliar_exacto(wb)
+    marcar_errores(wb, errores_diag, operacion)
+    etiquetar_filas(wb, errores_diag)
 
     wb.save(ruta_salida)
     log(f"      [OK] Control de facturas generado: {ruta_salida}")
