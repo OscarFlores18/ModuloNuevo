@@ -144,6 +144,7 @@ function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | nu
   const a = accion.toLowerCase();
   if (a.includes('clave de arca') || a.includes('cuit del cliente')) return { href: '/clientes', nuevaPestana: false };
   if (a.includes('volver a correr')) return { href: '/control', nuevaPestana: false };
+  if (a.includes('convertir aux')) return { href: '/convertir-aux', nuevaPestana: false };
   return null;
 }
 

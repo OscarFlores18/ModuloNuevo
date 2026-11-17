@@ -387,8 +387,8 @@ def diagnosticar(
         partes = []
         if falta_x:
             partes.append(
-                f"{len(falta_x)} no {'está subido' if len(falta_x) == 1 else 'están subidos'} a Xubio: "
-                "ARCA los informa y no están en el libro."
+                f"{len(falta_x)} no {'está' if len(falta_x) == 1 else 'están'} en el libro: "
+                "subilos a Xubio desde «Convertir AUX»."
             )
         if anuladas:
             partes.append(
@@ -403,7 +403,7 @@ def diagnosticar(
             "faltante_en_xubio", "corregir" if falta_x else "info",
             f"Partidas de ARCA no encontradas en el {libro}",
             " ".join(partes),
-            ["Cargar en Xubio", "Consultar al cliente"] if falta_x else ["Sin acción"],
+            ["Subir desde Convertir AUX"] if falta_x else ["Sin acción"],
             falta_x + normales_arca,
             hoja=f"Faltantes en Libro IVA {operacion}",
         ))
