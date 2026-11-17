@@ -159,6 +159,10 @@ export type TipoError =
   | 'faltante_en_arca'
   | 'duplicado'
   | 'tique_sin_arca'
+  | 'liquidacion_bancaria'
+  | 'anulada_con_nc'
+  | 'exterior_sin_arca'
+  | 'tipo_distinto'
   | 'paso_error';
 
 /** Un error del control (ventana de errores), con cómo solucionarlo. */

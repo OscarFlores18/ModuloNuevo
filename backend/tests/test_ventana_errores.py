@@ -85,3 +85,69 @@ def test_paso_que_falla_trae_solucion():
     e = srv._error_de_paso("PICCININI", paso)
     assert e["gravedad"] == "grave"
     assert e["acciones"] == ["Corregir clave de ARCA"]
+
+
+def test_factura_y_nota_de_credito_con_el_mismo_numero_no_son_duplicado(tmp_path: Path):
+    from backend.app.auditor.cruce_fo import _clase_comprobante
+    assert _clase_comprobante("Nota Crédito") == "NC"
+    assert _clase_comprobante("Factura") == "FC"
+    assert _clase_comprobante("13 - Nota de Crédito C") == "NC"
+
+
+def test_anuladas_con_nota_de_credito():
+    from backend.app.auditor.cruce_fo import _anuladas_con_nc
+
+    def fila(tipo, cuit, total):
+        return {"origen": "arca", "fila": [
+            {"columna": "Tipo", "valor": tipo},
+            {"columna": "Nro. Doc.", "valor": cuit},
+            {"columna": "Imp. Total", "valor": total},
+        ]}
+
+    fc, nc, otra = fila("11 - Factura C", "27942062635", 623532.18), fila("13 - Nota de Crédito C", "27942062635", 623532.18), fila("11 - Factura C", "20374382803", 120000.0)
+    anuladas = _anuladas_con_nc([fc, otra, nc])
+    assert any(a is fc for a in anuladas) and any(a is nc for a in anuladas)
+    assert not any(a is otra for a in anuladas)
+
+
+def test_cloudflare_permitido_para_el_login_de_arca():
+    from backend.app.core import config
+    assert "challenges.cloudflare.com" in config.EGRESS_DOMINIOS
+
+
+def test_compras_compara_por_cuit_y_tipo():
+    """Caso real de septiembre: la NC C-00001-00000001 de Crisci y la factura
+    C-00001-00000001 de Díaz comparten número; ninguna debe esconder a la otra."""
+    from backend.app.auditor.cruce_fo import _faltantes_por_cuit
+
+    arca = pd.DataFrame({
+        "Nro. Doc.": ["20140568121", "20140568121", "23324208909", "23324208909"],
+        "Clave_Py": ["C-00001-00000001", "C-00001-00000001", "C-00001-00000093", "C-00001-00000001"],
+        "Tipo": ["11 - Factura C", "13 - Nota de Crédito C", "11 - Factura C", "13 - Nota de Crédito C"],
+    })
+    xubio = pd.DataFrame({
+        "CUIT": ["20-14056812-1", "20-14056812-1"],
+        "Comprobante": ["C-00001-00000001", "C-00001-00000001"],
+        "Tipo": ["Factura", "Nota Crédito"],
+    })
+    falta_en_xubio, falta_en_arca = _faltantes_por_cuit(arca, xubio, "Nro. Doc.")
+    assert list(falta_en_xubio["Nro. Doc."]) == ["23324208909", "23324208909"]  # solo Crisci
+    assert falta_en_arca.empty  # Díaz: factura y NC cargadas, no son duplicado
+
+
+def test_el_excel_pinta_cada_error_con_su_color(tmp_path: Path):
+    import openpyxl
+    from backend.app.auditor.cruce_fo import COLORES_ERROR
+
+    arca, xubio = tmp_path / "arca.xlsx", tmp_path / "xubio.xlsx"
+    _arca(arca, [("11 - Factura C", "23473905639", "SOTO STOCKMAYER FRANCO")])
+    _xubio(xubio, [("A-0002-00000006", "23-47390563-9", "FRANCO SOTO STOCKMAYER")])
+    ruta = procesar_cruce(
+        "PICCININI", "Compras", "01/04/2026", "30/04/2026", str(tmp_path),
+        ruta_arca_manual=str(arca), ruta_xubio_manual=str(xubio), log=lambda _: None,
+    )
+    wb = openpyxl.load_workbook(ruta)
+    violeta = COLORES_ERROR["letra_distinta"][0]
+    assert wb["Libro Iva"].cell(2, 1).fill.fgColor.rgb.endswith(violeta)
+    assert "Referencias" in wb.sheetnames
+    assert len(set(c for c, _ in COLORES_ERROR.values())) == len(COLORES_ERROR)  # sin colores repetidos

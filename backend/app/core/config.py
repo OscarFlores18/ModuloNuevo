@@ -104,6 +104,9 @@ EGRESS_DOMINIOS = (
     "recaptcha.net",
     "google.com/recaptcha/",
     "gstatic.com",
+    # Desafío anti-bots de Cloudflare que ARCA muestra a veces en el login: si se
+    # bloquea, el portal nunca termina de cargar (#buscadorInput no aparece).
+    "challenges.cloudflare.com",
     "fonts.googleapis.com",
 )
 EGRESS_EXTRA = tuple(
