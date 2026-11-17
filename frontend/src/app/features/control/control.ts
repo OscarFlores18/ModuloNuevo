@@ -43,6 +43,20 @@ const rangoOrdenado: ValidatorFn = (g: AbstractControl): ValidationErrors | null
   return modo === 'rango' && desde && hasta && hasta < desde ? { rangoInvertido: true } : null;
 };
 
+/**
+ * Un período que todavía no empezó no tiene información en ARCA ni en Xubio.
+ * El tope del calendario no alcanza: escribiendo el mes a mano se podía pedir
+ * diciembre en noviembre. Los ISO se comparan como texto.
+ */
+const periodoNoFuturo: ValidatorFn = (g: AbstractControl): ValidationErrors | null => {
+  const { modo, mes, desde } = g.getRawValue() as { modo: ModoPeriodo; mes: string; desde: string };
+  const hoy = new Date();
+  const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
+  if (modo === 'mes' && mes && mes > hoyIso.slice(0, 7)) return { periodoFuturo: true };
+  if (modo === 'rango' && desde && desde > hoyIso) return { periodoFuturo: true };
+  return null;
+};
+
 const dos = (n: number) => String(n).padStart(2, '0');
 const aIso = (f: Date) => `${f.getFullYear()}-${dos(f.getMonth() + 1)}-${dos(f.getDate())}`;
 const fechaDmy = (f: Date) => `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()}`;
@@ -99,7 +113,7 @@ export class NuevoControl {
         desde: [{ value: '', disabled: true }, Validators.required],
         hasta: [{ value: '', disabled: true }, Validators.required],
       },
-      { validators: rangoOrdenado },
+      { validators: [rangoOrdenado, periodoNoFuturo] },
     ),
     operaciones: this.fb.nonNullable.group(
       { ventas: false, compras: false },
@@ -167,6 +181,13 @@ export class NuevoControl {
   protected readonly explicacionPeriodo = computed<{ texto: string; avisos: string[]; error: string | null } | null>(() => {
     const p = this.valor().periodo;
     if (!p) return null;
+    if (p.modo === 'mes' && p.mes && p.mes > this.mesActualIso) {
+      return {
+        texto: '',
+        avisos: [],
+        error: `${nombreDelMes(p.mes).replace(/^./, (l) => l.toUpperCase())} todavía no empezó: no hay información para controlar. Elegí ${nombreDelMes(this.mesActualIso)} o un mes anterior.`,
+      };
+    }
     if (p.modo === 'rango') {
       const d = p.desde ?? '';
       const h = p.hasta ?? '';
@@ -379,6 +400,7 @@ export class NuevoControl {
     const p: string[] = [];
     if (f.clientes.invalid) p.push('elegí al menos un cliente');
     if (f.periodo.hasError('rangoInvertido')) p.push('«Hasta» es anterior a «Desde»');
+    else if (f.periodo.hasError('periodoFuturo')) p.push('el período todavía no empezó');
     else if (f.periodo.invalid) p.push('completá el período');
     if (f.operaciones.invalid) p.push('elegí Ventas, Compras o las dos');
     if (f.xubio.invalid) p.push('faltan usuario y/o contraseña de Xubio');
