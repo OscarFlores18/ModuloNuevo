@@ -169,7 +169,7 @@ export class EjecucionPantalla {
 
   protected verErrores(): void {
     const a = this.ej()?.advertencias;
-    if (a?.length) void mostrarVentanaDeErrores(a);
+    if (a?.length) void mostrarVentanaDeErrores(a, this.ej()?.resumenes ?? []);
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -201,7 +201,7 @@ export class EjecucionPantalla {
       const e = this.ej();
       if (!e || this.activa() || !e.advertencias?.length || yaVisto(e.id)) return;
       abiertos.add(e.id);
-      untracked(() => void mostrarVentanaDeErrores(e.advertencias!).then(() => marcarVisto(e.id)));
+      untracked(() => void mostrarVentanaDeErrores(e.advertencias!, e.resumenes ?? []).then(() => marcarVisto(e.id)));
     });
   }
 

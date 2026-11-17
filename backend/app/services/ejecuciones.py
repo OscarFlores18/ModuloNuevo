@@ -124,6 +124,8 @@ class Ejecucion:
     log_base: int = 0  # líneas viejas descartadas (el front pide por índice absoluto)
     # Avisos que no frenan el control y se muestran al terminar (letra distinta...).
     advertencias: list[dict] = field(default_factory=list)
+    # Por cliente y operación: cuántos comprobantes coinciden (para la ventana).
+    resumenes: list[dict] = field(default_factory=list)
 
     # Interno: la respuesta a la pausa.
     _respuesta: str | None = None
@@ -193,6 +195,7 @@ class Ejecucion:
             "cancelar_pedido": self.cancelar_pedido,
             "pausa": self.pausa,
             "advertencias": self.advertencias,
+            "resumenes": self.resumenes,
             "detalle_clientes": [
                 {
                     "nombre": c.nombre,
@@ -740,6 +743,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                         str(carpeta),
                         log=ej.registrar,
                         avisar_errores=errores_auditoria.extend,
+                        avisar_resumen=lambda r, _c=cli.nombre: ej.resumenes.append({**r, "cliente": _c}),
                     ),
                 )
                 # Lo que encontró la auditoría no frena el control: el paso queda
