@@ -82,3 +82,24 @@ def test_mes_pasado_no_cambia(cliente_demo, sin_pausa, tmp_path):
     detalle = _esperar(cliente_demo, r.json()["id"])
     assert detalle["periodo"] == "01/03/2025 al 31/03/2025"
     assert not any("todavía no llegó" in linea["texto"] for linea in detalle["log"])
+
+
+def test_dia_que_el_mes_no_tiene_se_lleva_al_ultimo():
+    """31/02 o 31/11 no cortan el control: se usa el último día del mes y se avisa."""
+    from backend.app.services.ejecuciones import _validar_fecha
+
+    ajustes: list[str] = []
+    assert _validar_fecha("31/02/2026", "Hasta", ajustes).day == 28
+    assert _validar_fecha("31/02/2028", "Hasta", ajustes).day == 29  # bisiesto
+    assert _validar_fecha("31/11/2026", "Hasta", ajustes).day == 30
+    assert _validar_fecha("30/11/2026", "Hasta", ajustes).day == 30
+    assert len(ajustes) == 3 and "último día del mes" in ajustes[0]
+
+
+def test_fecha_sin_formato_sigue_dando_error():
+    import pytest
+    from backend.app.services.ejecuciones import ErrorEjecucion, _validar_fecha
+
+    for mala in ("2026-11-30", "30/13/2026", "00/11/2026", ""):
+        with pytest.raises(ErrorEjecucion):
+            _validar_fecha(mala, "Desde")
