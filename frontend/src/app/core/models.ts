@@ -123,9 +123,21 @@ export interface DetalleEjecucion extends ResumenEjecucion {
   pausa: Pausa | null;
   /** Avisos que no frenan el control; se muestran al terminar. */
   advertencias?: Advertencia[];
+  /** Por cliente y operación: cuántos comprobantes de ARCA tienen su par en Xubio. */
+  resumenes?: ResumenOperacion[];
   detalle_clientes: ClienteEjecucion[];
   log: LineaLog[];
   log_total: number;
+}
+
+export interface ResumenOperacion {
+  cliente: string;
+  operacion: 'Ventas' | 'Compras';
+  arca: number;
+  xubio: number;
+  coinciden: number;
+  /** Hallazgos graves o a corregir de esa operación (0 = sin errores). */
+  a_corregir: number;
 }
 
 /** Una celda de una fila de Excel tal como la manda el backend. */
@@ -152,7 +164,7 @@ export interface FilaConError {
   origen: 'arca' | 'xubio';
   fila: CeldaVista[];
   /** Partida sin ARCA que es normal: tique o extracto bancario, o proveedor del exterior. */
-  motivo?: 'tique' | 'exterior';
+  motivo?: 'tique' | 'exterior' | 'anulada' | 'liquidacion';
 }
 
 export type TipoError =

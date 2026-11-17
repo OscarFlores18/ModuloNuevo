@@ -178,3 +178,17 @@ def test_mismo_numero_de_dos_proveedores_concilia_cada_uno_con_su_fila(tmp_path:
         cuit_a = re.sub(r"\D", "", str(wa.cell(fila_arca, ca["nro. doc. emisor"]).value))
         assert cuit_a == cuit_x
         assert wx.cell(r, cx["estado conciliación"]).value.startswith("=IF(")  # no «Duplicado»
+
+
+def test_resumen_por_operacion(tmp_path: Path):
+    """Ventas sin hallazgos igual informa cuántos coinciden (para la ventana)."""
+    arca, xubio = tmp_path / "arca.xlsx", tmp_path / "xubio.xlsx"
+    _arca(arca, [("11 - Factura C", "23473905639", "SOTO")])
+    _xubio(xubio, [("C-0002-00000006", "23-47390563-9", "SOTO")])
+    resumenes: list[dict] = []
+    procesar_cruce(
+        "PICCININI", "Compras", "01/04/2026", "30/04/2026", str(tmp_path),
+        ruta_arca_manual=str(arca), ruta_xubio_manual=str(xubio),
+        log=lambda _: None, avisar_resumen=resumenes.append,
+    )
+    assert resumenes == [{"operacion": "Compras", "arca": 1, "xubio": 1, "coinciden": 1, "a_corregir": 0}]

@@ -1,6 +1,6 @@
 import Swal from 'sweetalert2';
 import { formatearCuit } from '../../core/cuit.pipe';
-import { Advertencia, CeldaVista, ComprobanteLetraDistinta, FilaConError } from '../../core/models';
+import { ResumenOperacion, Advertencia, CeldaVista, ComprobanteLetraDistinta, FilaConError } from '../../core/models';
 
 /**
  * Ventana de hallazgos al terminar un control: qué encontró la auditoría (y qué
@@ -81,6 +81,8 @@ interface FilaVista {
 /** Solo el exterior lleva etiqueta: en tiques y extractos ya lo dice la columna Tipo. */
 const NOTA_MOTIVO: Partial<Record<NonNullable<FilaConError['motivo']>, string>> = {
   exterior: 'Normal · del exterior',
+  anulada: 'Normal · anulada con nota de crédito',
+  liquidacion: 'Normal · está en el extracto del banco',
 };
 
 /** Una grilla estilo Excel con las filas de ARCA y Xubio juntas. */
@@ -220,6 +222,14 @@ const ESTILOS = `
     .ve-chip[aria-pressed="true"] { border-color: currentColor; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
     .ve-resumen.filtrando .ve-chip[aria-pressed="false"] { opacity: .5; }
     .ve-lista { padding: 10px; background: #f6f8fc; border-radius: 8px; }
+    .ve-res { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .ve-res li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; font-size: 14px; }
+    .ve-res-ok { background: #e7f5ec; color: #14532d; }
+    .ve-res-mal { background: #fdf0d9; color: #7a4f0f; }
+    .ve-res-icono { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; }
+    .ve-res-ok .ve-res-icono { background: #15803d; }
+    .ve-res-mal .ve-res-icono { background: #b7791f; }
+    .ve-res-cliente { font-weight: 700; }
     .ve-grupo[hidden], .ve-error[hidden] { display: none; }
     .ve-cliente { margin: 4px 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
     .ve-error { background: #fff; border: 1px solid #e1e7f2; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
@@ -317,8 +327,23 @@ function activarFiltros(raiz: HTMLElement): void {
   aplicar();
 }
 
+/** «Ventas · sin errores · 32 de 32 coinciden» por cliente, arriba de las tarjetas. */
+function bloqueResumen(resumenes: readonly ResumenOperacion[], varios: boolean): string {
+  if (!resumenes.length) return '';
+  const filas = resumenes
+    .map((r) => {
+      const ok = r.a_corregir === 0;
+      const estado = ok ? 'sin errores' : `${r.a_corregir} hallazgo${r.a_corregir === 1 ? '' : 's'} para corregir`;
+      const quien = varios ? `<span class="ve-res-cliente">${esc(r.cliente)}</span> · ` : '';
+      return `<li class="${ok ? 've-res-ok' : 've-res-mal'}"><span class="ve-res-icono" aria-hidden="true">${ok ? '✓' : '!'}</span>
+        <span>${quien}<b>${esc(r.operacion)}</b>: ${estado} · ${r.coinciden} de ${r.arca} comprobantes de ARCA coinciden con Xubio</span></li>`;
+    })
+    .join('');
+  return `<ul class="ve-res" aria-label="Resumen por operación">${filas}</ul>`;
+}
+
 /** Abre la ventana de hallazgos. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla). */
-export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
+export function mostrarVentanaDeErrores(errores: readonly Advertencia[], resumenes: readonly ResumenOperacion[] = []) {
   const n = contarErrores(errores);
   const aCorregir = n.grave + n.corregir;
   const total = errores.length;
@@ -347,6 +372,7 @@ export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
     html: `${ESTILOS}
       <div class="ve">
         <p class="ve-intro">${sub}</p>
+        ${bloqueResumen(resumenes, new Set(resumenes.map((r) => r.cliente)).size > 1)}
         ${chips ? `<div class="ve-resumen" role="group" aria-label="Filtrar hallazgos">${chips}</div>` : ''}
         <div class="ve-lista">${lista}</div>
       </div>`,

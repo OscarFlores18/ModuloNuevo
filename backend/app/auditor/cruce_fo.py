@@ -376,13 +376,35 @@ def diagnosticar(
     exterior = [f for f in falta_a if _solo_digitos(_valor(f, "CUIT"))[:2] in ("50", "51", "55")]
     falta_a = [f for f in falta_a if f not in exterior]
 
-    if falta_x:
+    # Todo lo de ARCA sin par en Xubio va junto, como el bloque «Partidas de
+    # ARCA no encontradas en el Libro IVA …» del Excel. Las anuladas con NC y
+    # las liquidaciones bancarias se marcan como normales (`motivo`).
+    normales_arca = (
+        [{**f, "motivo": "anulada"} for f in anuladas]
+        + [{**f, "motivo": "liquidacion"} for f in liq_con_extracto]
+    )
+    if falta_x or normales_arca:
+        partes = []
+        if falta_x:
+            partes.append(
+                f"{len(falta_x)} no {'está subido' if len(falta_x) == 1 else 'están subidos'} a Xubio: "
+                "ARCA los informa y no están en el libro."
+            )
+        if anuladas:
+            partes.append(
+                f"{len(anuladas)} son factura y nota de crédito por el mismo importe: se anulan, no hace falta cargarlas."
+            )
+        if liq_con_extracto:
+            partes.append(
+                f"{len(liq_con_extracto)} {'es liquidación bancaria' if len(liq_con_extracto) == 1 else 'son liquidaciones bancarias'}: "
+                "en Xubio están dentro del extracto del banco."
+            )
         errores.append(error(
-            "faltante_en_xubio", "corregir",
-            "No está subido a Xubio",
-            f"ARCA los informa y no están cargados en el {libro} de Xubio.",
-            ["Cargar en Xubio", "Consultar al cliente"],
-            falta_x,
+            "faltante_en_xubio", "corregir" if falta_x else "info",
+            f"Partidas de ARCA no encontradas en el {libro}",
+            " ".join(partes),
+            ["Cargar en Xubio", "Consultar al cliente"] if falta_x else ["Sin acción"],
+            falta_x + normales_arca,
             hoja=f"Faltantes en Libro IVA {operacion}",
         ))
     # Todo lo del Libro IVA sin par en ARCA va junto, como en la sección
@@ -436,24 +458,6 @@ def diagnosticar(
             hoja="Libro Iva",
         ))
 
-    if liq_con_extracto:
-        errores.append(error(
-            "liquidacion_bancaria", "info",
-            "Liquidaciones bancarias cargadas como extracto",
-            "ARCA las informa como liquidación del banco; en Xubio el mismo banco está como extracto bancario.",
-            ["Verificar importe en el extracto"],
-            liq_con_extracto,
-            hoja=f"Faltantes en Libro IVA {operacion}",
-        ))
-    if anuladas:
-        errores.append(error(
-            "anulada_con_nc", "info",
-            "Facturas anuladas con nota de crédito",
-            "Factura y nota de crédito del mismo proveedor por el mismo importe: se cancelan.",
-            ["Sin acción"],
-            anuladas,
-            hoja=f"Faltantes en Libro IVA {operacion}",
-        ))
     return errores
 
 
@@ -649,8 +653,10 @@ def etiquetar_filas(wb, errores: list[dict]) -> None:
                 continue
             f = {c["columna"]: c["valor"] for c in item.get("fila", [])}
             if item.get("origen") == "arca":
-                if e["tipo"] in ETIQUETA_ARCA:
-                    de_arca[_clave_fila(f.get("Nro. Doc."), f.get("Comprobante"), f.get("Tipo"))] = ETIQUETA_ARCA[e["tipo"]]
+                motivo = {"anulada": "anulada_con_nc", "liquidacion": "liquidacion_bancaria"}.get(item.get("motivo"))
+                clave_tipo = motivo or e["tipo"]
+                if clave_tipo in ETIQUETA_ARCA:
+                    de_arca[_clave_fila(f.get("Nro. Doc."), f.get("Comprobante"), f.get("Tipo"))] = ETIQUETA_ARCA[clave_tipo]
             else:
                 clave = _clave_fila(f.get("CUIT"), f.get("Comprobante"), f.get("Tipo"))
                 if e["tipo"] == "tipo_distinto":
@@ -716,6 +722,7 @@ def procesar_cruce(
     log: Callable[[str], None] = print,
     avisar_letras_distintas: Callable[[list[dict]], None] | None = None,
     avisar_errores: Callable[[list[dict]], None] | None = None,
+    avisar_resumen: Callable[[dict], None] | None = None,
 ) -> str:
     """Genera el control de facturas y devuelve la ruta del Excel.
 
@@ -956,6 +963,18 @@ def procesar_cruce(
     )
     if avisar_errores is not None:
         avisar_errores(errores_diag)
+    if avisar_resumen is not None:
+        # Cuántos comprobantes de ARCA tienen su par en Xubio (los demás son los
+        # de la sección «Partidas de ARCA no encontradas…»).
+        a_corregir = sum(1 for e in errores_diag if e["gravedad"] in ("grave", "corregir"))
+        total_arca = int(len(df_arca_temp))
+        avisar_resumen({
+            "operacion": operacion,
+            "arca": total_arca,
+            "xubio": int(len(df_xubio)),
+            "coinciden": max(total_arca - int(len(df_faltantes_arca)), 0),
+            "a_corregir": a_corregir,
+        })
 
     df_faltantes_usd_original = pd.DataFrame()
     col_tc_faltantes = [c for c in df_faltantes_arca.columns if 'tipo cambio' in str(c).lower()]
