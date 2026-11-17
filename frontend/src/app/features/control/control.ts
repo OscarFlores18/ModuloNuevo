@@ -43,6 +43,20 @@ const rangoOrdenado: ValidatorFn = (g: AbstractControl): ValidationErrors | null
   return modo === 'rango' && desde && hasta && hasta < desde ? { rangoInvertido: true } : null;
 };
 
+/**
+ * Un período que todavía no empezó no tiene información en ARCA ni en Xubio.
+ * El tope del calendario no alcanza: escribiendo el mes a mano se podía pedir
+ * diciembre en noviembre. Los ISO se comparan como texto.
+ */
+const periodoNoFuturo: ValidatorFn = (g: AbstractControl): ValidationErrors | null => {
+  const { modo, mes, desde } = g.getRawValue() as { modo: ModoPeriodo; mes: string; desde: string };
+  const hoy = new Date();
+  const hoyIso = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
+  if (modo === 'mes' && mes && mes > hoyIso.slice(0, 7)) return { periodoFuturo: true };
+  if (modo === 'rango' && desde && desde > hoyIso) return { periodoFuturo: true };
+  return null;
+};
+
 const dos = (n: number) => String(n).padStart(2, '0');
 const aIso = (f: Date) => `${f.getFullYear()}-${dos(f.getMonth() + 1)}-${dos(f.getDate())}`;
 const fechaDmy = (f: Date) => `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()}`;
@@ -99,7 +113,7 @@ export class NuevoControl {
         desde: [{ value: '', disabled: true }, Validators.required],
         hasta: [{ value: '', disabled: true }, Validators.required],
       },
-      { validators: rangoOrdenado },
+      { validators: [rangoOrdenado, periodoNoFuturo] },
     ),
     operaciones: this.fb.nonNullable.group(
       { ventas: false, compras: false },
@@ -167,6 +181,13 @@ export class NuevoControl {
   protected readonly explicacionPeriodo = computed<{ texto: string; avisos: string[]; error: string | null } | null>(() => {
     const p = this.valor().periodo;
     if (!p) return null;
+    if (p.modo === 'mes' && p.mes && p.mes > this.mesActualIso) {
+      return {
+        texto: '',
+        avisos: [],
+        error: `${nombreDelMes(p.mes).replace(/^./, (l) => l.toUpperCase())} todavía no empezó: no hay información para controlar. Elegí ${nombreDelMes(this.mesActualIso)} o un mes anterior.`,
+      };
+    }
     if (p.modo === 'rango') {
       const d = p.desde ?? '';
       const h = p.hasta ?? '';
@@ -277,7 +298,7 @@ export class NuevoControl {
     // Solo depende del error: el toast se dispara fuera del seguimiento del effect.
     effect(() => {
       const e = this.clientes.error();
-      if (e) untracked(() => this.toast.error('No se pudieron cargar los clientes', e));
+      if (e) untracked(() => void this.alertas.mostrarErrorHumano('No se pudieron cargar los clientes', '', e));
     });
 
     // Si un cliente recordado ya no existe, se saca de la selección.
@@ -302,6 +323,28 @@ export class NuevoControl {
       }
       periodo.updateValueAndValidity();
     });
+
+    // Un mes o un «Desde» que todavía no empezó (escrito a mano, el calendario no
+    // lo frena): se avisa con una alerta y se vuelve a una fecha válida.
+    mes.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((valor) => {
+      if (valor && valor > this.mesActualIso) {
+        const pedido = nombreDelMes(valor);
+        mes.setValue(this.mesActualIso);
+        void this.alertas.mostrarAviso(
+          `${pedido.replace(/^./, (l) => l.toUpperCase())} todavía no comenzó`,
+          `No hay información en ARCA ni en Xubio para controlar. Se dejó ${nombreDelMes(this.mesActualIso)}.`,
+        );
+      }
+    });
+    desde.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((valor) => {
+      if (valor && valor > this.hoyIso) {
+        desde.setValue(this.hoyIso);
+        void this.alertas.mostrarAviso(
+          'Esa fecha todavía no llegó',
+          `ARCA no tiene comprobantes de días futuros. Se dejó «Desde» en hoy (${isoADmy(this.hoyIso)}).`,
+        );
+      }
+    });
   }
 
   private async cargarAjustes(): Promise<void> {
@@ -312,7 +355,7 @@ export class NuevoControl {
       // La clave guardada cambia lo que valida Xubio.
       this.form.controls.xubio.updateValueAndValidity();
     } catch (e) {
-      this.toast.error('No se pudo hablar con el servidor', mensajeDeError(e, 'No se cargaron los ajustes.'));
+      void this.alertas.mostrarErrorHumano('No se pudo hablar con el servidor', '', mensajeDeError(e, 'No se cargaron los ajustes.'));
     }
   }
 
@@ -379,6 +422,7 @@ export class NuevoControl {
     const p: string[] = [];
     if (f.clientes.invalid) p.push('elegí al menos un cliente');
     if (f.periodo.hasError('rangoInvertido')) p.push('«Hasta» es anterior a «Desde»');
+    else if (f.periodo.hasError('periodoFuturo')) p.push('el período todavía no empezó');
     else if (f.periodo.invalid) p.push('completá el período');
     if (f.operaciones.invalid) p.push('elegí Ventas, Compras o las dos');
     if (f.xubio.invalid) p.push('faltan usuario y/o contraseña de Xubio');
@@ -390,14 +434,22 @@ export class NuevoControl {
     const periodo = this.periodo();
     if (this.form.invalid || !periodo) {
       this.form.markAllAsTouched();
-      const p = this.problemas();
-      this.toast.aviso('Faltan datos para ejecutar', p.join(' · ').replace(/^./, (l) => l.toUpperCase()) + '.');
+      const p = this.problemas().map((x) => x.replace(/^./, (l) => l.toUpperCase()) + '.');
+      void this.alertas.mostrarAviso('Faltan datos para ejecutar', 'Antes de ejecutar el control:', p);
       return;
     }
 
     // Los clientes con datos incompletos no frenan: el bot los marca con error. Se avisa igual.
     const incompletos = this.elegidos().filter((c) => c.faltantes.length);
-    if (incompletos.length) this.toast.aviso('Clientes con datos incompletos', incompletos.map((c) => c.nombre).join(', '));
+    if (incompletos.length) {
+      const seguir = await this.alertas.confirmar(
+        'Clientes con datos incompletos',
+        'Estos clientes van a terminar con error. ¿Ejecutar el control igual?',
+        'Ejecutar igual',
+        incompletos.map((c) => `${c.nombre}: falta ${c.faltantes.join(', ')}`),
+      );
+      if (!seguir) return;
+    }
 
     const v = this.form.getRawValue();
     try {

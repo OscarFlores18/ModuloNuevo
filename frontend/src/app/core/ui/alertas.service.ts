@@ -90,4 +90,44 @@ export class AlertasService {
     });
     return r.isConfirmed;
   }
+
+  /**
+   * Aviso amarillo «!»: algo que el usuario tiene que corregir antes de seguir
+   * (período que no empezó, faltan datos...). `items` se muestra como lista.
+   */
+  async mostrarAviso(titulo: string, mensaje = '', items: string[] = []): Promise<void> {
+    const texto = mensaje ? `<p class="m-0">${esc(mensaje)}</p>` : '';
+    const lista = items.length
+      ? `<ul class="m-0 mt-3 list-disc space-y-1 pl-5 text-left">${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`
+      : '';
+    await Swal.fire({
+      icon: 'warning',
+      iconColor: '#b7791f',
+      title: titulo,
+      html: texto + lista || undefined,
+      confirmButtonText: 'Entendido',
+      buttonsStyling: false,
+      customClass: CLASES,
+    });
+  }
+
+  /** Pregunta antes de seguir con algo que no es peligroso pero conviene revisar. */
+  async confirmar(titulo: string, mensaje: string, textoConfirmar = 'Seguir igual', items: string[] = []): Promise<boolean> {
+    const lista = items.length
+      ? `<ul class="m-0 mt-3 list-disc space-y-1 pl-5 text-left">${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`
+      : '';
+    const r = await Swal.fire({
+      icon: 'question',
+      iconColor: '#2563eb',
+      title: titulo,
+      html: `<p class="m-0">${esc(mensaje)}</p>${lista}`,
+      showCancelButton: true,
+      confirmButtonText: textoConfirmar,
+      cancelButtonText: 'Volver',
+      reverseButtons: true,
+      buttonsStyling: false,
+      customClass: CLASES,
+    });
+    return r.isConfirmed;
+  }
 }
