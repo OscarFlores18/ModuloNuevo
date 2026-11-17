@@ -60,12 +60,16 @@ PLAYWRIGHT_CHANNEL = (os.getenv("MODULONUEVO_CHROME_CHANNEL", "chrome") or "").s
 # Vacío = sin autenticación (modo local).
 BASIC_AUTH = os.getenv("MODULONUEVO_BASIC_AUTH", "").strip()
 
-# Por defecto los archivos se bajan por el navegador (aparecen en sus
-# descargas, uno suelto o un .zip con todo), también con el backend en esta PC.
-# Con MODULONUEVO_DIALOGOS=1 el backend abre en cambio las ventanas de Windows
-# («Guardar como», elegir carpeta) en su propia PC.
+# Ventanas de Windows («Guardar como», elegir carpeta) que abre el backend en su
+# propia PC. Solo tienen sentido si el backend corre en la PC de quien usa la
+# página: en un servidor (Docker/Render, o con BASIC_AUTH) quedan apagadas y el
+# front baja los archivos por el navegador (uno suelto o un .zip con todo).
 _DIALOGOS_ENV = os.getenv("MODULONUEVO_DIALOGOS", "").strip().lower()
-DIALOGOS_LOCALES = _DIALOGOS_ENV in ("1", "true", "si", "sí", "yes")
+DIALOGOS_LOCALES = (
+    _DIALOGOS_ENV in ("1", "true", "si", "sí", "yes")
+    if _DIALOGOS_ENV
+    else os.name == "nt" and not PLAYWRIGHT_HEADLESS and not BASIC_AUTH
+)
 
 def _bandera(nombre: str, default: bool) -> bool:
     valor = os.getenv(nombre, "").strip().lower()
