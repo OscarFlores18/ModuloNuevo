@@ -10,6 +10,8 @@ Las rutas `/api/jobs` siguen existiendo para uso programático.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
 import time
 from datetime import datetime
@@ -19,11 +21,13 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from ...auditor.csv_arca import convertir_auxiliares
 from ...core import acceso_clientes, config, dialogos
 from ...core.controles import resumen_controles
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...services import ejecuciones as ejecuciones_srv
+from ...services import importacion_xubio as importacion_srv
 from ...services import precarga as precarga_srv
 from ..deps import exigir_acceso_clientes, get_clientes, get_credenciales_xubio
 
@@ -299,6 +303,71 @@ def controles(
             for op in ("Ventas", "Compras")
         }
     return salida
+
+
+# --- Convertir AUX ------------------------------------------------------------
+#
+# Pestaña aparte de los controles: se suben los AUX y vuelve, por cliente y
+# período, un .zip con los CSV de Mis Comprobantes. No se guarda nada en disco.
+
+MAX_AUX = 60
+MAX_BYTES_AUX = 25 * 1024 * 1024
+
+
+class ArchivoSubido(BaseModel):
+    nombre: str = Field(min_length=1, max_length=260)
+    contenido: str  # base64
+
+
+class ConvertirAuxRequest(BaseModel):
+    archivos: list[ArchivoSubido] = Field(min_length=1, max_length=MAX_AUX)
+
+
+@router.post("/convertir-aux")
+def convertir_aux(body: ConvertirAuxRequest) -> dict:
+    """Pasa la hoja «Faltantes en Libro IVA» de cada AUX al CSV de Mis Comprobantes."""
+    archivos: list[tuple[str, bytes]] = []
+    for a in body.archivos:
+        try:
+            datos = base64.b64decode(a.contenido, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=422, detail={"mensaje": f"No se pudo leer «{a.nombre}»."}) from exc
+        if len(datos) > MAX_BYTES_AUX:
+            raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
+        archivos.append((a.nombre, datos))
+    resultados = convertir_auxiliares(archivos)
+    def b64(archivo: dict) -> dict:
+        return {"nombre": archivo["nombre"], "contenido": base64.b64encode(archivo["contenido"]).decode("ascii")}
+
+    for r in resultados:
+        r["zips"] = {op: b64(z) for op, z in r["zips"].items()}
+        if r.get("excel"):
+            r["excel"] = b64(r["excel"])
+    return {"resultados": resultados}
+
+
+class CargarEnXubioRequest(BaseModel):
+    cliente: str = Field(min_length=1)
+    operacion: str
+    zip: str  # base64 del .zip que devolvió /convertir-aux
+
+
+@router.post("/convertir-aux/xubio")
+def cargar_en_xubio(
+    body: CargarEnXubioRequest,
+    clientes: ClientesRepository = Depends(get_clientes),
+    creds: CredencialesXubioRepository = Depends(get_credenciales_xubio),
+) -> dict:
+    """Prueba: abre Xubio, va a «Importar desde Mis Comprobantes (ARCA)» de la
+    operación y carga el archivo. No aprieta «Importar»."""
+    try:
+        datos = base64.b64decode(body.zip, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=422, detail={"mensaje": "No se pudo leer el .zip."}) from exc
+    try:
+        return importacion_srv.preparar(body.cliente, body.operacion, datos, clientes, creds)
+    except importacion_srv.ErrorImportacion as exc:
+        raise HTTPException(status_code=exc.status, detail={"mensaje": exc.mensaje}) from exc
 
 
 # --- Ajustes -------------------------------------------------------------------

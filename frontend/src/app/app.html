@@ -23,13 +23,13 @@
             <span class="cf-tab-badge !bg-emerald-600" title="Hay un control en curso"><span class="mf-punto mf-latido" aria-hidden="true"></span>En curso</span>
           }
         </a>
+        <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Convertir AUX</a>
         <a routerLink="/clientes" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
           Clientes
           @if (clientes.lista().length) {
             <span class="cf-tab-badge" [title]="clientes.incompletos() + ' con datos incompletos'">{{ clientes.lista().length }}</span>
           }
         </a>
-        <a routerLink="/ayuda" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Manual de uso</a>
       </nav>
 
       <!-- Controles de la derecha -->

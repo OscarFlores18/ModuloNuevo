@@ -90,6 +90,27 @@ export interface ArchivoGenerado {
   tipo: 'arca' | 'xubio' | 'auditoria' | 'otro';
 }
 
+/** «Convertir AUX»: por cliente y período, el .zip (base64) y las partidas de ARCA no encontradas por operación. */
+export interface ResultadoConversion {
+  cliente: string;
+  periodo: string;
+  archivos: string[];
+  partidas: Partial<Record<'Ventas' | 'Compras', number>>;
+  /** Un .zip por operación con partidas, cada uno con un solo CSV (lo que pide Xubio). */
+  zips: Partial<Record<'Ventas' | 'Compras', { nombre: string; contenido: string }>>;
+  /** Copia para mirar en Excel: CAE y CUIT como texto. */
+  excel: { nombre: string; contenido: string } | null;
+  /** Lo que no generó archivo, por ejemplo «Ventas: no hay partidas…». */
+  avisos: string[];
+  error: string | null;
+}
+
+/** Un AUX subido: nombre y contenido en base64. */
+export interface ArchivoSubido {
+  nombre: string;
+  contenido: string;
+}
+
 export interface ClienteEjecucion {
   nombre: string;
   estado: EstadoCliente;

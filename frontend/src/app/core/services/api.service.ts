@@ -2,7 +2,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { AccionPausa, Ajustes, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, PedidoEjecucion, ResumenEjecucion } from '../models';
+import { AccionPausa, Ajustes, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido } from '../models';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -31,6 +31,20 @@ export class ApiService {
   // Controles: 1er / 2do control de cada cliente en el período (desde en DD/MM/AAAA).
   controles(clientes: string[], desde: string): Promise<ControlesPorCliente> {
     return firstValueFrom(this.http.post<ControlesPorCliente>(`${this.url}/controles`, { clientes, desde }));
+  }
+
+  // Convertir AUX: la hoja «Faltantes en Libro IVA» al CSV de Mis Comprobantes, sin tocar los controles.
+  convertirAux(archivos: ArchivoSubido[]): Promise<{ resultados: ResultadoConversion[] }> {
+    return firstValueFrom(
+      this.http.post<{ resultados: ResultadoConversion[] }>(`${this.url}/convertir-aux`, { archivos }).pipe(errorLegible('No se pudieron convertir los AUX.')),
+    );
+  }
+
+  /** Prueba: abre Xubio y carga el .zip en «Importar desde Mis Comprobantes (ARCA)», sin confirmar. */
+  cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string): Promise<ResultadoCargaXubio> {
+    return firstValueFrom(
+      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo abrir Xubio.')),
+    );
   }
 
   // Ajustes
@@ -136,4 +150,13 @@ export interface ResultadoExportar {
   elegida: boolean;
   copiados: string[];
   fallas: { nombre: string; motivo: string }[];
+}
+
+export interface ResultadoCargaXubio {
+  cliente: string;
+  operacion: string;
+  archivo: string;
+  archivo_cargado: boolean;
+  boton_importar_habilitado: boolean;
+  log: string[];
 }
