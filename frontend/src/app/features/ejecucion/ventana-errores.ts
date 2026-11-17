@@ -74,7 +74,14 @@ interface FilaVista {
   /** HTML ya armado para la celda Comprobante (con la letra marcada). */
   comprobante?: string;
   marca?: 'error' | 'ok';
+  /** Etiqueta al lado del comprobante (ej. «Normal: extracto o tique»). */
+  nota?: string;
 }
+
+const NOTA_MOTIVO: Record<NonNullable<FilaConError['motivo']>, string> = {
+  tique: 'Normal · tique o extracto',
+  exterior: 'Normal · del exterior',
+};
 
 /** Una grilla estilo Excel con las filas de ARCA y Xubio juntas. */
 function grilla(filas: FilaVista[]): string {
@@ -85,7 +92,8 @@ function grilla(filas: FilaVista[]): string {
       const celdas = COLUMNAS.map((col) => {
         if (col === 'Comprobante') {
           const clase = f.marca ? ` ${f.marca}` : '';
-          return `<td class="comp${clase}">${f.comprobante ?? esc(texto(f.datos[col]))}</td>`;
+          const nota = f.nota ? ` <span class="ve-nota">${esc(f.nota)}</span>` : '';
+          return `<td class="comp${clase}">${f.comprobante ?? esc(texto(f.datos[col]))}${nota}</td>`;
         }
         if (col === 'CUIT') return `<td class="cuit">${esc(cuit(f.datos[col]))}</td>`;
         if (col === 'Total') return `<td class="num">${esc(texto(f.datos[col]))}</td>`;
@@ -112,7 +120,8 @@ function filasDe(e: Advertencia): FilaVista[] {
   return (e.comprobantes as FilaConError[]).map((f) => ({
     origen: f.origen === 'arca' ? 'ARCA' : 'Xubio',
     datos: normalizar(f.fila),
-    marca: e.gravedad === 'info' ? undefined : 'error',
+    marca: e.gravedad === 'info' || f.motivo ? undefined : 'error',
+    nota: f.motivo ? NOTA_MOTIVO[f.motivo] : undefined,
   }));
 }
 
@@ -122,83 +131,12 @@ function ordenesLetra(e: Advertencia): string {
   return (e.comprobantes as ComprobanteLetraDistinta[])
     .map(
       (c) =>
-        `<li>${esc(c.proveedor)} · ${esc(c.comprobante_xubio)}: <span class="letra letra-error">${esc(c.letra_xubio)}</span> → <span class="letra letra-ok">${esc(c.letra_arca)}</span></li>`,
+        `<li><span class="ve-orden-quien"><strong>${esc(c.proveedor)}</strong> <span class="ve-orden-comp">${esc(c.comprobante_xubio)}</span></span><span class="ve-orden-cambio">Cambiar la letra <span class="letra letra-error">${esc(c.letra_xubio)}</span> <span class="ve-flecha">→</span> <span class="letra letra-ok">${esc(c.letra_arca)}</span></span></li>`,
     )
     .join('');
 }
 
 // --- Acciones: botones (llevan a algún lado) vs. etiquetas (estado) ----------------
-
-const XUBIO = 'https://xubio.com';
-
-/** Lo que tarda Xubio en cambiar de empresa antes de ir al Libro IVA. */
-const ESPERA_CAMBIO_EMPRESA_MS = 5000;
-
-/** Solo direcciones https de xubio.com (el link de la empresa viene del bot). */
-function esUrlDeXubio(url: string | undefined): url is string {
-  try {
-    const u = new URL(url ?? '');
-    return u.protocol === 'https:' && (u.hostname === 'xubio.com' || u.hostname.endsWith('.xubio.com'));
-  } catch {
-    return false;
-  }
-}
-
-/** El primer comprobante de la tarjeta tal como está en Xubio (para pegarlo en el buscador). */
-function numeroParaBuscar(e: Advertencia): string {
-  const primero = e.comprobantes[0];
-  if (!primero) return '';
-  if (e.tipo === 'letra_distinta') return (primero as ComprobanteLetraDistinta).comprobante_xubio ?? '';
-  return texto(normalizar((primero as FilaConError).fila).Comprobante);
-}
-
-/**
- * «Corregir en Xubio»: abre Xubio en otra pestaña ya en la empresa del cliente y,
- * cuando cambió de empresa, lo lleva al Libro IVA de esa operación. Además copia
- * el número del comprobante para pegarlo en el buscador.
- *
- * Xubio no da un link al comprobante (el Excel no trae su código interno): por
- * eso se llega a la empresa y al listado, no a la pantalla del comprobante.
- */
-function abrirEnXubio(boton: HTMLElement): void {
-  const empresa = boton.dataset['empresa'];
-  const listado = `${XUBIO}/NXV/impuestos/libro-iva-${boton.dataset['operacion'] === 'Ventas' ? 'ventas' : 'compras'}`;
-  const numero = boton.dataset['numero'] ?? '';
-  const aviso = boton.closest('.ve-error')?.querySelector<HTMLElement>('.ve-copiado');
-  const avisar = (mensaje: string) => {
-    if (aviso) aviso.textContent = mensaje;
-  };
-
-  if (numero && navigator.clipboard) {
-    navigator.clipboard.writeText(numero).then(
-      () => avisar(`Número copiado: ${numero}. Pegalo en el buscador de Xubio.`),
-      () => avisar(`Buscá en Xubio el comprobante ${numero}.`),
-    );
-  } else if (numero) {
-    avisar(`Buscá en Xubio el comprobante ${numero}.`);
-  }
-
-  // Se abre en blanco para cortarle a Xubio el acceso a esta página (opener) y
-  // después se navega: primero a la empresa y, ya cambiada, al Libro IVA.
-  const pestana = window.open('about:blank', '_blank');
-  if (!pestana) {
-    window.open(esUrlDeXubio(empresa) ? empresa : listado, '_blank', 'noopener');
-    return;
-  }
-  pestana.opener = null;
-  if (esUrlDeXubio(empresa)) {
-    pestana.location.href = empresa;
-    window.setTimeout(() => {
-      try {
-        pestana.location.href = listado;
-      } catch {
-        // La pestaña se cerró: no hay nada que hacer.
-      }
-    }, ESPERA_CAMBIO_EMPRESA_MS);
-  } else {
-    pestana.location.href = listado;
-  }
-}
 
 function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | null {
   const a = accion.toLowerCase();
@@ -207,20 +145,14 @@ function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | nu
   return null;
 }
 
-function botonesYEtiquetas(e: Advertencia, enlaces: Readonly<Record<string, string>>): { botones: string; etiquetas: string } {
+function botonesYEtiquetas(e: Advertencia): { botones: string; etiquetas: string } {
   const botones: string[] = [];
   const etiquetas: string[] = [];
   for (const accion of e.acciones) {
+    // «Corregir en Xubio» ya no se ofrece: lo que hay que cambiar está en el instructivo.
+    if (accion.toLowerCase().includes('xubio')) continue;
     const destino = destinoDe(accion);
-    if (accion.toLowerCase().includes('xubio')) {
-      const empresa = esUrlDeXubio(enlaces[e.cliente]) ? enlaces[e.cliente] : '';
-      const ayuda = empresa
-        ? 'Abre Xubio en la empresa del cliente y el Libro IVA, y copia el número del comprobante'
-        : 'Abre el Libro IVA de Xubio y copia el número del comprobante';
-      botones.push(
-        `<button type="button" class="ve-boton" data-xubio data-empresa="${esc(empresa)}" data-operacion="${esc(e.operacion ?? '')}" data-numero="${esc(numeroParaBuscar(e))}" title="${ayuda}">→ ${esc(accion)}</button>`,
-      );
-    } else if (destino) {
+    if (destino) {
       const pestana = destino.nuevaPestana ? ' target="_blank" rel="noopener"' : '';
       botones.push(`<a class="ve-boton" href="${esc(destino.href)}"${pestana}>→ ${esc(accion)}</a>`);
     } else {
@@ -238,14 +170,14 @@ function grupoDe(g: Advertencia['gravedad']): Grupo {
   return g === 'info' ? 'info' : 'corregir';
 }
 
-function tarjeta(e: Advertencia, enlaces: Readonly<Record<string, string>>): string {
+function tarjeta(e: Advertencia): string {
   const meta = [e.operacion, e.total ? `${e.total} comprobante${e.total === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
   const mas =
     e.total > e.comprobantes.length
       ? `<p class="ve-mas">${e.comprobantes.length} de ${e.total}${e.hoja ? ` · el resto en la hoja «${esc(e.hoja)}»` : ''}</p>`
       : '';
   const letras = ordenesLetra(e);
-  const { botones, etiquetas } = botonesYEtiquetas(e, enlaces);
+  const { botones, etiquetas } = botonesYEtiquetas(e);
   // Las INFO arrancan plegadas: una fila compacta con «Ver detalle ▾».
   return `
     <details class="ve-error ve-${e.gravedad}" data-grupo="${grupoDe(e.gravedad)}" ${e.gravedad === 'info' ? '' : 'open'}>
@@ -262,9 +194,8 @@ function tarjeta(e: Advertencia, enlaces: Readonly<Record<string, string>>): str
         </span>
       </summary>
       <div class="ve-cuerpo">
-        <p class="ve-copiado" role="status" aria-live="polite"></p>
         ${e.detalle ? `<p class="ve-detalle">${esc(e.detalle)}</p>` : ''}
-        ${letras ? `<ul class="ve-ordenes">${letras}</ul>` : ''}
+        ${letras ? `<div class="ve-instructivo"><p class="ve-instructivo-titulo">Qué corregir en Xubio</p><ul class="ve-ordenes">${letras}</ul></div>` : ''}
         ${grilla(filasDe(e))}${mas}
       </div>
     </details>`;
@@ -296,23 +227,29 @@ const ESTILOS = `
     .ve-error summary::-webkit-details-marker { display: none; }
     .ve-insignia { flex: none; margin-top: 1px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; }
     .ve-cab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-    .ve-titulo { font-weight: 700; }
+    .ve-titulo { font-weight: 700; font-size: 15px; }
     .ve-etiquetas { display: flex; flex-wrap: wrap; gap: 6px; }
-    .ve-etiqueta { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; padding: 1px 9px; border-radius: 999px; background: #eef2f7; color: #475569; border: 1px solid #dfe5ee; }
+    .ve-etiqueta { display: inline-flex; align-items: center; font-size: 13px; font-weight: 600; padding: 3px 11px; border-radius: 999px; background: #eef2f7; color: #334155; border: 1px solid #dfe5ee; }
     .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     .ve-meta { font-size: 12px; color: #64748b; white-space: nowrap; }
-    .ve-copiado { margin: 0 0 6px; font-size: 12.5px; font-weight: 700; color: #15803d; }
-    .ve-copiado:empty { display: none; }
-    .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; font-size: 12px; font-weight: 700; padding: 5px 12px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, .15); white-space: nowrap; }
+    .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; font-size: 13.5px; font-weight: 700; padding: 7px 14px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, .15); white-space: nowrap; }
     .ve-boton:hover { background: #1d4ed8; }
     .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
     .ve-plegar { font-size: 12px; font-weight: 700; color: #2563eb; white-space: nowrap; }
     .ve-plegar::after { content: 'Ver detalle ▾'; }
     details[open] > summary .ve-plegar::after { content: 'Ocultar ▴'; }
     .ve-cuerpo { padding: 0 14px 12px; }
-    .ve-ordenes { margin: -2px 0 8px; padding: 0; list-style: none; }
-    .ve-ordenes li { margin: 2px 0; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12.5px; }
-    .ve-detalle { margin: 0 0 8px; color: #64748b; font-size: 12.5px; }
+    /* Instructivo: lo que hay que hacer, grande y separado de la grilla. */
+    .ve-instructivo { margin: 0 0 12px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; }
+    .ve-instructivo-titulo { margin: 0 0 6px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #92400e; }
+    .ve-ordenes { margin: 0; padding: 0; list-style: none; }
+    .ve-ordenes li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 7px 0; font-size: 15px; color: #1f2a37; }
+    .ve-ordenes li + li { border-top: 1px dashed #fcd34d; }
+    .ve-orden-comp { margin-left: 6px; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 14px; color: #475569; }
+    .ve-orden-cambio { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+    .ve-ordenes .letra { min-width: 24px; padding: 2px 6px; font-size: 15px; border-radius: 4px; }
+    .ve-flecha { font-size: 17px; font-weight: 800; color: #475569; }
+    .ve-detalle { margin: 0 0 10px; color: #334155; font-size: 14.5px; line-height: 1.45; }
     .ve-mas { margin: 6px 0 0; font-size: 12px; color: #64748b; }
     .ve-grave .ve-insignia, .ve-chip-grave { background: #fde2e2; color: #9b2c2c; }
     .ve-corregir .ve-insignia, .ve-chip-corregir { background: #fdf0d9; color: #7a4f0f; }
@@ -334,6 +271,7 @@ const ESTILOS = `
     .ve-grilla td.comp { font-family: Consolas, 'Cascadia Mono', monospace; }
     .ve-grilla td.comp.error { background: #fdeaea; box-shadow: inset 0 0 0 1.5px #c53030; }
     .ve-grilla td.comp.ok { background: #e7f5ec; box-shadow: inset 0 0 0 1.5px #15803d; }
+    .ve-nota { margin-left: 6px; font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: #e8eef9; color: #1d4ed8; }
     .letra { display: inline-block; min-width: 16px; text-align: center; border-radius: 3px; color: #fff; font-weight: 700; padding: 0 3px; }
     .letra-error { background: #c53030; }
     .letra-ok { background: #15803d; }
@@ -351,17 +289,6 @@ export function contarErrores(errores: readonly Advertencia[]): Record<Advertenc
 }
 
 /** Las píldoras filtran las tarjetas: una activa muestra solo esas; otro click, todas. */
-function activarBotonesXubio(raiz: HTMLElement): void {
-  for (const boton of raiz.querySelectorAll<HTMLElement>('[data-xubio]')) {
-    boton.addEventListener('click', (ev) => {
-      // El botón está dentro del <summary>: que no pliegue la tarjeta.
-      ev.preventDefault();
-      ev.stopPropagation();
-      abrirEnXubio(boton);
-    });
-  }
-}
-
 function activarFiltros(raiz: HTMLElement): void {
   const resumen = raiz.querySelector<HTMLElement>('.ve-resumen');
   const chips = [...raiz.querySelectorAll<HTMLButtonElement>('.ve-chip[data-filtro]')];
@@ -391,7 +318,7 @@ function activarFiltros(raiz: HTMLElement): void {
 }
 
 /** Abre la ventana de hallazgos. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla). */
-export function mostrarVentanaDeErrores(errores: readonly Advertencia[], enlacesXubio: Readonly<Record<string, string>> = {}) {
+export function mostrarVentanaDeErrores(errores: readonly Advertencia[]) {
   const n = contarErrores(errores);
   const aCorregir = n.grave + n.corregir;
   const total = errores.length;
@@ -411,7 +338,7 @@ export function mostrarVentanaDeErrores(errores: readonly Advertencia[], enlaces
     n.info ? `<button type="button" class="ve-chip ve-chip-info" data-filtro="info" aria-pressed="false">${n.info} info</button>` : '',
   ].join('');
   const lista = [...porCliente.entries()]
-    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map((e) => tarjeta(e, enlacesXubio)).join('')}</section>`)
+    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map((e) => tarjeta(e)).join('')}</section>`)
     .join('');
 
   return Swal.fire({
@@ -430,7 +357,6 @@ export function mostrarVentanaDeErrores(errores: readonly Advertencia[], enlaces
     focusConfirm: true,
     didOpen: (popup) => {
       activarFiltros(popup);
-      activarBotonesXubio(popup);
     },
     // Sin animación: si la pestaña está atrás (mirando el Chrome del bot), el
     // navegador congela las animaciones y la ventana quedaba transparente.

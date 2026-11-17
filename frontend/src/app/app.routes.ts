@@ -23,5 +23,10 @@ export const routes: Routes = [
     title: 'Clientes · Control de Facturas',
     loadComponent: () => import('./features/clientes/clientes').then((m) => m.ClientesPantalla),
   },
+  {
+    path: 'ayuda',
+    title: 'Manual de uso · Control de Facturas',
+    loadComponent: () => import('./features/ayuda/ayuda').then((m) => m.AyudaPantalla),
+  },
   { path: '**', redirectTo: '' },
 ];

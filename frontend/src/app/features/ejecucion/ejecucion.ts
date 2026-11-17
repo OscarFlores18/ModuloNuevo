@@ -169,14 +169,7 @@ export class EjecucionPantalla {
 
   protected verErrores(): void {
     const a = this.ej()?.advertencias;
-    if (a?.length) void mostrarVentanaDeErrores(a, this.enlacesXubio());
-  }
-
-  /** Por cliente, el link de Xubio en su empresa (para «Corregir en Xubio»). */
-  private enlacesXubio(): Record<string, string> {
-    const enlaces: Record<string, string> = {};
-    for (const c of this.ej()?.detalle_clientes ?? []) if (c.xubio_url) enlaces[c.nombre] = c.xubio_url;
-    return enlaces;
+    if (a?.length) void mostrarVentanaDeErrores(a);
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -208,7 +201,7 @@ export class EjecucionPantalla {
       const e = this.ej();
       if (!e || this.activa() || !e.advertencias?.length || yaVisto(e.id)) return;
       abiertos.add(e.id);
-      untracked(() => void mostrarVentanaDeErrores(e.advertencias!, this.enlacesXubio()).then(() => marcarVisto(e.id)));
+      untracked(() => void mostrarVentanaDeErrores(e.advertencias!).then(() => marcarVisto(e.id)));
     });
   }
 

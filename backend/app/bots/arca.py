@@ -34,7 +34,7 @@ from playwright.sync_api import Page, sync_playwright
 from ..core import config
 from ..core.errors import BotError, SesionVencida, TimeoutDescarga
 from ..core.models import BotResult
-from .navegador import como_fuente, inyectar, lanzar, nuevo_contexto
+from .navegador import capturas_permitidas, como_fuente, inyectar, lanzar, nuevo_contexto
 
 # Marcas con las que ARCA contesta cuando la sesión ya no vale.
 MARCAS_SESION_VENCIDA = ("MISSING_AUTHENTICATION_INFO", "HTTP Status 401", "F1:username")
@@ -42,6 +42,13 @@ MARCAS_SESION_VENCIDA = ("MISSING_AUTHENTICATION_INFO", "HTTP Status 401", "F1:u
 URL_LOGIN = "https://auth.afip.gob.ar/contribuyente_/login.xhtml"
 URL_PORTAL = "https://portalcf.cloud.afip.gob.ar/portal/app/"
 SERVICIO = "Mis Comprobantes"
+
+
+class FiltroNoDisponible(TimeoutDescarga):
+    """ARCA no mostró el filtro de fechas tras elegir Emitidos/Recibidos.
+
+    Quien abre el servicio puede cerrarlo, volver a abrirlo y reintentar una vez.
+    """
 
 
 def formatear_mes_anio(fecha_str):
@@ -384,6 +391,10 @@ class SesionArca:
             pass
         fecha = servicio.locator("#fechaEmision")
         for intento in (1, 2, 3):
+            if intento > 1 and boton_tipo.count() == 0:
+                # El click anterior sí navegó (el botón ya no está) pero el filtro
+                # no apareció: volver a apretar no sirve, hay que reabrir el servicio.
+                break
             try:
                 if intento == 1:
                     boton_tipo.click(timeout=5000)
@@ -403,11 +414,46 @@ class SesionArca:
                     raise SesionVencida(
                         "ARCA pidió volver a iniciar sesión al elegir el tipo de comprobante."
                     ) from None
-        raise TimeoutDescarga(
-            f"ARCA no mostró el filtro de fechas después de apretar '{tipo_comprobante}' "
-            "tres veces. Puede estar lento: probá de nuevo en unos minutos.",
-            detalle={"tipo": tipo_comprobante},
+        if servicio.get_by_text("Elegí una persona para ingresar", exact=False).first.is_visible():
+            raise FiltroNoDisponible(
+                f"ARCA pidió elegir la empresa representada al apretar '{tipo_comprobante}' "
+                "y no se pudo elegir. Revisá que el CUIT de ingreso represente a esta "
+                "empresa en Mis Comprobantes y que el CUIT representado esté bien cargado.",
+                detalle={"tipo": tipo_comprobante, "url": servicio.url},
+            )
+        pantalla = self._resumen_pantalla(servicio)
+        self._guardar_diagnostico(servicio, f"arca-{tipo_comprobante.lower()}")
+        raise FiltroNoDisponible(
+            f"ARCA no mostró el filtro de fechas después de apretar '{tipo_comprobante}'. "
+            + (f"En pantalla había: «{pantalla}». " if pantalla else "")
+            + "Puede estar lento: probá de nuevo en unos minutos.",
+            detalle={"tipo": tipo_comprobante, "url": servicio.url},
         )
+
+    @staticmethod
+    def _resumen_pantalla(page: Page, largo: int = 160) -> str:
+        """Las primeras palabras visibles de la página, para saber dónde quedó."""
+        try:
+            texto = page.locator("body").inner_text(timeout=2000)
+        except Exception:
+            return ""
+        texto = " ".join(texto.split())
+        return texto if len(texto) <= largo else texto[:largo].rstrip() + "…"
+
+    def _guardar_diagnostico(self, page: Page, nombre: str) -> None:
+        """Captura + HTML de la pantalla (solo si están habilitadas las capturas)."""
+        if not capturas_permitidas():
+            return
+        try:
+            carpeta = os.path.join(config.LOG_DIR, "diagnostico")
+            os.makedirs(carpeta, exist_ok=True)
+            sello = f"{datetime.now():%Y%m%d-%H%M%S}"
+            page.screenshot(path=os.path.join(carpeta, f"{nombre}-{sello}.png"), full_page=True)
+            with open(os.path.join(carpeta, f"{nombre}-{sello}.html"), "w", encoding="utf-8") as f:
+                f.write(page.content())
+            self.log(f"      [INFO]: Captura y HTML de la pantalla guardados en {carpeta}")
+        except Exception as exc:
+            self.log(f"      [AVISO]: No se pudo guardar el diagnóstico: {exc}")
 
     def _escribir_rango(self, servicio: Page, caja_fecha, rango_fechas: str) -> None:
         """Escribe el rango en el filtro y confirma que ARCA lo tomó.

@@ -336,3 +336,51 @@ def test_control_que_no_genera_nada_libera_su_numero(cliente_demo, sin_pausa, tm
     assert any("se borró la carpeta «1er control»" in l["texto"] for l in detalle["log"])
     datos = cliente_demo.post("/api/controles", json={"clientes": ["Acme"], "desde": "01/03/2025"}).json()
     assert datos["Acme"]["ventas"]["proximo_texto"] == "1er control"
+
+
+def test_auditoria_se_omite_si_fallo_arca_y_reabre_si_falta_el_filtro(cliente_demo, sin_pausa, tmp_path, monkeypatch):
+    """ARCA queda sin filtro de fechas: se reabre Mis Comprobantes una vez y, si
+    sigue igual, la auditoría de esa operación se omite (no suma otro error)."""
+    from backend.app.bots.arca import FiltroNoDisponible
+
+    aperturas: list[int] = []
+    cruces: list[str] = []
+
+    class _ArcaSinFiltro(_SesionArcaFalsa):
+        def abrir_mis_comprobantes(self, cuit_representado: str = ""):
+            aperturas.append(1)
+            return _ServicioFalso()
+
+        def descargar(self, *args, **kwargs):
+            raise FiltroNoDisponible("ARCA no mostró el filtro de fechas")
+
+    class _Gestor(_GestorFalso):
+        def arca(self, cuit_login, clave):
+            return _ArcaSinFiltro()
+
+    monkeypatch.setattr(ejecuciones_srv, "GestorSesiones", _Gestor)
+    monkeypatch.setattr(ejecuciones_srv, "procesar_cruce", lambda *a, **k: cruces.append(a[1]))
+    pedido = {
+        "clientes": ["Acme"],
+        "desde": "01/03/2025",
+        "hasta": "31/03/2025",
+        "ventas": True,
+        "compras": False,
+        "pasos": {"arca": True, "xubio": True, "auditoria": True},
+        "carpeta": str(tmp_path / "salidas"),
+        "xubio": {"usuario": "operador", "clave": "clave-xubio"},
+    }
+    ejecucion_id = cliente_demo.post("/api/ejecuciones", json=pedido).json()["id"]
+    for _ in range(200):
+        detalle = cliente_demo.get(f"/api/ejecuciones/{ejecucion_id}").json()
+        if detalle["estado"] in {"finalizada", "cancelada", "error"}:
+            break
+        time.sleep(0.02)
+
+    pasos = {p["id"]: p["estado"] for p in detalle["detalle_clientes"][0]["pasos"]}
+    assert pasos["arca_ventas"] == "error"
+    assert pasos["auditoria_ventas"] == "omitido"
+    assert len(aperturas) == 2
+    assert cruces == []
+    errores = [a for a in detalle["advertencias"] if a["tipo"] == "paso_error"]
+    assert [e["titulo"] for e in errores] == ["ARCA · Ventas: falló"]

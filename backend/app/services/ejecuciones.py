@@ -31,6 +31,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..auditor import procesar_cruce
+from ..bots.arca import FiltroNoDisponible
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import BotError, SesionVencida
@@ -608,19 +609,25 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             bajar_excel=True,
                             bajar_csv=False,
                         )
-                    except SesionVencida:
+                    except (SesionVencida, FiltroNoDisponible) as exc:
                         if intento == 2:
                             raise
-                        ej.registrar(
-                            "      [AVISO]: Sesión de ARCA vencida. "
-                            "Se renueva y se reintenta..."
-                        )
                         try:
                             servicio_arca.close()
                         except Exception:
                             pass
                         servicio_arca = None
-                        sesion.renovar()
+                        if isinstance(exc, SesionVencida):
+                            ej.registrar(
+                                "      [AVISO]: Sesión de ARCA vencida. "
+                                "Se renueva y se reintenta..."
+                            )
+                            sesion.renovar()
+                        else:
+                            ej.registrar(
+                                "      [AVISO]: ARCA quedó en una pantalla sin filtro de fechas. "
+                                "Se vuelve a abrir Mis Comprobantes y se reintenta..."
+                            )
                 return None
 
             def correr_pasos_arca(gestor, _pasos=[x for x in cli.pasos if x.id.startswith("arca_")]):
@@ -690,8 +697,20 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                 if ej.cancelar_pedido:
                     paso.estado = "omitido"
                     continue
-                ej.registrar(f" -> {paso.etiqueta}")
                 operacion = "Ventas" if paso.id == "auditoria_ventas" else "Compras"
+                # Sin la descarga de ARCA o de Xubio no hay nada que cruzar: el
+                # paso queda omitido en vez de sumar un segundo error.
+                fallidos = [
+                    x.etiqueta
+                    for x in cli.pasos
+                    if x.id in (f"arca_{operacion.lower()}", "xubio") and x.estado == "error"
+                ]
+                if fallidos:
+                    paso.estado = "omitido"
+                    paso.mensaje = f"No se cruzó: falló {' y '.join(fallidos)}."
+                    ej.registrar(f" -> {paso.etiqueta}: omitida ({paso.mensaje})", "aviso")
+                    continue
+                ej.registrar(f" -> {paso.etiqueta}")
                 errores_auditoria: list[dict] = []
                 _correr_paso(
                     ej,

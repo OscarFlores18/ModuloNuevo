@@ -151,3 +151,34 @@ def test_el_excel_pinta_cada_error_con_su_color(tmp_path: Path):
     assert wb["Libro Iva"].cell(2, 1).fill.fgColor.rgb.endswith(violeta)
     assert "Referencias" in wb.sheetnames
     assert len(set(c for c, _ in COLORES_ERROR.values())) == len(COLORES_ERROR)  # sin colores repetidos
+
+
+def test_partidas_sin_arca_van_juntas_con_las_normales_marcadas(tmp_path: Path):
+    """Como en la sección del Excel: lo que falta revisar y lo normal (exterior,
+    tiques, extractos) en una sola tarjeta, con lo normal marcado y al final."""
+    errores = _errores(
+        tmp_path,
+        [("11 - Factura C", "27479591992", "GAZZO MARIA PAULA")],
+        [
+            ("C-0002-00000099", "23-47390563-9", "FRANCO SOTO STOCKMAYER"),
+            ("E-0001-00000010", "50-00000000-0", "PROVEEDOR DEL EXTERIOR"),
+        ],
+    )
+    assert "exterior_sin_arca" not in errores and "tique_sin_arca" not in errores
+    e = errores["faltante_en_arca"]
+    assert e["titulo"] == "Partidas del Libro IVA Compras no encontradas en ARCA"
+    assert e["gravedad"] == "corregir"
+    assert e["total"] == 2
+    assert [c.get("motivo") for c in e["comprobantes"]] == [None, "exterior"]
+    assert "1 a revisar" in e["detalle"] and "exterior" in e["detalle"]
+
+
+def test_partidas_sin_arca_solo_normales_es_info(tmp_path: Path):
+    errores = _errores(
+        tmp_path,
+        [("11 - Factura C", "27479591992", "GAZZO MARIA PAULA")],
+        [("E-0001-00000010", "50-00000000-0", "PROVEEDOR DEL EXTERIOR")],
+    )
+    e = errores["faltante_en_arca"]
+    assert e["gravedad"] == "info"
+    assert e["acciones"] == ["Sin acción"]

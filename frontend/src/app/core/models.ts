@@ -151,6 +151,8 @@ export interface ComprobanteLetraDistinta {
 export interface FilaConError {
   origen: 'arca' | 'xubio';
   fila: CeldaVista[];
+  /** Partida sin ARCA que es normal: tique o extracto bancario, o proveedor del exterior. */
+  motivo?: 'tique' | 'exterior';
 }
 
 export type TipoError =

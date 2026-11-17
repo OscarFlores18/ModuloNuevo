@@ -385,14 +385,36 @@ def diagnosticar(
             falta_x,
             hoja=f"Faltantes en Libro IVA {operacion}",
         ))
-    if falta_a:
+    # Todo lo del Libro IVA sin par en ARCA va junto, como en la sección
+    # «Partidas del Libro IVA … no encontradas en ARCA» del Excel. Los extractos,
+    # tiques y proveedores del exterior se marcan como normales (`motivo`).
+    normales = (
+        [{**f, "motivo": "exterior"} for f in exterior]
+        + [{**f, "motivo": "tique"} for f in tiques]
+    )
+    if falta_a or normales:
+        partes = []
+        if falta_a:
+            partes.append(
+                f"{len(falta_a)} a revisar: están en Xubio y ARCA no los informa en este período."
+            )
+        if tiques:
+            partes.append(
+                f"{len(tiques)} {'es tique o extracto bancario' if len(tiques) == 1 else 'son tiques o extractos bancarios'}: "
+                "ARCA no los informa en Mis Comprobantes, es normal."
+            )
+        if exterior:
+            partes.append(
+                f"{len(exterior)} de {'proveedor' if len(exterior) == 1 else 'proveedores'} del exterior (CUIT genérico): "
+                "ARCA no los informa, es normal."
+            )
         errores.append(error(
-            "faltante_en_arca", "corregir",
-            f"En el {libro} y no en ARCA",
-            "Están en Xubio y ARCA no los informa en este período.",
-            ["Revisar en Xubio", "Consultar al cliente"],
-            falta_a,
-            hoja="Libro Iva",
+            "faltante_en_arca", "corregir" if falta_a else "info",
+            f"Partidas del {libro} no encontradas en ARCA",
+            " ".join(partes),
+            ["Revisar en Xubio", "Consultar al cliente"] if falta_a else ["Sin acción"],
+            falta_a + normales,
+            hoja="Mis Comprobantes",
         ))
 
     # Duplicados reales: mismo CUIT, mismo número y mismo tipo (una factura y una
@@ -432,25 +454,6 @@ def diagnosticar(
             anuladas,
             hoja=f"Faltantes en Libro IVA {operacion}",
         ))
-    if exterior:
-        errores.append(error(
-            "exterior_sin_arca", "info",
-            "Proveedores del exterior",
-            "Comprobantes del exterior (CUIT genérico): ARCA no los informa.",
-            ["Sin acción"],
-            exterior,
-            hoja="Libro Iva",
-        ))
-    if tiques:
-        errores.append(error(
-            "tique_sin_arca", "info",
-            "Tiques y extractos bancarios sin ARCA",
-            "ARCA no los informa en Mis Comprobantes. Es normal.",
-            ["Sin acción"],
-            tiques,
-            hoja="Libro Iva",
-        ))
-
     return errores
 
 
@@ -497,7 +500,21 @@ def _columnas(ws) -> dict[str, int]:
 
 def colorear_errores(wb, errores: list[dict], operacion: str) -> None:
     """Pinta en «Mis Comprobantes» y «Libro Iva» las filas de cada error."""
-    a_pintar = [e for e in errores if e["tipo"] in COLORES_ERROR]
+    # Las partidas normales (exterior, tiques) vienen dentro de «faltante_en_arca»:
+    # se pintan con su propio color, o sin color los tiques y extractos.
+    separados: list[dict] = []
+    for e in errores:
+        if e["tipo"] != "faltante_en_arca":
+            separados.append(e)
+            continue
+        por_motivo: dict[str, list] = {}
+        for item in e.get("comprobantes", []):
+            por_motivo.setdefault(item.get("motivo", ""), []).append(item)
+        if por_motivo.get(""):
+            separados.append({**e, "comprobantes": por_motivo[""]})
+        if por_motivo.get("exterior"):
+            separados.append({**e, "tipo": "exterior_sin_arca", "comprobantes": por_motivo["exterior"]})
+    a_pintar = [e for e in separados if e["tipo"] in COLORES_ERROR]
     if not a_pintar:
         return
     claves = {e["tipo"]: _claves_de_error(e) for e in a_pintar}
