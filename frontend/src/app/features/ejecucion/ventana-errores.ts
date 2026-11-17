@@ -147,12 +147,81 @@ function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | nu
   return null;
 }
 
-function botonesYEtiquetas(e: Advertencia): { botones: string; etiquetas: string } {
+/** Lo que la ventana necesita saber además de los hallazgos (para armar el mail). */
+export interface ContextoVentana {
+  /** Mail de cada cliente (por nombre), cargado en Clientes. */
+  emails: Record<string, string>;
+  /** «01/11/2026 al 17/11/2026». */
+  periodo: string;
+}
+
+const MAX_LINEAS_MAIL = 25;
+
+/**
+ * «Consultar al cliente»: abre el compose web de Gmail con el mail del cliente,
+ * el asunto y la lista de comprobantes a revisar (sin los normales: tiques,
+ * anuladas...).
+ *
+ * Se usa el compose de Gmail y no `mailto:` porque Windows resuelve `mailto:`
+ * con la aplicación de correo predeterminada del sistema (en esta PC, Outlook),
+ * y Gmail en el navegador nunca llegaba a abrirse.
+ */
+const COMPOSE_GMAIL = 'https://mail.google.com/mail/';
+
+function mailConsulta(e: Advertencia, ctx: ContextoVentana): string {
+  const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo);
+  const lineas = filas.slice(0, MAX_LINEAS_MAIL).map((f) => {
+    const d = normalizar(f.fila);
+    const total = typeof d.Total === 'number' ? ` · $ ${texto(d.Total)}` : '';
+    return `- ${texto(d.Fecha)} · ${texto(d.Tipo)} ${texto(d.Comprobante)} · ${texto(d['Razón social'])} (CUIT ${cuit(d.CUIT)})${total}`;
+  });
+  const resto = filas.length > MAX_LINEAS_MAIL ? `\n…y ${filas.length - MAX_LINEAS_MAIL} más.` : '';
+  const operacion = (e.operacion ?? '').toLowerCase();
+  const que =
+    e.tipo === 'faltante_en_xubio'
+      ? 'figuran en ARCA y no los tenemos registrados'
+      : 'los tenemos registrados y no figuran en ARCA';
+  const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
+  const cuerpo = [
+    'Hola,',
+    '',
+    `Al controlar ${operacion} del período ${ctx.periodo} encontramos ${filas.length === 1 ? 'este comprobante que' : 'estos comprobantes que'} ${que}:`,
+    '',
+    lineas.join('\n') + resto,
+    '',
+    '¿Nos podés confirmar si corresponden? Si es así, por favor envianos el comprobante.',
+    '',
+    'Saludos.',
+  ].join('\n');
+  const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
+  const partes = [
+    'view=cm',
+    'fs=1',
+    `su=${encodeURIComponent(asunto)}`,
+    `body=${encodeURIComponent(cuerpo)}`,
+  ];
+  // Las comas y las @ del destinatario se dejan legibles: Gmail separa varios
+  // mails con coma y los reconoce igual estando sin escapar.
+  if (para) {
+    partes.splice(2, 0, `to=${encodeURIComponent(para).replace(/%2C/g, ',').replace(/%40/g, '@')}`);
+  }
+  return `${COMPOSE_GMAIL}?${partes.join('&')}`;
+}
+
+function botonesYEtiquetas(e: Advertencia, ctx: ContextoVentana): { botones: string; etiquetas: string } {
   const botones: string[] = [];
   const etiquetas: string[] = [];
   for (const accion of e.acciones) {
     // «Corregir en Xubio» ya no se ofrece: lo que hay que cambiar está en el instructivo.
     if (accion.toLowerCase().includes('xubio')) continue;
+    if (accion === 'Consultar al cliente') {
+      const sinMail = !ctx.emails[e.cliente];
+      const ayuda = sinMail
+        ? 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes).'
+        : `Abre Gmail con un mail a ${ctx.emails[e.cliente]} y los comprobantes a revisar.`;
+      botones.push(`<a class="ve-boton" href="${esc(mailConsulta(e, ctx))}" target="_blank" rel="noopener" title="${esc(ayuda)}">✉ Consultar al cliente</a>`);
+      continue;
+    }
     const destino = destinoDe(accion);
     if (destino) {
       const pestana = destino.nuevaPestana ? ' target="_blank" rel="noopener"' : '';
@@ -172,14 +241,14 @@ function grupoDe(g: Advertencia['gravedad']): Grupo {
   return g === 'info' ? 'info' : 'corregir';
 }
 
-function tarjeta(e: Advertencia): string {
+function tarjeta(e: Advertencia, ctx: ContextoVentana): string {
   const meta = [e.operacion, e.total ? `${e.total} comprobante${e.total === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
   const mas =
     e.total > e.comprobantes.length
       ? `<p class="ve-mas">${e.comprobantes.length} de ${e.total}${e.hoja ? ` · el resto en la hoja «${esc(e.hoja)}»` : ''}</p>`
       : '';
   const letras = ordenesLetra(e);
-  const { botones, etiquetas } = botonesYEtiquetas(e);
+  const { botones, etiquetas } = botonesYEtiquetas(e, ctx);
   // Las INFO arrancan plegadas: una fila compacta con «Ver detalle ▾».
   return `
     <details class="ve-error ve-${e.gravedad}" data-grupo="${grupoDe(e.gravedad)}" ${e.gravedad === 'info' ? '' : 'open'}>
@@ -343,7 +412,11 @@ function bloqueResumen(resumenes: readonly ResumenOperacion[], varios: boolean):
 }
 
 /** Abre la ventana de hallazgos. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla). */
-export function mostrarVentanaDeErrores(errores: readonly Advertencia[], resumenes: readonly ResumenOperacion[] = []) {
+export function mostrarVentanaDeErrores(
+  errores: readonly Advertencia[],
+  resumenes: readonly ResumenOperacion[] = [],
+  ctx: ContextoVentana = { emails: {}, periodo: '' },
+) {
   const n = contarErrores(errores);
   const aCorregir = n.grave + n.corregir;
   const total = errores.length;
@@ -363,7 +436,7 @@ export function mostrarVentanaDeErrores(errores: readonly Advertencia[], resumen
     n.info ? `<button type="button" class="ve-chip ve-chip-info" data-filtro="info" aria-pressed="false">${n.info} info</button>` : '',
   ].join('');
   const lista = [...porCliente.entries()]
-    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map((e) => tarjeta(e)).join('')}</section>`)
+    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map((e) => tarjeta(e, ctx)).join('')}</section>`)
     .join('');
 
   return Swal.fire({
