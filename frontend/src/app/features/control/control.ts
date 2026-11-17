@@ -43,6 +43,15 @@ const rangoOrdenado: ValidatorFn = (g: AbstractControl): ValidationErrors | null
   return modo === 'rango' && desde && hasta && hasta < desde ? { rangoInvertido: true } : null;
 };
 
+const dos = (n: number) => String(n).padStart(2, '0');
+const aIso = (f: Date) => `${f.getFullYear()}-${dos(f.getMonth() + 1)}-${dos(f.getDate())}`;
+const fechaDmy = (f: Date) => `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()}`;
+/** '05/10/2026' -> Date local (sin hora). */
+function dmyAFecha(dmy: string): Date {
+  const [d, m, a] = dmy.split('/').map(Number);
+  return new Date(a, m - 1, d);
+}
+
 @Component({
   selector: 'app-nuevo-control',
   imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado, AnchoAjustable],
@@ -145,6 +154,52 @@ export class NuevoControl {
     const hasta = isoADmy(p.hasta ?? '');
     return desde && hasta ? { desde, hasta } : null;
   });
+
+  /** Hoy, para que los calendarios no dejen elegir fechas futuras (ARCA no las acepta). */
+  protected readonly hoyIso = aIso(new Date());
+  protected readonly mesActualIso = this.hoyIso.slice(0, 7);
+
+  /**
+   * Qué período se va a controlar, explicado: días, si se corta en hoy, si
+   * abarca varios meses, o qué corregir. Lo ve quien arma el control antes de
+   * ejecutar, así no hay sorpresas.
+   */
+  protected readonly explicacionPeriodo = computed<{ texto: string; avisos: string[]; error: string | null } | null>(() => {
+    const p = this.valor().periodo;
+    if (!p) return null;
+    if (p.modo === 'rango') {
+      const d = p.desde ?? '';
+      const h = p.hasta ?? '';
+      if (!d || !h) return null;
+      if (h < d) return { texto: '', avisos: [], error: '«Hasta» es anterior a «Desde»: cambiá una de las dos fechas.' };
+      if (d > this.hoyIso) return { texto: '', avisos: [], error: '«Desde» todavía no llegó: elegí una fecha de hoy para atrás.' };
+    }
+    const per = this.periodo();
+    if (!per) return null;
+    const desde = dmyAFecha(per.desde);
+    const hastaPedido = dmyAFecha(p.modo === 'rango' ? isoADmy(p.hasta ?? '') : per.hasta);
+    const hoy = dmyAFecha(isoADmy(this.hoyIso));
+    const hasta = hastaPedido > hoy ? hoy : hastaPedido;
+    const dias = Math.round((hasta.getTime() - desde.getTime()) / 86_400_000) + 1;
+    const avisos: string[] = [];
+    const finDeMes = new Date(hasta.getFullYear(), hasta.getMonth() + 1, 0);
+    if (hastaPedido > hoy || (p.modo !== 'rango' && hasta.getTime() === hoy.getTime() && hoy < finDeMes)) {
+      avisos.push(`El período todavía no terminó: se controla hasta hoy (${fechaDmy(hoy)}).`);
+    }
+    const meses = (hasta.getFullYear() - desde.getFullYear()) * 12 + hasta.getMonth() - desde.getMonth() + 1;
+    if (meses > 1) {
+      avisos.push(`Abarca ${meses} meses y va todo en un mismo control. Para un control por mes, elegí «Mes completo».`);
+    }
+    return { texto: `Se controla del ${fechaDmy(desde)} al ${fechaDmy(hasta)} (${dias} día${dias === 1 ? '' : 's'}).`, avisos, error: null };
+  });
+
+  /** El usuario apretó «Cambiar» para escribir otra contraseña de Xubio. */
+  protected readonly cambiandoClave = signal(false);
+
+  protected usarGuardada(): void {
+    this.form.controls.xubio.controls.clave.reset('');
+    this.cambiandoClave.set(false);
+  }
 
   protected readonly guardadaXubio = computed(() => {
     const a = this.ajustes()?.xubio;

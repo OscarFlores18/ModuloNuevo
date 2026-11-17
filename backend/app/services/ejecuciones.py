@@ -18,6 +18,7 @@ computadora del servidor (doble factor de ARCA, captcha de Xubio).
 
 from __future__ import annotations
 
+import calendar
 import io
 import re
 import shutil
@@ -250,13 +251,26 @@ def _pasos_para(p: dict) -> list[Paso]:
     return pasos
 
 
-def _validar_fecha(texto: str, etiqueta: str) -> datetime:
-    try:
-        return datetime.strptime(str(texto).strip(), "%d/%m/%Y")
-    except (ValueError, AttributeError):
+def _validar_fecha(texto: str, etiqueta: str, ajustes: list[str] | None = None) -> datetime:
+    """DD/MM/AAAA. Un día que el mes no tiene (31/02, 31/11) se lleva al último
+    día del mes en vez de cortar el control; el ajuste queda en `ajustes`."""
+    m = re.fullmatch(r"\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*", str(texto or ""))
+    if not m:
         raise ErrorEjecucion(
             f"La fecha «{etiqueta}» tiene que tener el formato DD/MM/AAAA.", 422
-        ) from None
+        )
+    dia, mes, anio = (int(x) for x in m.groups())
+    if not 1 <= mes <= 12 or dia < 1:
+        raise ErrorEjecucion(f"La fecha «{etiqueta}» ({texto}) no existe.", 422)
+    ultimo = calendar.monthrange(anio, mes)[1]
+    if dia > ultimo:
+        if ajustes is not None:
+            ajustes.append(
+                f"«{etiqueta}»: el {dia:02d}/{mes:02d} no existe, se usa el "
+                f"{ultimo:02d}/{mes:02d}/{anio} (último día del mes)."
+            )
+        dia = ultimo
+    return datetime(anio, mes, dia)
 
 
 def iniciar(
@@ -281,8 +295,9 @@ def iniciar(
             "No existen estos clientes: " + ", ".join(desconocidos), 422
         )
 
-    desde = _validar_fecha(pedido.get("desde", ""), "Desde")
-    hasta = _validar_fecha(pedido.get("hasta", ""), "Hasta")
+    ajustes_fecha: list[str] = []
+    desde = _validar_fecha(pedido.get("desde", ""), "Desde", ajustes_fecha)
+    hasta = _validar_fecha(pedido.get("hasta", ""), "Hasta", ajustes_fecha)
     if hasta < desde:
         raise ErrorEjecucion("La fecha «Hasta» es anterior a «Desde».", 422)
     # ARCA no acepta fechas futuras: si el mes no terminó (ej. hoy es 26 y se
@@ -349,6 +364,8 @@ def iniciar(
         parametros=parametros,
         clientes=[ClienteEnCurso(n, _pasos_para(parametros)) for n in nombres],
     )
+    for ajuste in ajustes_fecha:
+        ej.registrar(f"[AVISO] {ajuste}", "aviso")
     if hasta < hasta_pedido:
         ej.registrar(
             f"[AVISO] El período pedía hasta el {hasta_pedido:%d/%m/%Y}, que todavía no "

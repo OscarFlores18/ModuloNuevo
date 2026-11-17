@@ -76,7 +76,7 @@
 
   <!-- Período y operaciones -->
   <section class="mf-panel !py-3" aria-label="Parámetros">
-    <div class="flex flex-wrap items-end gap-x-8 gap-y-3">
+    <div class="flex flex-wrap items-start gap-x-8 gap-y-3">
       <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
         <legend class="mf-campo-etiqueta">Período</legend>
         <div class="flex flex-wrap items-center gap-2">
@@ -86,18 +86,28 @@
             }
           </div>
           @if (modo() === 'mes') {
-            <input class="mf-input mf-ajustable [--min-ancho:9rem]" appAnchoAjustable type="month" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
+            <input class="mf-input mf-ajustable [--min-ancho:9rem]" appAnchoAjustable type="month" [max]="mesActualIso" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes')" />
           } @else if (modo() === 'anio') {
             <select class="mf-select !w-28" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
               <option value="" disabled>Año…</option>
               @for (a of anios; track a) { <option [value]="a">{{ a }}</option> }
             </select>
           } @else {
-            <input class="mf-input !w-40" type="date" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
+            <input class="mf-input !w-40" type="date" [max]="hoyIso" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido')" />
             <span class="mf-tenue">a</span>
-            <input class="mf-input !w-40" type="date" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
+            <input class="mf-input !w-40" type="date" [max]="hoyIso" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
           }
         </div>
+        @if (explicacionPeriodo(); as ex) {
+          <div class="mt-1.5 text-xs" aria-live="polite">
+            @if (ex.error) {
+              <p class="m-0 font-semibold" style="color: var(--color-error)">{{ ex.error }}</p>
+            } @else {
+              <p class="m-0 mf-tenue">{{ ex.texto }}</p>
+              @for (a of ex.avisos; track a) { <p class="m-0" style="color: var(--color-aviso-texto)">{{ a }}</p> }
+            }
+          </div>
+        }
       </fieldset>
 
       <fieldset class="m-0 border-0 p-0">
@@ -122,14 +132,28 @@
             <span>Usuario Xubio</span>
             <input class="mf-input" type="email" formControlName="usuario" autocomplete="username" [attr.aria-invalid]="invalido('xubio')" />
           </label>
-          <label class="mf-campo">
-            <span>Contraseña Xubio</span>
-            <input class="mf-input" type="password" formControlName="clave" autocomplete="current-password"
-              [placeholder]="guardadaXubio() ? 'Guardada' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
-          </label>
+          @if (guardadaXubio() && !cambiandoClave()) {
+            <div class="mf-campo">
+              <span id="t-clave-xubio">Contraseña Xubio</span>
+              <div class="mf-input flex items-center gap-2" role="status" aria-labelledby="t-clave-xubio">
+                <span class="font-bold" style="color: var(--color-ok)" aria-hidden="true">✓</span>
+                <span class="min-w-0 flex-1 truncate">Guardada · no hace falta escribirla</span>
+                <button type="button" class="mf-btn mf-btn-suave mf-btn-mini" (click)="cambiandoClave.set(true)">Cambiar</button>
+              </div>
+            </div>
+          } @else {
+            <label class="mf-campo">
+              <span>Contraseña Xubio</span>
+              <input class="mf-input" type="password" formControlName="clave" autocomplete="current-password"
+                [placeholder]="guardadaXubio() ? 'Nueva contraseña' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
+              @if (guardadaXubio()) {
+                <button type="button" class="mf-btn mf-btn-suave mf-btn-mini mt-1 self-start" (click)="usarGuardada()">Usar la guardada</button>
+              }
+            </label>
+          }
       </ng-container>
     </div>
-    <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar cuenta de Xubio en el servidor</label>
+    <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar la contraseña de Xubio (queda guardada y cifrada en el servidor)</label>
   </section>
 
   <!-- Acción -->
