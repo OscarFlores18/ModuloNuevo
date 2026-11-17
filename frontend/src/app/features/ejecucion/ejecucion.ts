@@ -239,7 +239,7 @@ export class EjecucionPantalla {
     if (this.ej()?.cancelar_pedido) {
       this.toast.aviso('Cancelación pedida', 'El paso en curso termina y después el control se frena.');
     } else {
-      this.toast.error('No se pudo cancelar el control', this.store.error() ?? undefined);
+      void this.alertas.mostrarErrorHumano('No se pudo cancelar el control', '', this.store.error() ?? '');
     }
   }
 

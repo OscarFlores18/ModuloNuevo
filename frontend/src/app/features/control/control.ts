@@ -298,7 +298,7 @@ export class NuevoControl {
     // Solo depende del error: el toast se dispara fuera del seguimiento del effect.
     effect(() => {
       const e = this.clientes.error();
-      if (e) untracked(() => this.toast.error('No se pudieron cargar los clientes', e));
+      if (e) untracked(() => void this.alertas.mostrarErrorHumano('No se pudieron cargar los clientes', '', e));
     });
 
     // Si un cliente recordado ya no existe, se saca de la selección.
@@ -323,6 +323,28 @@ export class NuevoControl {
       }
       periodo.updateValueAndValidity();
     });
+
+    // Un mes o un «Desde» que todavía no empezó (escrito a mano, el calendario no
+    // lo frena): se avisa con una alerta y se vuelve a una fecha válida.
+    mes.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((valor) => {
+      if (valor && valor > this.mesActualIso) {
+        const pedido = nombreDelMes(valor);
+        mes.setValue(this.mesActualIso);
+        void this.alertas.mostrarAviso(
+          `${pedido.replace(/^./, (l) => l.toUpperCase())} todavía no comenzó`,
+          `No hay información en ARCA ni en Xubio para controlar. Se dejó ${nombreDelMes(this.mesActualIso)}.`,
+        );
+      }
+    });
+    desde.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((valor) => {
+      if (valor && valor > this.hoyIso) {
+        desde.setValue(this.hoyIso);
+        void this.alertas.mostrarAviso(
+          'Esa fecha todavía no llegó',
+          `ARCA no tiene comprobantes de días futuros. Se dejó «Desde» en hoy (${isoADmy(this.hoyIso)}).`,
+        );
+      }
+    });
   }
 
   private async cargarAjustes(): Promise<void> {
@@ -333,7 +355,7 @@ export class NuevoControl {
       // La clave guardada cambia lo que valida Xubio.
       this.form.controls.xubio.updateValueAndValidity();
     } catch (e) {
-      this.toast.error('No se pudo hablar con el servidor', mensajeDeError(e, 'No se cargaron los ajustes.'));
+      void this.alertas.mostrarErrorHumano('No se pudo hablar con el servidor', '', mensajeDeError(e, 'No se cargaron los ajustes.'));
     }
   }
 
@@ -412,14 +434,22 @@ export class NuevoControl {
     const periodo = this.periodo();
     if (this.form.invalid || !periodo) {
       this.form.markAllAsTouched();
-      const p = this.problemas();
-      this.toast.aviso('Faltan datos para ejecutar', p.join(' · ').replace(/^./, (l) => l.toUpperCase()) + '.');
+      const p = this.problemas().map((x) => x.replace(/^./, (l) => l.toUpperCase()) + '.');
+      void this.alertas.mostrarAviso('Faltan datos para ejecutar', 'Antes de ejecutar el control:', p);
       return;
     }
 
     // Los clientes con datos incompletos no frenan: el bot los marca con error. Se avisa igual.
     const incompletos = this.elegidos().filter((c) => c.faltantes.length);
-    if (incompletos.length) this.toast.aviso('Clientes con datos incompletos', incompletos.map((c) => c.nombre).join(', '));
+    if (incompletos.length) {
+      const seguir = await this.alertas.confirmar(
+        'Clientes con datos incompletos',
+        'Estos clientes van a terminar con error. ¿Ejecutar el control igual?',
+        'Ejecutar igual',
+        incompletos.map((c) => `${c.nombre}: falta ${c.faltantes.join(', ')}`),
+      );
+      if (!seguir) return;
+    }
 
     const v = this.form.getRawValue();
     try {
