@@ -13,6 +13,7 @@ import { ToastService } from '../../core/ui/toast';
 import { ContextoVentana, contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
 import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
 import { ClientesStore } from '../../core/services/clientes.store';
+import { PerspectivaService } from '../../core/services/perspectiva.service';
 import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
 
 /** Un paso que terminó mal o con avisos: lo único que se muestra del detalle si algo falló. */
@@ -74,6 +75,8 @@ export class EjecucionPantalla {
   private readonly alertas = inject(AlertasService);
   protected readonly store = inject(EjecucionStore);
   private readonly clientesStore = inject(ClientesStore);
+  /** «Usuario»: solo mira y descarga. */
+  protected readonly perspectiva = inject(PerspectivaService);
 
   /** De la ruta /ejecuciones/:id. */
   readonly id = input<string>();
@@ -270,7 +273,7 @@ export class EjecucionPantalla {
   private contextoVentana(): ContextoVentana {
     const emails: Record<string, string> = {};
     for (const c of this.clientesStore.lista()) if (c.email) emails[c.nombre] = c.email;
-    return { emails, periodo: this.ej()?.periodo ?? '' };
+    return { emails, periodo: this.ej()?.periodo ?? '', soloVer: this.perspectiva.soloVer() };
   }
 
   protected verErrores(): void {

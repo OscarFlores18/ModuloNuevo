@@ -1,4 +1,9 @@
-import { Routes } from '@angular/router';
+import { inject } from '@angular/core';
+import { CanActivateFn, Router, Routes } from '@angular/router';
+import { PerspectivaService } from './core/services/perspectiva.service';
+
+/** En la vista «Usuario» solo se puede ver Ejecuciones. */
+const soloCliente: CanActivateFn = () => inject(PerspectivaService).esCliente() || inject(Router).createUrlTree(['/ejecuciones']);
 
 /** Sin pantalla de ingreso: quién es lo da ContadorWeb (ver core/services/sesion.service.ts). */
 export const routes: Routes = [
@@ -6,6 +11,7 @@ export const routes: Routes = [
   {
     path: 'control',
     title: 'Nuevo control · Control de Facturas',
+    canActivate: [soloCliente],
     loadComponent: () => import('./features/control/control').then((m) => m.NuevoControl),
   },
   {
@@ -21,11 +27,13 @@ export const routes: Routes = [
   {
     path: 'clientes',
     title: 'Clientes · Control de Facturas',
+    canActivate: [soloCliente],
     loadComponent: () => import('./features/clientes/clientes').then((m) => m.ClientesPantalla),
   },
   {
     path: 'convertir-aux',
     title: 'Faltantes a Xubio · Control de Facturas',
+    canActivate: [soloCliente],
     loadComponent: () => import('./features/convertir/convertir').then((m) => m.ConvertirPantalla),
     // Si quedó algo cargado en Xubio sin apretar «Importar», se recuerda antes de salir.
     canDeactivate: [(pantalla: { puedeSalir?: () => Promise<boolean> }) => pantalla.puedeSalir?.() ?? true],

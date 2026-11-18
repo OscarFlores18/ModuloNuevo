@@ -6,6 +6,12 @@
 
 @if (!e) {
   @if (!store.error() && !store.historial().length) {
+    @if (perspectiva.soloVer()) {
+      <div class="cf-vacio">
+        <strong>Todavía no hay controles para ver</strong>
+        <p>Cuando alguien corra un control, acá vas a ver su avance, qué encontró y los Excel para descargar.</p>
+      </div>
+    } @else {
     <div class="cf-vacio">
       <strong>Todavía no corriste ningún control</strong>
       <p>Acá vas a ver el avance de cada control mientras corre y, al terminar, qué encontró y qué hay que hacer.</p>
@@ -16,6 +22,7 @@
       </ol>
       <a routerLink="/control" class="mf-btn">Empezar un control →</a>
     </div>
+    }
   }
 } @else {
   @let ins = insigniaEjecucion[e.estado];
@@ -27,7 +34,9 @@
         <h2 id="t-ejecucion" class="m-0 text-xl font-bold first-letter:uppercase">{{ titulo() }}</h2>
         <p class="mf-sub m-0 mt-0.5">{{ bajada() }}</p>
       </div>
-      @if (activa()) {
+      @if (perspectiva.soloVer()) {
+        <span class="mf-badge" title="Vista Usuario: solo se puede mirar y descargar">Solo ver</span>
+      } @else if (activa()) {
         <button type="button" class="mf-btn mf-btn-rojo inline-flex items-center gap-2" (click)="detener()" [disabled]="e.cancelar_pedido">
           @if (e.cancelar_pedido) {
             <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
@@ -96,7 +105,11 @@
             } @else if (!pendientes()) {
               Tildaste todas las tareas de este control.
             } @else {
-              Tildá cada una cuando la termines · quedan {{ pendientes() }} de {{ tareas().length }}.
+              @if (perspectiva.soloVer()) {
+                Quedan {{ pendientes() }} de {{ tareas().length }} por hacer.
+              } @else {
+                Tildá cada una cuando la termines · quedan {{ pendientes() }} de {{ tareas().length }}.
+              }
             }
           </p>
         </div>
@@ -116,7 +129,7 @@
               @let hecha = hechas().has(tarea.clave);
               @let idCheck = 'tr-' + g.id + '-' + i;
               <li class="tr-tarea" [class.tr-hecha]="hecha">
-                <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" (change)="alternarHecha(tarea)" />
+                <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" (change)="alternarHecha(tarea)" [disabled]="perspectiva.soloVer()" />
                 <label class="tr-texto" [for]="idCheck">
                   <span class="tr-orden">{{ tarea.orden }}</span>
                   <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ tarea.porque }}</span>
@@ -126,7 +139,9 @@
                     <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)">Ver comprobantes</button>
                   }
                   @if (tarea.destino; as d) {
-                    <button type="button" class="mf-btn mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
+                    @if (perspectiva.esCliente()) {
+                      <button type="button" class="mf-btn mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
+                    }
                   }
                 </span>
               </li>
@@ -155,11 +170,13 @@
           @if (siguienteCliente(); as s) { Sigue {{ s }} en {{ segundosPausa() }} s. } @else { Sigue en {{ segundosPausa() }} s. }
         </strong>
       </div>
-      <div class="flex flex-wrap gap-2">
-        <button type="button" class="mf-btn" (click)="store.responder('continuar')">Continuar ahora</button>
-        <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('no_preguntar')">No preguntar más</button>
-        <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')">Cancelar todo</button>
-      </div>
+      @if (perspectiva.esCliente()) {
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="mf-btn" (click)="store.responder('continuar')">Continuar ahora</button>
+          <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('no_preguntar')">No preguntar más</button>
+          <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')">Cancelar todo</button>
+        </div>
+      }
     </section>
   }
 
@@ -257,7 +274,7 @@
       @for (h of store.historial(); track h.id) {
         @let insH = insigniaEjecucion[h.estado];
         <li>
-          @if (h.estado !== 'en_curso' && h.estado !== 'esperando') {
+          @if (perspectiva.esCliente() && h.estado !== 'en_curso' && h.estado !== 'esperando') {
             <button type="button" class="ej-hist-borrar" (click)="borrarDelHistorial(h)" [attr.aria-label]="'Borrar del historial el control de ' + periodoLegibleDe(h.periodo)" title="Borrar del historial">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
             </button>

@@ -4,6 +4,7 @@ import { filter } from 'rxjs';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { Usuario } from './core/models';
 import { ClientesStore } from './core/services/clientes.store';
+import { Perspectiva, PerspectivaService } from './core/services/perspectiva.service';
 import { EjecucionStore } from './core/services/ejecucion.store';
 import { SesionService } from './core/services/sesion.service';
 import { Circuito } from './core/ui/circuito';
@@ -23,6 +24,7 @@ export class App {
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly clientes = inject(ClientesStore);
   private readonly recorrido = inject(RecorridoService);
+  protected readonly perspectiva = inject(PerspectivaService);
   private readonly router = inject(Router);
 
   /** Cuándo se trajeron por última vez los clientes y las ejecuciones del servidor. */
@@ -60,6 +62,12 @@ export class App {
   protected medirScroll(): void {
     const el = document.documentElement;
     this.hayScroll.set(el.scrollTop > el.clientHeight * 0.8);
+  }
+
+  /** «Usuario» solo ve Ejecuciones: si estaba en otra pantalla, se lo lleva ahí. */
+  protected elegirPerspectiva(p: Perspectiva): void {
+    this.perspectiva.elegir(p);
+    if (p === 'usuario' && !this.router.url.startsWith('/ejecuciones')) void this.router.navigate(['/ejecuciones']);
   }
 
   /** El «?» del encabezado: el recorrido de la pantalla en la que se está. */

@@ -226,6 +226,8 @@ export interface ContextoVentana {
   emails: Record<string, string>;
   /** «01/11/2026 al 17/11/2026». */
   periodo: string;
+  /** Vista «Usuario»: sin botones que hagan algo (mail, ir a otra pantalla). */
+  soloVer?: boolean;
 }
 
 const MAX_LINEAS_MAIL = 25;
@@ -296,6 +298,11 @@ function botonesYEtiquetas(e: Advertencia, ctx: ContextoVentana): { botones: str
   const botones: string[] = [];
   const etiquetas: string[] = [];
   for (const accion of e.acciones) {
+    // Vista «Usuario»: las acciones quedan como etiquetas, sin botones.
+    if (ctx.soloVer) {
+      if (!accion.toLowerCase().includes('xubio') || accion === 'Sin acción') etiquetas.push(`<span class="ve-etiqueta">${accion === 'Sin acción' ? '✓ ' : ''}${esc(accion)}</span>`);
+      continue;
+    }
     // «Corregir en Xubio» ya no se ofrece: lo que hay que cambiar está en el instructivo.
     if (accion.toLowerCase().includes('xubio')) continue;
     if (accion === 'Consultar al cliente') {

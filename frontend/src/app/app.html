@@ -17,24 +17,33 @@
     <!-- Fila inferior: pestañas y acciones -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <nav class="flex flex-wrap gap-2" aria-label="Secciones">
-        <a routerLink="/control" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Nuevo control</a>
+        @if (perspectiva.esCliente()) {
+          <a routerLink="/control" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Nuevo control</a>
+        }
         <a routerLink="/ejecuciones" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
           Ejecuciones
           @if (ejecucion.hayActiva()) {
             <span class="cf-tab-badge !bg-emerald-600" title="Hay un control en curso"><span class="mf-punto mf-latido" aria-hidden="true"></span>En curso</span>
           }
         </a>
-        <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Faltantes a Xubio</a>
-        <a routerLink="/clientes" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
-          Clientes
-          @if (clientes.lista().length) {
-            <span class="cf-tab-badge" [title]="clientes.incompletos() + ' con datos incompletos'">{{ clientes.lista().length }}</span>
-          }
-        </a>
+        @if (perspectiva.esCliente()) {
+          <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Faltantes a Xubio</a>
+          <a routerLink="/clientes" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
+            Clientes
+            @if (clientes.lista().length) {
+              <span class="cf-tab-badge" [title]="clientes.incompletos() + ' con datos incompletos'">{{ clientes.lista().length }}</span>
+            }
+          </a>
+        }
       </nav>
 
       <!-- Controles de la derecha -->
       <div class="flex items-center gap-2">
+        <div class="cf-perspectiva" role="radiogroup" aria-label="Perspectiva">
+          <span class="cf-perspectiva-titulo">Vista</span>
+          <button type="button" role="radio" [attr.aria-checked]="perspectiva.soloVer()" [class.activo]="perspectiva.soloVer()" (click)="elegirPerspectiva('usuario')" title="Usuario: solo ve las ejecuciones y descarga los archivos">Usuario</button>
+          <button type="button" role="radio" [attr.aria-checked]="perspectiva.esCliente()" [class.activo]="perspectiva.esCliente()" (click)="elegirPerspectiva('cliente')" title="Cliente: hace todo (controles, clientes, Faltantes a Xubio)">Cliente</button>
+        </div>
         @if (sesion.conectado() && sesion.usuario(); as u) {
           <span class="cf-control inline-flex items-center" [title]="rolesDe(u)">{{ u.nombre }}</span>
         }
@@ -50,7 +59,9 @@
       <p>{{ motivo }}</p>
     </div>
   } @else {
-    <app-circuito />
+    @if (perspectiva.esCliente()) {
+      <app-circuito />
+    }
     <router-outlet />
   }
 

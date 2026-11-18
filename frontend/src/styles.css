@@ -2476,3 +2476,44 @@ details[open] > summary .ej-chevron {
   font-family: inherit;
   font-size: 10.5px;
 }
+
+/* --- Perspectiva: Usuario (solo ver) / Cliente (todo) ----------------------- */
+.cf-perspectiva {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.cf-perspectiva-titulo {
+  padding: 0 6px 0 4px;
+  color: #cbd5e1;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.cf-perspectiva button {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.cf-perspectiva button:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.cf-perspectiva button.activo {
+  background: #fff;
+  color: #1e3a8a;
+}
