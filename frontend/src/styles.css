@@ -2135,6 +2135,50 @@ details[open] > summary .ej-chevron {
   text-decoration: line-through;
 }
 
+/* Aplicar cambios: elegido (todavía no hecho), en curso y confirmado por el servidor */
+.tr-elegida {
+  background: #f0fdf4;
+  border-radius: 8px;
+}
+
+.tr-check-aplicar {
+  accent-color: #15803d;
+}
+
+.tr-pendiente-aplicar {
+  color: #15803d;
+}
+
+.tr-aplicando {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--color-acento);
+}
+
+.tr-actualizado {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  margin: 12px 0 4px;
+  padding: 10px 14px;
+  border: 1px solid #bbf7d0;
+  border-left: 4px solid #15803d;
+  border-radius: 10px;
+  background: #f0fdf4;
+  color: #14532d;
+  font-size: 0.9rem;
+}
+
+.tr-actualizado > svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: #15803d;
+}
+
 .tr-info {
   margin: 14px 0 0;
   padding: 8px 12px;
@@ -2197,6 +2241,268 @@ details[open] > summary .ej-chevron {
 .nc-resaltar {
   box-shadow: 0 0 0 3px var(--color-acento);
   transition: box-shadow 0.2s;
+}
+
+/* --- Perspectiva: «¿Cómo deseas ingresar?» --------------------------------- */
+
+.pf-pantalla {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 24px 16px;
+  background: linear-gradient(160deg, #14264a 0%, #1e40af 55%, #0e7490 100%);
+}
+
+.pf-caja {
+  width: min(52rem, 100%);
+  text-align: center;
+  color: #fff;
+}
+
+.pf-marca {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.8;
+}
+
+.pf-titulo {
+  margin: 6px 0 28px;
+  font-size: clamp(1.6rem, 3vw, 2.2rem);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.pf-opciones {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 18px;
+}
+
+.pf-opcion {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 26px 24px;
+  border: 2px solid transparent;
+  border-radius: 14px;
+  background: var(--color-panel);
+  color: var(--color-texto);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 10px 30px rgba(6, 20, 50, 0.3);
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+
+.pf-opcion:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-vivo);
+  box-shadow: 0 14px 36px rgba(6, 20, 50, 0.38);
+}
+
+.pf-opcion:focus-visible {
+  outline: 3px solid #8fb3ff;
+  outline-offset: 3px;
+}
+
+.pf-icono {
+  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--color-acento);
+}
+
+.pf-icono svg {
+  width: 24px;
+  height: 24px;
+}
+
+.pf-nombre {
+  font-size: 1.3rem;
+  font-weight: 800;
+}
+
+.pf-detalle {
+  color: var(--color-tenue);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.pf-nota {
+  margin: 22px 0 0;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Badge de la perspectiva en el encabezado. */
+.cf-vista {
+  display: inline-flex;
+  align-items: center;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 0.92rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.cf-vista-total {
+  border-color: #fbbf24;
+  background: rgba(251, 191, 36, 0.18);
+}
+
+/* Con más pestañas, más angostas para que entren en una fila. */
+@media (min-width: 641px) {
+  .cf-tab {
+    min-width: 0;
+    padding: 0 16px;
+  }
+}
+
+/* --- Faltantes en IVA (partidas de ARCA no encontradas en el Libro IVA) -------
+   Sobrio: un solo acento azul a la izquierda, sin fondos ni bordes gruesos. */
+
+.ej-prioritaria {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--color-borde);
+  border-left: 3px solid #2563eb;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.tr-grupo[data-grupo='prioridad'] .tr-grupo-num {
+  background: #2563eb;
+}
+
+.tr-grupo[data-grupo='prioridad'] .tr-tarea {
+  border-left: 3px solid #2563eb;
+}
+
+/* --- Qué hay que hacer: las tareas no aprietan el texto contra los botones ---- */
+
+.tr-tarea {
+  flex-wrap: wrap;
+}
+
+.tr-texto {
+  min-width: min(100%, 280px);
+}
+
+/* --- Faltantes en IVA: lista de comprobantes y «Subir a Xubio» a mano -------- */
+
+.tr-faltantes {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.tr-falt-cab {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 12px;
+}
+
+.tr-falt-num {
+  color: var(--color-tenue);
+  font-weight: 600;
+}
+
+.tr-falt-tabla {
+  margin-left: 32px;
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+  container-type: inline-size;
+}
+
+.tr-falt-tabla table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 0.82rem;
+}
+
+.tr-falt-tabla th {
+  padding: 6px 8px;
+  background: var(--color-panel-alt);
+  color: var(--color-tenue);
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tr-falt-tabla td {
+  padding: 5px 8px;
+  border-top: 1px solid #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tr-falt-tabla th:nth-child(1) { width: 34px; }
+.tr-falt-tabla th:nth-child(2) { width: 92px; }
+.tr-falt-tabla th:nth-child(3) { width: 62px; }
+.tr-falt-tabla th:nth-child(4) { width: 138px; }
+.tr-falt-tabla th:nth-child(5) { width: 112px; }
+.tr-falt-tabla th:nth-child(7) { width: 104px; }
+/* Checkbox por comprobante: tildados van a Xubio; el resto queda a la vista, apagado. */
+.tr-falt-tabla .tr-falt-sel { text-align: center; padding-left: 0; padding-right: 0; }
+.tr-falt-tabla .tr-falt-sel input { width: 15px; height: 15px; margin: 0; vertical-align: middle; cursor: pointer; accent-color: #2563eb; }
+.tr-falt-tabla .tr-falt-sel input:disabled { cursor: not-allowed; }
+.tr-falt-tabla tr.tr-falt-fuera td:not(.tr-falt-sel) { opacity: .4; }
+
+.tr-falt-tabla .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.tr-falt-mas {
+  align-self: flex-start;
+  margin-left: 32px;
+}
+
+/* Si la tarjeta es angosta, la CUIT cede su lugar a la razón social. */
+@container (max-width: 600px) {
+  .tr-falt-cuit {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .tr-falt-tabla {
+    margin-left: 0;
+  }
+}
+
+/* Observación de la hoja del Excel: anulada, en el extracto o ya en «Error». */
+.tr-falt-nota {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--color-panel-alt);
+  color: var(--color-tenue);
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 /* --- Ayuda «?» ------------------------------------------------------------- */
@@ -2477,43 +2783,3 @@ details[open] > summary .ej-chevron {
   font-size: 10.5px;
 }
 
-/* --- Perspectiva: Usuario (solo ver) / Cliente (todo) ----------------------- */
-.cf-perspectiva {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid rgba(255, 255, 255, 0.3);
-  border-radius: 9px;
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.cf-perspectiva-titulo {
-  padding: 0 6px 0 4px;
-  color: #cbd5e1;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.cf-perspectiva button {
-  padding: 4px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: #e2e8f0;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: background-color 0.15s, color 0.15s;
-}
-
-.cf-perspectiva button:hover {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.cf-perspectiva button.activo {
-  background: #fff;
-  color: #1e3a8a;
-}

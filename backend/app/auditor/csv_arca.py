@@ -313,6 +313,111 @@ def detectar_periodo(fuente) -> str:
     return meses.most_common(1)[0][0] if meses else ""
 
 
+def _comprobante(fila: pd.Series) -> str:
+    """«A-00014-01481153»: letra del tipo («1 - Factura A»), punto de venta y número."""
+    tipo = str(_columna(fila, "Tipo", "Tipo de Comprobante") or "").strip()
+    letra = tipo.split()[-1] if tipo and re.fullmatch(r"[A-EM]", tipo.split()[-1]) else ""
+    pv, nro = _entero(_columna(fila, "Punto de Venta")), _entero(_columna(fila, "Número Desde"))
+    if not pv and not nro:
+        return ""
+    cuerpo = f"{int(pv or 0):05d}-{int(nro or 0):08d}"
+    return f"{letra}-{cuerpo}" if letra else cuerpo
+
+
+def clave_fila(fila: pd.Series, operacion: str) -> str:
+    """«CUIT|comprobante» de una partida («30500000000|A-00014-01481153»): la misma
+    clave con la que la pantalla elige qué filas subir."""
+    parte = "Emisor" if operacion == "Compras" else "Receptor"
+    return f"{_entero(_columna(fila, f'Nro. Doc. {parte}'))}|{_comprobante(fila)}"
+
+
+def sin_excluidas(tabla: pd.DataFrame, operacion: str, excluir: set[str]) -> pd.DataFrame:
+    """La tabla sin las filas que se destildaron en la pantalla."""
+    if not excluir:
+        return tabla
+    quedan = [clave_fila(fila, operacion) not in excluir for _, fila in tabla.iterrows()]
+    return tabla[quedan]
+
+
+def filas_para_mostrar(fuente) -> dict[str, list[dict]]:
+    """Las partidas de ARCA no encontradas en el Libro IVA tal como están en la hoja
+    «Faltantes en Libro IVA …» del Excel, listas para la pantalla:
+    {«Compras»: [{fecha, tipo, comprobante, cuit, razon, total}, …]}."""
+    salida: dict[str, list[dict]] = {}
+    for op, tabla in detectar_faltantes(fuente):
+        parte = "Emisor" if op == "Compras" else "Receptor"
+        filas = []
+        for _, fila in tabla.iterrows():
+            fecha = _fecha(_columna(fila, "Fecha", "Fecha de Emisión"))
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha):
+                fecha = f"{fecha[8:10]}/{fecha[5:7]}/{fecha[0:4]}"
+            razon = _columna(fila, f"Denominación {parte}")
+            filas.append({
+                "fecha": fecha,
+                "tipo": "" if _vacio(_columna(fila, "Tipo")) else str(_columna(fila, "Tipo")).strip(),
+                "comprobante": _comprobante(fila),
+                "cuit": _entero(_columna(fila, f"Nro. Doc. {parte}")),
+                "razon": "" if _vacio(razon) else str(razon).strip(),
+                "total": _numero(_columna(fila, "Imp. Total", "Importe Total")),
+            })
+        salida[op] = filas
+    return salida
+
+
+_SUMA = re.compile(r"^=SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)$", re.IGNORECASE)
+
+
+def libro_sin_arca(fuente, operacion: str) -> list[dict]:
+    """Las partidas del Libro IVA no encontradas en ARCA tal como están en el Excel:
+    el bloque «Partidas del Libro IVA … no encontradas en ARCA» al pie de la primera
+    hoja (columnas de ARCA, el comprobante en la columna A). El total es una fórmula
+    =SUM(…) que openpyxl no calcula: se suma acá."""
+    from openpyxl import load_workbook
+    from openpyxl.utils import column_index_from_string
+
+    ws = load_workbook(fuente).worksheets[0]
+    indice = {_norm(c.value): i for i, c in enumerate(ws[1]) if not _vacio(c.value)}
+
+    def col(*nombres: str) -> int | None:
+        return next((indice[_norm(n)] for n in nombres if _norm(n) in indice), None)
+
+    inicio = next(
+        (r for r in range(2, ws.max_row + 1) if _norm(ws.cell(r, 1).value or "").startswith("partidas del libro iva")),
+        None,
+    )
+    if inicio is None:
+        return []
+    parte = "Emisor" if operacion == "Compras" else "Receptor"
+    c_fecha, c_tipo, c_total = col("Fecha"), col("Tipo"), col("Imp. Total")
+    c_cuit, c_razon = col(f"Nro. Doc. {parte}"), col(f"Denominación {parte}")
+    filas = []
+    # Debajo del título viene una fila de encabezados (=A1, =B1…) y después los datos.
+    for r in range(inicio + 2, ws.max_row + 1):
+        valores = [c.value for c in ws[r]]
+        if all(_vacio(v) for v in valores):
+            break
+
+        def v(i: int | None):
+            return valores[i] if i is not None and i < len(valores) else None
+
+        total = v(c_total)
+        if isinstance(total, str) and (m := _SUMA.match(total.strip())):
+            desde, hasta = column_index_from_string(m.group(1)), column_index_from_string(m.group(3))
+            total = sum(_numero(ws.cell(r, c).value) or 0 for c in range(desde, hasta + 1))
+        fecha = _fecha(v(c_fecha))
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha):
+            fecha = f"{fecha[8:10]}/{fecha[5:7]}/{fecha[0:4]}"
+        filas.append({
+            "fecha": fecha,
+            "tipo": "" if _vacio(v(c_tipo)) else str(v(c_tipo)).strip(),
+            "comprobante": "" if _vacio(valores[0]) else str(valores[0]).strip(),
+            "cuit": re.sub(r"\D", "", str(v(c_cuit) or "")),
+            "razon": "" if _vacio(v(c_razon)) else str(v(c_razon)).strip(),
+            "total": _numero(total),
+        })
+    return filas
+
+
 def leer_faltantes_de_control(ruta_control, operacion: str) -> pd.DataFrame:
     """La tabla de partidas de ARCA no encontradas de esa operación (vacía si no hay)."""
     for op, tabla in detectar_faltantes(ruta_control):
@@ -421,144 +526,7 @@ def datos_del_nombre(nombre: str) -> tuple[str | None, str, str]:
     return _operacion_por_texto(base), "", sin_op or base
 
 
-# --- Antes de importar: lo normal no se sube y se avisa lo raro --------------------
-#
-# Del bloque de partidas de ARCA sin par en el Libro IVA, igual que en la
-# auditoría, no se importan:
-# - factura + nota de crédito del mismo CUIT y el mismo importe (se anulan);
-# - liquidaciones bancarias cuyo banco ya está en el Libro IVA como extracto.
-
-_NUMERO_CONTROL = re.compile(r" - (\d+)\S* control\.xlsx?$", re.IGNORECASE)
-
-
-def numero_de_control(nombre: str) -> int | None:
-    """«AUX - … - 3er control.xlsx» -> 3. Un AUX de la app sin número es el 1er control."""
-    if not _NOMBRE_AUX.match(Path(nombre).name):
-        return None
-    m = _NUMERO_CONTROL.search(Path(nombre).name)
-    return int(m.group(1)) if m else 1
-
-
-def _solo_digitos(v) -> str:
-    if _vacio(v):
-        return ""
-    return re.sub(r"\D", "", str(v).strip().removesuffix(".0"))
-
-
-def _clase(tipo) -> str:
-    t = _norm(tipo)
-    if "credito" in t:
-        return "NC"
-    if "debito" in t:
-        return "ND"
-    return "FC"
-
-
-def _cuit_de(fila: pd.Series, operacion: str) -> str:
-    parte = "Emisor" if operacion == "Compras" else "Receptor"
-    return _solo_digitos(_columna(fila, f"Nro. Doc. {parte}"))
-
-
-def _total_de(fila: pd.Series) -> float | None:
-    n = _numero(_columna(fila, "Imp. Total", "Importe Total"))
-    return None if n is None else round(abs(n), 2)
-
-
-def resumen_fila(fila: pd.Series, operacion: str, motivo: str | None = None) -> dict:
-    """Lo que se muestra para revisar una partida antes de importarla."""
-    tipo = "" if _vacio(_columna(fila, "Tipo")) else str(_columna(fila, "Tipo")).strip()
-    letra = tipo[-1:].upper() if tipo[-1:].isalpha() else ""
-    pto, num = _entero(_columna(fila, "Punto de Venta")), _entero(_columna(fila, "Número Desde"))
-    comprobante = f"{letra}-{int(pto):05d}-{int(num):08d}" if pto and num else ""
-    parte = "Emisor" if operacion == "Compras" else "Receptor"
-    fecha = _fecha(_columna(fila, "Fecha", "Fecha de Emisión"))
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha):
-        fecha = f"{fecha[8:10]}/{fecha[5:7]}/{fecha[0:4]}"
-    denominacion = _columna(fila, f"Denominación {parte}")
-    salida = {
-        "fecha": fecha,
-        "tipo": tipo,
-        "comprobante": comprobante,
-        "cuit": _cuit_de(fila, operacion),
-        "denominacion": "" if _vacio(denominacion) else str(denominacion).strip(),
-        "total": _numero(_columna(fila, "Imp. Total", "Importe Total")),
-    }
-    if motivo:
-        salida["motivo"] = motivo
-    return salida
-
-
-def extractos_del_libro(fuente) -> set[str]:
-    """CUIT de los bancos que en el Libro IVA del AUX están como «Extracto Bancario»."""
-    try:
-        libro = pd.ExcelFile(fuente)
-        hoja = next((h for h in libro.sheet_names if _norm(h) == "libro iva"), None)
-        if hoja is None:
-            return set()
-        df = pd.read_excel(libro, sheet_name=hoja)
-    except Exception:
-        return set()
-    col = {_norm(c): c for c in df.columns}
-    if "tipo" not in col or "cuit" not in col:
-        return set()
-    es_extracto = df[col["tipo"]].astype(str).map(_norm).str.contains("extracto", na=False)
-    return {c for c in df.loc[es_extracto, col["cuit"]].map(_solo_digitos) if c}
-
-
-def separar_normales(tabla: pd.DataFrame, operacion: str, cuits_extracto: set[str]) -> tuple[pd.DataFrame, dict]:
-    """(lo que hay que importar, {índice: «anulada» | «liquidacion»})."""
-    normales: dict = {}
-    filas = list(tabla.iterrows())
-    for i, nc in filas:
-        if _clase(_columna(nc, "Tipo")) != "NC" or i in normales:
-            continue
-        clave = (_cuit_de(nc, operacion), _total_de(nc))
-        if not clave[1]:
-            continue
-        for j, fc in filas:
-            if j in normales or j == i or _clase(_columna(fc, "Tipo")) != "FC":
-                continue
-            if (_cuit_de(fc, operacion), _total_de(fc)) == clave:
-                normales[i] = normales[j] = "anulada"
-                break
-    if operacion == "Compras":
-        for i, fila in filas:
-            if i not in normales and "liquidaci" in _norm(_columna(fila, "Tipo")) and _cuit_de(fila, operacion) in cuits_extracto:
-                normales[i] = "liquidacion"
-    return tabla.drop(index=list(normales)), normales
-
-
-def fechas_fuera_del_periodo(fuente, periodo: str) -> list[str]:
-    """Fechas de «Mis Comprobantes» del AUX que no son del período «MM-AA»: el
-    control bajó de ARCA otro período (ese control salió mal)."""
-    if not re.fullmatch(r"\d{2}-\d{2}", periodo or ""):
-        return []
-    try:
-        libro = pd.ExcelFile(fuente)
-        hoja = next((h for h in libro.sheet_names if _norm(h) == "mis comprobantes"), None)
-        tabla = _tabla(pd.read_excel(libro, sheet_name=hoja, header=None)) if hoja else None
-    except Exception:
-        return []
-    if tabla is None:
-        return []
-    columna = next((c for c in tabla.columns if _norm(c) == "fecha"), None)
-    if columna is None:
-        return []
-    fuera = []
-    for v in tabla[columna]:
-        f = _fecha(v)
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f) and f"{f[5:7]}-{f[2:4]}" != periodo:
-            fuera.append(f"{f[8:10]}/{f[5:7]}/{f[0:4]}")
-    return fuera
-
-
-_MOTIVOS = {
-    "anulada": "anuladas con nota de crédito",
-    "liquidacion": "liquidaciones bancarias (en Xubio están en el extracto)",
-}
-
-
-def convertir_auxiliares(archivos: list[tuple[str, bytes]], incluir_normales: bool = False) -> list[dict]:
+def convertir_auxiliares(archivos: list[tuple[str, bytes]], excluir: dict[str, set[str]] | None = None) -> list[dict]:
     """Por cliente y período: los CSV de Ventas y Compras en un .zip (en memoria).
 
     Todo se detecta del archivo: qué hojas tienen partidas, de qué operación son,
@@ -567,7 +535,10 @@ def convertir_auxiliares(archivos: list[tuple[str, bytes]], incluir_normales: bo
     Cada resultado: {cliente, periodo, archivos, partidas, zips: {operación: {nombre, contenido}},
     excel, avisos, error}.
     Sin partidas en una operación, no va al .zip y queda un aviso; sin partidas en
-    ninguna, no hay .zip (zips vacío, excel en None) y solo los avisos."""
+    ninguna, no hay .zip (zips vacío, excel en None) y solo los avisos.
+
+    `excluir`: por nombre de archivo, las claves «CUIT|comprobante» que no van
+    (las que se destildaron al revisar el control)."""
     grupos: dict[tuple[str, str], dict] = {}
     sueltos: list[dict] = []
     for nombre, contenido in archivos:
@@ -586,60 +557,28 @@ def convertir_auxiliares(archivos: list[tuple[str, bytes]], incluir_normales: bo
             continue
         grupo = grupos.setdefault(
             (cliente.casefold(), periodo),
-            {"cliente": cliente, "periodo": periodo, "archivos": [], "tablas": {}, "error": None,
-             "control": {}, "extractos": {}, "fuera": {}},
+            {"cliente": cliente, "periodo": periodo, "archivos": [], "tablas": {}, "error": None},
         )
         grupo["archivos"].append(nombre)
-        extractos = extractos_del_libro(io.BytesIO(contenido))
-        fuera = fechas_fuera_del_periodo(io.BytesIO(contenido), periodo)
+        fuera = (excluir or {}).get(nombre, set())
         for op, tabla in tablas:
-            grupo["control"][op] = numero_de_control(nombre)
-            grupo["extractos"][op] = extractos
-            grupo["fuera"][op] = fuera
+            tabla = sin_excluidas(tabla, op, fuera)
             if op in grupo["tablas"]:
                 grupo["error"] = f"Hay dos AUX de {op} para el mismo cliente y período: subí uno solo (el del control que querés)."
             grupo["tablas"][op] = tabla
 
     resultados: list[dict] = []
     for grupo in grupos.values():
-        item = {k: grupo[k] for k in ("cliente", "periodo", "archivos", "error", "control")}
-        item.update(partidas={}, zips={}, excel=None, avisos=[], alertas=[], filas={}, normales={})
+        item = {k: grupo[k] for k in ("cliente", "periodo", "archivos", "error")}
+        item.update(partidas={}, zips={}, excel=None, avisos=[])
         resultados.append(item)
         if item["error"]:
             continue
-        # El control bajó otro período de ARCA: lo que «falta» no es real.
-        for op in ("Ventas", "Compras"):
-            fuera = grupo["fuera"].get(op) or []
-            if fuera:
-                ejemplo = ", ".join(sorted(set(fuera))[:3])
-                item["alertas"].append(
-                    f"{op}: en este AUX, ARCA trajo comprobantes de otro período ({ejemplo}). Ese control salió mal: "
-                    "volvé a correrlo antes de cargar nada en Xubio."
-                )
-        tablas_op: dict[str, pd.DataFrame] = {}
-        for op in ("Ventas", "Compras"):
-            if op not in grupo["tablas"]:
-                continue
-            tabla = grupo["tablas"][op]
-            importar, normales = separar_normales(tabla, op, grupo["extractos"].get(op) or set())
-            if normales:
-                item["normales"][op] = [resumen_fila(tabla.loc[i], op, motivo) for i, motivo in normales.items()]
-                cuenta = Counter(normales.values())
-                detalle = " y ".join(f"{n} {_MOTIVOS[m]}" for m, n in cuenta.items())
-                if incluir_normales:
-                    item["avisos"].append(f"{op}: se incluyen igual {detalle}.")
-                else:
-                    item["avisos"].append(f"{op}: no se suben {detalle}: no hace falta cargarlas en Xubio.")
-                    tabla = importar
-            tablas_op[op] = tabla
-            item["filas"][op] = [resumen_fila(f, op) for _, f in tabla.iterrows()]
-        item["partidas"] = {op: len(t) for op, t in tablas_op.items()}
+        item["partidas"] = {op: len(grupo["tablas"][op]) for op in ("Ventas", "Compras") if op in grupo["tablas"]}
         # Una operación sin partidas no va al .zip (un CSV vacío no sirve para
         # importar): se informa en su lugar.
-        con_partidas = {op: t for op, t in tablas_op.items() if len(t)}
+        con_partidas = {op: t for op, t in grupo["tablas"].items() if len(t)}
         for op, n in item["partidas"].items():
-            if not n and item["normales"].get(op):
-                continue  # ya se avisó que lo que había era normal
             if not n:
                 item["avisos"].append(
                     f"{op}: no hay partidas de ARCA no encontradas en el Libro IVA "

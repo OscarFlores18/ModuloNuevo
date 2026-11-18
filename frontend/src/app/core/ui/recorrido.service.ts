@@ -19,13 +19,13 @@ const RECORRIDOS: Record<string, PasoRecorrido[]> = {
   ],
   ejecuciones: [
     { objetivo: 'estado', titulo: 'Estado del control', texto: 'Mientras corre ves el avance. Al terminar, cuántos comprobantes de ARCA coinciden con Xubio y cuántas tareas quedan.' },
-    { objetivo: 'tareas', titulo: 'Qué hay que hacer', texto: 'Las tareas en orden: primero lo grave, después lo de Xubio y al final lo que hay que consultar al cliente. Tildalas a medida que las hacés. «Ver todos los hallazgos» abre el detalle con las filas del Excel.' },
+    { objetivo: 'tareas', titulo: 'Qué hay que hacer', texto: 'Las tareas en orden. Lo que falta en Xubio se sube con «⬆ Subir a Xubio» (destildá lo que no va); los errores de carga se corrigen con «Aplicar cambios», que arma un Libro IVA corregido y vuelve a cruzar. «Ver todos los hallazgos» abre el detalle.' },
     { objetivo: 'clientes-ej', titulo: 'Clientes y archivos', texto: 'Cada cliente con sus pasos (ARCA, Xubio, auditoría) y los Excel que se generaron, para abrirlos o guardarlos.' },
     { objetivo: 'historial', titulo: 'Historial', texto: 'Los controles anteriores. Tocá uno para verlo; con el tachito lo sacás de la lista (los Excel quedan en las carpetas).' },
   ],
   'convertir-aux': [
-    { objetivo: 'elegir', titulo: '1. Elegí los AUX', texto: 'Arrastrá los Excel AUX del último control. El cliente, el período y la operación se reconocen solos. Las anuladas y las liquidaciones bancarias no se suben.' },
-    { objetivo: 'resultado', titulo: '2. Cargalos en Xubio', texto: 'Por cada operación revisás las partidas, el bot las deja listas en Xubio y vos apretás «Importar» en Chrome. Después marcás «Ya lo importé» y corrés un control nuevo para confirmar.' },
+    { objetivo: 'elegir', titulo: '1. Elegí los AUX', texto: 'Lo más fácil: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel AUX que dejó el control en la carpeta del cliente.' },
+    { objetivo: 'resultado', titulo: '2. Cargalos en Xubio', texto: 'Elegí la empresa y tocá «Cargar en Xubio»: el bot deja el archivo listo en Xubio y vos apretás «Importar» en la ventana de Chrome. También podés bajar el .zip o verlo en Excel.' },
   ],
   clientes: [
     { objetivo: 'nuevo-cliente', titulo: 'Nuevo cliente', texto: 'Cargá el nombre tal como figura en Xubio, la CUIT con la que se entra a ARCA, la clave fiscal y la CUIT de la empresa que se controla.' },

@@ -4,7 +4,7 @@ import { CuitPipe, formatearCuit } from '../../core/cuit.pipe';
 import { Cliente, mensajeDeError } from '../../core/models';
 import { AccesoClientesService } from '../../core/services/acceso-clientes.service';
 import { ClientesStore } from '../../core/services/clientes.store';
-import { SesionService } from '../../core/services/sesion.service';
+import { PerspectivaService } from '../../core/services/perspectiva.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Encabezado } from '../../core/ui/encabezado';
 import { RecorridoService } from '../../core/ui/recorrido.service';
@@ -19,12 +19,10 @@ import { ClienteForm } from './cliente-form';
         @if (acceso.configurada()) {
           <button type="button" class="mf-btn mf-btn-suave" (click)="bloquear()" title="Vuelve a pedir la contraseña">Bloquear</button>
         }
-        @if (sesion.esSupervisor()) {
-          <button type="button" class="mf-btn mf-btn-suave" (click)="precargar()" [disabled]="precargando()">
-            {{ precargando() ? 'Precargando…' : 'Precargar clientes del estudio' }}
-          </button>
-          <button type="button" class="mf-btn" (click)="abrir(null)" data-tour="nuevo-cliente">+ Nuevo cliente</button>
-        }
+        <button type="button" class="mf-btn mf-btn-suave" (click)="precargar()" [disabled]="precargando() || !perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">
+          {{ precargando() ? 'Precargando…' : 'Precargar clientes del estudio' }}
+        </button>
+        <button type="button" class="mf-btn" (click)="abrir(null)" data-tour="nuevo-cliente" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">+ Nuevo cliente</button>
       }
     </app-encabezado>
 
@@ -63,8 +61,8 @@ import { ClienteForm } from './cliente-form';
     } @else {
 
     @if (store.error(); as e) { <app-alerta nivel="error" titulo="No se pudieron cargar los clientes." [mensajes]="[e]" /> }
-    @if (!sesion.esSupervisor()) {
-      <app-alerta nivel="info" [mensajes]="['Solo un supervisor puede dar de alta, editar o borrar clientes. Si falta un dato, pedíselo.']" />
+    @if (!perspectiva.editaClientes()) {
+      <app-alerta nivel="info" [mensajes]="[perspectiva.canEdit() ? 'Solo un supervisor puede dar de alta, editar o borrar clientes. Si falta un dato, pedíselo.' : 'Vista de Empleado: solo lectura.']" />
     }
     @if (guardadoRecien(); as g) {
       <app-alerta nivel="ok" [mensajes]="['Se guardó ' + g + '.']" [descartable]="true" (cerrado)="guardadoRecien.set(null)" />
@@ -108,7 +106,7 @@ import { ClienteForm } from './cliente-form';
             </thead>
             <tbody>
               @for (c of visibles(); track c.nombre) {
-                <tr [class.mf-fila]="sesion.esSupervisor()" [class.mf-fila-activa]="formAbierto() && editando()?.nombre === c.nombre" (click)="sesion.esSupervisor() && abrir(c)">
+                <tr [class.mf-fila]="perspectiva.editaClientes()" [class.mf-fila-activa]="formAbierto() && editando()?.nombre === c.nombre" (click)="perspectiva.editaClientes() && abrir(c)">
                   <td class="max-w-[18rem] truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</td>
                   <td class="mono whitespace-nowrap">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : '—' }}</td>
                   <td class="mono whitespace-nowrap">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</td>
@@ -123,9 +121,7 @@ import { ClienteForm } from './cliente-form';
                     }
                   </td>
                   <td class="num">
-                    @if (sesion.esSupervisor()) {
-                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="$event.stopPropagation(); abrir(c)" [attr.aria-label]="'Editar ' + c.nombre">Editar</button>
-                    }
+                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="$event.stopPropagation(); abrir(c)" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()" [attr.aria-label]="'Editar ' + c.nombre">Editar</button>
                   </td>
                 </tr>
               } @empty {
@@ -139,7 +135,7 @@ import { ClienteForm } from './cliente-form';
                       <div class="cf-vacio !my-2">
                         <strong>Todavía no hay clientes</strong>
                         <p>Cada cliente es una empresa que vas a controlar. Necesitás su nombre como figura en Xubio, la CUIT con la que entrás a ARCA, la clave fiscal y la CUIT de la empresa.</p>
-                        @if (sesion.esSupervisor()) { <button type="button" class="mf-btn" (click)="abrir(null)">+ Cargar el primero</button> }
+                        <button type="button" class="mf-btn" (click)="abrir(null)" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">+ Cargar el primero</button>
                       </div>
                     }
                   </td>
@@ -150,7 +146,7 @@ import { ClienteForm } from './cliente-form';
         </div>
         <p class="mf-ayuda mb-0 mt-3">
           Se guardan en <code>config.json</code>, el mismo archivo que usa la app de escritorio.
-          <a routerLink="/control" class="mf-btn-link">Ir a Nuevo control</a>
+          @if (perspectiva.canEdit()) { <a routerLink="/control" class="mf-btn-link">Ir a Nuevo control</a> }
         </p>
       </section>
 
@@ -168,9 +164,7 @@ import { ClienteForm } from './cliente-form';
                 <div><dt>Sin clave fiscal</dt><dd [class.cl-mal]="sinClave() > 0">{{ sinClave() }}</dd></div>
               </dl>
               <p class="mf-tenue m-0 text-sm">Tocá un cliente de la lista para ver y editar sus datos acá.</p>
-              @if (sesion.esSupervisor()) {
-                <button type="button" class="mf-btn w-full" (click)="abrir(null)">+ Nuevo cliente</button>
-              }
+              <button type="button" class="mf-btn w-full" (click)="abrir(null)" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">+ Nuevo cliente</button>
             </section>
           }
         </aside>
@@ -187,7 +181,11 @@ import { ClienteForm } from './cliente-form';
 export class ClientesPantalla {
   protected readonly store = inject(ClientesStore);
   protected readonly acceso = inject(AccesoClientesService);
-  protected readonly sesion = inject(SesionService);
+  protected readonly perspectiva = inject(PerspectivaService);
+  /** Por qué están bloqueados los botones de edición (title). */
+  protected readonly bloqueoClientes = computed(() =>
+    this.perspectiva.editaClientes() ? null : this.perspectiva.canEdit() ? 'Solo un supervisor puede editar clientes' : 'Bloqueado en la vista Empleado',
+  );
 
   protected readonly busqueda = signal('');
   /** Qué clientes se muestran (los botones de arriba de la tabla). */
@@ -275,6 +273,7 @@ export class ClientesPantalla {
   }
 
   protected async precargar(): Promise<void> {
+    if (!this.perspectiva.editaClientes()) return;
     this.precargando.set(true);
     this.avisoPrecarga.set(null);
     try {
@@ -297,6 +296,7 @@ export class ClientesPantalla {
   }
 
   protected abrir(c: Cliente | null): void {
+    if (!this.perspectiva.editaClientes()) return;
     this.editando.set(c);
     this.guardadoRecien.set(null);
     this.formAbierto.set(true);

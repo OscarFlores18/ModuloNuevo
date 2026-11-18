@@ -2,7 +2,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { AccionPausa, Ajustes, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido } from '../models';
+import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido } from '../models';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -34,9 +34,9 @@ export class ApiService {
   }
 
   // Convertir AUX: la hoja «Faltantes en Libro IVA» al CSV de Mis Comprobantes, sin tocar los controles.
-  convertirAux(archivos: ArchivoSubido[], incluirNormales = false): Promise<{ resultados: ResultadoConversion[] }> {
+  convertirAux(archivos: ArchivoSubido[]): Promise<{ resultados: ResultadoConversion[] }> {
     return firstValueFrom(
-      this.http.post<{ resultados: ResultadoConversion[] }>(`${this.url}/convertir-aux`, { archivos, incluir_normales: incluirNormales }).pipe(errorLegible('No se pudieron convertir los AUX.')),
+      this.http.post<{ resultados: ResultadoConversion[] }>(`${this.url}/convertir-aux`, { archivos }).pipe(errorLegible('No se pudieron convertir los AUX.')),
     );
   }
 
@@ -86,6 +86,18 @@ export class ApiService {
     return firstValueFrom(this.http.post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}));
   }
   /** Modo servidor: el archivo como Blob (la descarga lleva los encabezados de sesión). */
+  /** Las partidas de ARCA no encontradas en el Libro IVA, leídas de la hoja «Faltantes» de cada AUX. */
+  /** Escribe los datos de ARCA elegidos en el Libro IVA, vuelve a cruzar y devuelve el control nuevo. */
+  aplicarCambios(id: string, cambios: CambioElegido[]): Promise<ResultadoAplicar> {
+    return firstValueFrom(
+      this.http.post<ResultadoAplicar>(`${this.url}/ejecuciones/${id}/aplicar-cambios`, { cambios }).pipe(errorLegible('No se pudieron aplicar los cambios.')),
+    );
+  }
+
+  faltantes(id: string, indice: number): Promise<FaltantesExcel> {
+    return firstValueFrom(this.http.get<FaltantesExcel>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes`));
+  }
+
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
   }

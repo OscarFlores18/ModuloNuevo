@@ -215,7 +215,7 @@
             </p>
           }
         </div>
-        <button type="submit" class="mf-btn mf-btn-grande nc-boton inline-flex items-center justify-center gap-2" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()" [attr.aria-busy]="ejecucion.enviando() || ejecucion.hayActiva()">
+        <button type="submit" class="mf-btn mf-btn-grande nc-boton inline-flex items-center justify-center gap-2" [disabled]="ejecucion.enviando() || ejecucion.hayActiva() || !perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()" [attr.aria-busy]="ejecucion.enviando() || ejecucion.hayActiva()">
           @if (ejecucion.enviando() || ejecucion.hayActiva()) {
             <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
           }

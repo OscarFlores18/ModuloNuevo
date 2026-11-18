@@ -22,10 +22,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...auditor.csv_arca import convertir_auxiliares
+from ...auditor.csv_arca import convertir_auxiliares, filas_para_mostrar, libro_sin_arca
 from ...core import acceso_clientes, config, dialogos
-from ...core.controles import controles_del_periodo, ordinal, resumen_controles
-from ...core.paths import SUBCARPETA_CONTROL, nombre_carpeta
+from ...core.controles import resumen_controles
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...services import ejecuciones as ejecuciones_srv
@@ -319,46 +318,22 @@ MAX_BYTES_AUX = 25 * 1024 * 1024
 class ArchivoSubido(BaseModel):
     nombre: str = Field(min_length=1, max_length=260)
     contenido: str  # base64
+    # Claves «CUIT|comprobante» que no se suben (destildadas en la pantalla del control).
+    excluir: list[str] = Field(default_factory=list, max_length=5000)
 
 
 class ConvertirAuxRequest(BaseModel):
     archivos: list[ArchivoSubido] = Field(min_length=1, max_length=MAX_AUX)
-    # Subir igual las anuladas con NC y las liquidaciones bancarias.
-    incluir_normales: bool = False
-
-
-def _ultimo_control(cliente: str, periodo: str) -> int | None:
-    """El último control hecho de ese cliente y período («MM-AA»), si está en esta PC."""
-    if not re.fullmatch(r"\d{2}-\d{2}", periodo or ""):
-        return None
-    carpeta = Path(config.OUTPUT_DIR) / nombre_carpeta(cliente) / f"{periodo[:2]}20{periodo[3:]}" / SUBCARPETA_CONTROL
-    try:
-        previos = controles_del_periodo(carpeta)
-    except OSError:
-        return None
-    return max((c.numero for c in previos), default=None)
-
-
-def _avisar_aux_viejo(r: dict) -> None:
-    """Si el AUX no es del último control del período, puede traer partidas que
-    ya se cargaron (o que el control nuevo ya no marca)."""
-    ultimo = _ultimo_control(r["cliente"], r["periodo"])
-    r["ultimo_control"] = ultimo
-    if not ultimo:
-        return
-    for op, numero in (r.get("control") or {}).items():
-        if numero and numero < ultimo:
-            r.setdefault("alertas", []).append(
-                f"{op}: este AUX es del {ordinal(numero)} control y ya hay un {ordinal(ultimo)} control de "
-                f"{r['periodo']}. Puede traer partidas que ya se cargaron: usá el AUX del último control."
-            )
 
 
 @router.post("/convertir-aux")
 def convertir_aux(body: ConvertirAuxRequest) -> dict:
     """Pasa la hoja «Faltantes en Libro IVA» de cada AUX al CSV de Mis Comprobantes."""
     archivos: list[tuple[str, bytes]] = []
+    excluir: dict[str, set[str]] = {}
     for a in body.archivos:
+        if a.excluir:
+            excluir[Path(a.nombre).name] = set(a.excluir)
         try:
             datos = base64.b64decode(a.contenido, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -366,13 +341,11 @@ def convertir_aux(body: ConvertirAuxRequest) -> dict:
         if len(datos) > MAX_BYTES_AUX:
             raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
         archivos.append((a.nombre, datos))
-    resultados = convertir_auxiliares(archivos, incluir_normales=body.incluir_normales)
+    resultados = convertir_auxiliares(archivos, excluir)
     def b64(archivo: dict) -> dict:
         return {"nombre": archivo["nombre"], "contenido": base64.b64encode(archivo["contenido"]).decode("ascii")}
 
     for r in resultados:
-        if not r.get("error"):
-            _avisar_aux_viejo(r)
         r["zips"] = {op: b64(z) for op, z in r["zips"].items()}
         if r.get("excel"):
             r["excel"] = b64(r["excel"])
@@ -544,6 +517,86 @@ def descargar_archivo_ejecucion(
     except ejecuciones_srv.ErrorEjecucion as exc:
         raise _http_error(exc) from exc
     return FileResponse(archivo, filename=archivo.name)
+
+
+_AUX_CONTROL = re.compile(r"^AUX - Control de facturas (Ventas|Compras)\b.*\.xlsx?$", re.IGNORECASE)
+
+
+def _aux_activos(nombres: list[str]) -> dict[str, str]:
+    """Por operación, el AUX que vale: el corregido («Aplicar cambios») si lo hay."""
+    activos: dict[str, str] = {}
+    for nombre in nombres:
+        m = _AUX_CONTROL.match(nombre)
+        if not m:
+            continue
+        op = m.group(1).capitalize()
+        if op not in activos or ejecuciones_srv.es_corregido(nombre):
+            activos[op] = nombre
+    return activos
+
+
+@router.get("/ejecuciones/{ejecucion_id}/clientes/{indice}/faltantes")
+def faltantes_ejecucion(ejecucion_id: str, indice: int) -> dict:
+    """Lo que no cruzó, tal como está en cada AUX del cliente:
+    - «sin_libro»: partidas de ARCA no encontradas en el Libro IVA (hoja «Faltantes en
+      Libro IVA …»; es lo mismo que sube «Subir a Xubio»).
+    - «sin_arca»: partidas del Libro IVA no encontradas en ARCA (bloque al pie de la
+      primera hoja).
+    Cada uno: {«Compras»: [filas], …}."""
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        if not 0 <= indice < len(ej.clientes):
+            raise ejecuciones_srv.ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
+        salida: dict[str, dict[str, list[dict]]] = {"sin_libro": {}, "sin_arca": {}}
+        for op, nombre in _aux_activos([a["nombre"] for a in ej.clientes[indice].archivos]).items():
+            ruta = ejecuciones_srv.ruta_archivo(ej, indice, nombre)
+            # Un AUX (o un bloque) ilegible no corta lo demás.
+            try:
+                salida["sin_libro"][op] = filas_para_mostrar(ruta).get(op, [])
+            except Exception:
+                pass
+            try:
+                salida["sin_arca"][op] = libro_sin_arca(ruta, op)
+            except Exception:
+                pass
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    return salida
+
+
+class CambioElegido(BaseModel):
+    """Un dato de ARCA para escribir en el Libro IVA (un par de «Error»)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    cliente: str = Field(min_length=1, max_length=200)
+    operacion: str = Field(pattern="^(Ventas|Compras)$")
+    campo: str = Field(pattern="^(letra|tipo|importe|cuit)$")
+    # La CUIT y el comprobante como están en el Libro IVA (la fila a corregir).
+    cuit: str = Field(min_length=1, max_length=20)
+    pv: int = Field(ge=0, le=99999)
+    numero: int = Field(ge=0, le=99999999)
+    comprobante: str = Field(default="", max_length=40)
+    valor_arca: str | float = Field(alias="valorArca")
+
+
+class AplicarCambiosRequest(BaseModel):
+    cambios: list[CambioElegido] = Field(min_length=1, max_length=2000)
+
+
+@router.post("/ejecuciones/{ejecucion_id}/aplicar-cambios")
+def aplicar_cambios_ejecucion(
+    ejecucion_id: str,
+    pedido: AplicarCambiosRequest,
+    _usuario: Usuario = Depends(usuario_actual),
+) -> dict:
+    """Escribe los datos de ARCA elegidos en una copia del Libro IVA («… - corregido»),
+    vuelve a cruzar con ARCA y devuelve el control con los hallazgos nuevos."""
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        return ejecuciones_srv.aplicar_cambios(ej, [c.model_dump() for c in pedido.cambios])
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
 
 
 def _solo_local() -> None:

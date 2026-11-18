@@ -105,32 +105,15 @@ export interface ResultadoConversion {
   excel: { nombre: string; contenido: string } | null;
   /** Lo que no generó archivo, por ejemplo «Ventas: no hay partidas…». */
   avisos: string[];
-  /** Lo que hay que mirar antes de cargar: AUX viejo, ARCA trajo otro período. */
-  alertas?: string[];
-  /** Número de control de cada AUX («3er control» -> 3) y el último hecho en esta PC. */
-  control?: Partial<Record<'Ventas' | 'Compras', number | null>>;
-  ultimo_control?: number | null;
-  /** Las partidas que van al .zip, para revisarlas antes de cargar. */
-  filas?: Partial<Record<'Ventas' | 'Compras', PartidaRevision[]>>;
-  /** Las que no se suben porque son normales (anuladas con NC, liquidaciones bancarias). */
-  normales?: Partial<Record<'Ventas' | 'Compras', PartidaRevision[]>>;
   error: string | null;
-}
-
-export interface PartidaRevision {
-  fecha: string;
-  tipo: string;
-  comprobante: string;
-  cuit: string;
-  denominacion: string;
-  total: number | null;
-  motivo?: 'anulada' | 'liquidacion';
 }
 
 /** Un AUX subido: nombre y contenido en base64. */
 export interface ArchivoSubido {
   nombre: string;
   contenido: string;
+  /** «CUIT|comprobante» que no van al .zip (destildadas al revisar el control). */
+  excluir?: string[];
 }
 
 export interface ClienteEjecucion {
@@ -141,6 +124,36 @@ export interface ClienteEjecucion {
   pasos: PasoEjecucion[];
   /** Link de Xubio ya parado en la empresa del cliente (lo guarda el bot). */
   xubio_url?: string | null;
+  /** «Aplicar cambios»: por operación, el Libro IVA corregido y el control re-chequeado. */
+  corregidos?: Partial<Record<'Ventas' | 'Compras', Corregido>>;
+}
+
+/** Lo que dejó «Aplicar cambios» en una operación (el AUX nuevo es el activo). */
+export interface Corregido {
+  libro: string;
+  aux: string;
+  fecha: string;
+  cambios: { campo: CampoCambio; cuit: string; pv: number; numero: number; comprobante: string; valor_arca: string | number; antes?: unknown; despues?: unknown }[];
+}
+
+export type CampoCambio = 'letra' | 'tipo' | 'importe' | 'cuit';
+
+/** Un dato de ARCA para escribir en el Libro IVA (lo que manda «Aplicar cambios»). */
+export interface CambioElegido {
+  cliente: string;
+  operacion: 'Ventas' | 'Compras';
+  campo: CampoCambio;
+  /** CUIT y comprobante como están en el Libro IVA (la fila a corregir). */
+  cuit: string;
+  pv: number;
+  numero: number;
+  comprobante: string;
+  valorArca: string | number;
+}
+
+export interface ResultadoAplicar {
+  resultados: { cliente: string; indice: number; operacion: string; aplicados: number; no_aplicados: (CambioElegido & { motivo: string })[]; libro: string; aux: string }[];
+  ejecucion: DetalleEjecucion;
 }
 
 export interface LineaLog {
@@ -200,6 +213,27 @@ export interface ComprobanteLetraDistinta {
   /** La fila en «Mis Comprobantes» (ARCA) y en el Libro IVA (Xubio). */
   fila_arca: CeldaVista[];
   fila_xubio: CeldaVista[];
+}
+
+/** Una fila de la hoja «Faltantes en Libro IVA …» del AUX, tal como está en el Excel. */
+export interface FilaFaltanteExcel {
+  fecha: string;
+  /** «1 - Factura A». */
+  tipo: string;
+  /** «A-00014-01481153». */
+  comprobante: string;
+  /** Solo dígitos. */
+  cuit: string;
+  razon: string;
+  total: number | null;
+}
+
+/** Lo que no cruzó de un cliente, tal como está en sus AUX, por operación (solo las que tienen AUX). */
+export interface FaltantesExcel {
+  /** Partidas de ARCA no encontradas en el Libro IVA (hoja «Faltantes en Libro IVA …»). */
+  sin_libro: Partial<Record<'Ventas' | 'Compras', FilaFaltanteExcel[]>>;
+  /** Partidas del Libro IVA no encontradas en ARCA (bloque al pie de la primera hoja). */
+  sin_arca: Partial<Record<'Ventas' | 'Compras', FilaFaltanteExcel[]>>;
 }
 
 /** Una fila de ARCA o de Xubio que forma parte de un error. */

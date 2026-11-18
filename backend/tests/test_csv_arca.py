@@ -257,93 +257,56 @@ def test_zip_de_operacion_un_solo_csv_en_la_raiz():
         assert z.namelist() == [nombre_csv("Compras", "Acme", "03-25")]
 
 
-# --- Antes de importar: normales afuera, avisos de AUX viejo o mal bajado ------------
+def test_filas_para_mostrar_tal_como_estan_en_el_excel():
+    """La pantalla muestra la hoja «Faltantes en Libro IVA» completa, con el comprobante armado."""
+    import io
 
-def _aux_real(filas: list[list], extractos: list[str] = (), fechas_arca: list[str] = ()) -> bytes:
-    """AUX de Compras con «Faltantes», el «Libro Iva» (extractos) y «Mis Comprobantes»."""
+    from backend.app.auditor.csv_arca import filas_para_mostrar
+
+    filas = filas_para_mostrar(io.BytesIO(_aux("Compras", filas=3)))
+    assert list(filas) == ["Compras"] and len(filas["Compras"]) == 3
+    assert filas["Compras"][0] == {
+        "fecha": "03/03/2025", "tipo": "1 - Factura A", "comprobante": "A-00001-00000010",
+        "cuit": "30500000000", "razon": "PROVEEDOR", "total": 121.0,
+    }
+
+
+def test_libro_sin_arca_lee_el_bloque_al_pie_y_suma_el_total():
+    """«Partidas del Libro IVA … no encontradas en ARCA»: al pie de la primera hoja, con el total en =SUM(…)."""
     import io
 
     from openpyxl import Workbook
 
+    from backend.app.auditor.csv_arca import libro_sin_arca
+
     wb = Workbook()
-    mis = wb.active
-    mis.title = "Mis Comprobantes"
-    mis.append(["Fecha", "Tipo", "Punto de Venta", "Número Desde", "Imp. Total"])
-    for f in fechas_arca:
-        mis.append([f, "1 - Factura A", 1, 1, 1])
-    libro = wb.create_sheet("Libro Iva")
-    libro.append(["Fecha", "Tipo", "Comprobante", "Proveedor", "CUIT", "Total"])
-    for cuit in extractos:
-        libro.append(["31/10/2026", "Extracto Bancario", "31102026", "BANCO", cuit, 10])
-    hoja = wb.create_sheet("Faltantes en Libro IVA Compras")
-    hoja.append(["Fecha", "Tipo", "Punto de Venta", "Número Desde", "Número Hasta", "Cód. Autorización",
-                 "Tipo Doc. Emisor", "Nro. Doc. Emisor", "Denominación Emisor", "Tipo Cambio", "Moneda",
-                 "Neto Gravado Total", "Total IVA", "Imp. Total"])
-    for tipo, num, cuit, nombre, total in filas:
-        hoja.append(["14/10/2026", tipo, 3, num, num, 123, "CUIT", cuit, nombre, 1, "$", total, 0, total])
+    ws = wb.active
+    ws.append(["Clave_Conciliacion", "Fecha", "Tipo", "Nro. Doc. Emisor", "Denominación Emisor", "Neto", "IVA", "Imp. Total"])
+    ws.append(["A-00001-00000001", "01/04/2026", "1 - Factura A", 30500000000, "CRUZADO", 100, 21, 121])
+    ws.append([])
+    ws.append(["Partidas del Libro IVA Compras no encontradas en ARCA"])
+    ws.append(["=A1", "=B1", "=C1", "=D1", "=E1", "=F1", "=G1", "=H1"])
+    ws.append(["A-00411-00306778", "01/04/2026", "Tique", "30-71580481-2", "CORREDORES VIALES", 1239.68, 260.32, "=SUM(F6:G6)"])
     buffer = io.BytesIO()
     wb.save(buffer)
-    return buffer.getvalue()
+    buffer.seek(0)
+
+    assert libro_sin_arca(buffer, "Compras") == [{
+        "fecha": "01/04/2026", "tipo": "Tique", "comprobante": "A-00411-00306778",
+        "cuit": "30715804812", "razon": "CORREDORES VIALES", "total": 1500.0,
+    }]
 
 
-NOMBRE_OCT = "AUX - Control de facturas Compras con AFIP - 10-26 - Acme - {} control.xlsx"
-FILAS_OCT = [
-    ["1 - Factura A", 470, 30716553112, "ASTRONIC SRL", 2002980],
-    ["3 - Nota de Crédito A", 25, 30716553112, "ASTRONIC SRL", 2002980],
-    ["63 - Liquidaciónes A", 107377, 30709447846, "BANCO ICBC", 72169.33],
-    ["1 - Factura A", 33, 30500000000, "EQUIFAX", 19671.99],
-]
+def test_convertir_aux_sin_las_filas_destildadas():
+    """Lo que se destildó al revisar el control («CUIT|comprobante») no va al .zip."""
+    from backend.app.auditor.csv_arca import convertir_auxiliares
 
-
-def test_anuladas_y_liquidaciones_no_se_suben():
-    """Caso real de octubre: factura + NC de Astronic se anulan y la liquidación
-    del banco ya está como extracto. Solo queda Equifax."""
-    [r] = convertir_auxiliares([(NOMBRE_OCT.format("7mo"), _aux_real(FILAS_OCT, extractos=["30-70944784-6"]))])
-    assert r["partidas"] == {"Compras": 1} and r["control"] == {"Compras": 7}
-    assert [f["denominacion"] for f in r["filas"]["Compras"]] == ["EQUIFAX"]
-    assert r["filas"]["Compras"][0]["comprobante"] == "A-00003-00000033"
-    assert sorted(f["motivo"] for f in r["normales"]["Compras"]) == ["anulada", "anulada", "liquidacion"]
-    assert "no se suben 2 anuladas con nota de crédito y 1 liquidaciones bancarias" in r["avisos"][0]
-
-    # Con «incluir igual», van las 4.
-    [r] = convertir_auxiliares([(NOMBRE_OCT.format("7mo"), _aux_real(FILAS_OCT, extractos=["30-70944784-6"]))], incluir_normales=True)
-    assert r["partidas"] == {"Compras": 4}
-
-
-def test_liquidacion_sin_extracto_si_se_sube():
-    [r] = convertir_auxiliares([(NOMBRE_OCT.format("1er"), _aux_real(FILAS_OCT[2:3]))])
-    assert r["partidas"] == {"Compras": 1} and not r["normales"]
-
-
-def test_solo_normales_no_genera_zip():
-    [r] = convertir_auxiliares([(NOMBRE_OCT.format("1er"), _aux_real(FILAS_OCT[:2]))])
-    assert r["zips"] == {} and r["partidas"] == {"Compras": 0}
-    assert len(r["avisos"]) == 1 and "no se suben" in r["avisos"][0]
-
-
-def test_avisa_si_arca_trajo_otro_periodo():
-    """Caso real: 8vo control de octubre con un solo comprobante del 17/11."""
-    [r] = convertir_auxiliares([(NOMBRE_OCT.format("8vo"), _aux_real(FILAS_OCT[3:], fechas_arca=["17/11/2026"]))])
-    assert r["alertas"] and "otro período (17/11/2026)" in r["alertas"][0]
-    [r] = convertir_auxiliares([(NOMBRE_OCT.format("7mo"), _aux_real(FILAS_OCT[3:], fechas_arca=["01/10/2026", "31/10/2026"]))])
-    assert r["alertas"] == []
-
-
-def test_endpoint_avisa_si_el_aux_no_es_del_ultimo_control(cliente_demo):
-    import base64
-
-    from backend.app.core import config
-
-    for n in ("1er", "3er"):
-        carpeta = config.OUTPUT_DIR / "Acme" / "102026" / "Control de facturas" / f"{n} control"
-        carpeta.mkdir(parents=True)
-        (carpeta / "algo.xlsx").write_bytes(b"x")
-    def pedir(numero):
-        contenido = base64.b64encode(_aux_real(FILAS_OCT[3:])).decode()
-        r = cliente_demo.post("/api/convertir-aux", json={"archivos": [{"nombre": NOMBRE_OCT.format(numero), "contenido": contenido}]})
-        assert r.status_code == 200, r.text
-        return r.json()["resultados"][0]
-    viejo = pedir("1er")
-    assert viejo["ultimo_control"] == 3
-    assert any("es del 1er control y ya hay un 3er control" in a for a in viejo["alertas"])
-    assert pedir("3er")["alertas"] == []
+    nombre = "AUX - Control de facturas Compras con AFIP - 03-25 - Acme - 1er control.xlsx"
+    todo = convertir_auxiliares([(nombre, _aux("Compras", filas=3))])
+    assert todo[0]["partidas"] == {"Compras": 3}
+    menos = convertir_auxiliares([(nombre, _aux("Compras", filas=3))], {nombre: {"30500000000|A-00001-00000011"}})
+    assert menos[0]["partidas"] == {"Compras": 2}
+    nada = convertir_auxiliares(
+        [(nombre, _aux("Compras", filas=1))], {nombre: {"30500000000|A-00001-00000010"}},
+    )
+    assert nada[0]["zips"] == {} and nada[0]["avisos"]

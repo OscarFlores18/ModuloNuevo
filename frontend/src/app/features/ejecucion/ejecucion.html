@@ -6,7 +6,7 @@
 
 @if (!e) {
   @if (!store.error() && !store.historial().length) {
-    @if (perspectiva.soloVer()) {
+    @if (!perspectiva.canEdit()) {
       <div class="cf-vacio">
         <strong>Todavía no hay controles para ver</strong>
         <p>Cuando alguien corra un control, acá vas a ver su avance, qué encontró y los Excel para descargar.</p>
@@ -34,10 +34,8 @@
         <h2 id="t-ejecucion" class="m-0 text-xl font-bold first-letter:uppercase">{{ titulo() }}</h2>
         <p class="mf-sub m-0 mt-0.5">{{ bajada() }}</p>
       </div>
-      @if (perspectiva.soloVer()) {
-        <span class="mf-badge" title="Vista Usuario: solo se puede mirar y descargar">Solo ver</span>
-      } @else if (activa()) {
-        <button type="button" class="mf-btn mf-btn-rojo inline-flex items-center gap-2" (click)="detener()" [disabled]="e.cancelar_pedido">
+      @if (activa()) {
+        <button type="button" class="mf-btn mf-btn-rojo inline-flex items-center gap-2" (click)="detener()" [disabled]="e.cancelar_pedido || !perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">
           @if (e.cancelar_pedido) {
             <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
           }
@@ -45,12 +43,12 @@
         </button>
       } @else {
         <div class="flex flex-wrap gap-2">
-          @if (reintento(); as r) {
-            <button type="button" class="mf-btn mf-btn-suave" (click)="reintentar()" [title]="'Arma un control nuevo con: ' + r.clientes.join(', ')">
+          @if (perspectiva.canEdit() && reintento(); as r) {
+            <button type="button" class="mf-btn mf-btn-suave" (click)="reintentar()" [disabled]="!perspectiva.canEdit()" [title]="perspectiva.motivoBloqueo() ?? 'Arma un control nuevo con: ' + r.clientes.join(', ')">
               Reintentar {{ r.clientes.length === 1 ? 'el que falló' : 'los ' + r.clientes.length + ' que fallaron' }}
             </button>
           }
-          <a routerLink="/control" class="mf-btn">Nuevo control</a>
+          @if (perspectiva.canEdit()) { <a routerLink="/control" class="mf-btn">Nuevo control</a> }
         </div>
       }
     </header>
@@ -81,10 +79,12 @@
           </dd>
         </div>
       }
-      <div class="ej-kpi">
-        <dt>Duración</dt>
-        <dd class="tabular-nums" role="timer">{{ duracion() || '—' }}</dd>
-      </div>
+      @if (comprobantesControlados()) {
+        <div class="ej-kpi">
+          <dt>Comprobantes</dt>
+          <dd class="tabular-nums">{{ comprobantesControlados() }} <small>controlados</small></dd>
+        </div>
+      }
     </dl>
 
     <div class="mf-barra mt-4" role="progressbar" [attr.aria-valuenow]="progreso()" aria-valuemin="0" aria-valuemax="100" aria-label="Avance del control">
@@ -94,18 +94,21 @@
   </section>
 
   <!-- Qué hay que hacer: los hallazgos como órdenes, en el orden en que conviene hacerlas -->
-  @if (!activa() && (tareas().length || conteoErrores().info)) {
-    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" aria-labelledby="t-tareas" id="t-tareas" data-tour="tareas">
+  @if (!activa() && (tareas().length || corregidos().length)) {
+    @let nSel = seleccionados().length;
+    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" aria-labelledby="t-tareas" id="t-tareas" data-tour="tareas" [attr.aria-busy]="aplicando()">
       <header class="tr-cab">
         <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold">{{ pendientes() ? 'Qué hay que hacer' : tareas().length ? 'Todo hecho' : 'Nada para corregir' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
-          <p class="mf-sub m-0 mt-0.5">
-            @if (!tareas().length) {
-              El control salió bien: solo hay avisos para que sepas.
+          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientes() ? 'Qué hay que hacer' : corregidos().length ? 'Todo hecho · Excel actualizado' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
+          <p class="mf-sub m-0 mt-0.5" aria-live="polite">
+            @if (aplicando()) {
+              <span class="tr-aplicando"><span class="ej-spinner" aria-hidden="true"></span> Aplicando cambios y generando nuevo Excel...</span>
+            } @else if (nSel) {
+              <strong class="tr-pendiente-aplicar">{{ nSel }} {{ nSel === 1 ? 'cambio seleccionado listo' : 'cambios seleccionados listos' }} para aplicar</strong>
             } @else if (!pendientes()) {
-              Tildaste todas las tareas de este control.
+              {{ corregidos().length ? 'Los cambios aplicados quedaron en el Excel nuevo y el control se re-chequeó.' : 'Tildaste todas las tareas de este control.' }}
             } @else {
-              @if (perspectiva.soloVer()) {
+              @if (!perspectiva.canEdit()) {
                 Quedan {{ pendientes() }} de {{ tareas().length }} por hacer.
               } @else {
                 Tildá cada una cuando la termines · quedan {{ pendientes() }} de {{ tareas().length }}.
@@ -118,18 +121,116 @@
             <div [style.width.%]="((tareas().length - pendientes()) / tareas().length) * 100"></div>
           </div>
         }
-        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()">Ver todos los hallazgos</button>
+        @if (cambios().length || aplicando()) {
+          <button type="button" class="mf-btn mf-btn-ok inline-flex items-center gap-1.5" (click)="aplicarCambios()"
+            [disabled]="!perspectiva.canEdit() || !nSel || aplicando()" [attr.aria-busy]="aplicando()"
+            [title]="perspectiva.motivoBloqueo() ?? (nSel ? 'Corrige el Libro IVA con los datos de ARCA tildados y vuelve a cruzar' : 'Tildá las correcciones que querés aplicar')">
+            @if (aplicando()) {
+              <span class="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span> Aplicando…
+            } @else { Aplicar cambios ({{ nSel }}) }
+          </button>
+        }
+        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()" [disabled]="aplicando()">Ver todos los hallazgos</button>
       </header>
+
+      @if (corregidos().length) {
+        <div class="tr-actualizado" role="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg>
+          <div class="min-w-0 flex-1">
+            @for (x of corregidos(); track x.cliente + x.operacion) {
+              <p class="m-0"><strong>Excel actualizado</strong> · {{ x.cliente }} · {{ x.operacion }}: {{ x.dato.cambios.length }} {{ x.dato.cambios.length === 1 ? 'cambio aplicado' : 'cambios aplicados' }} · {{ fechaCorta(x.dato.fecha) }}</p>
+            }
+          </div>
+          <span class="flex flex-wrap gap-2">
+            @for (x of corregidos(); track x.cliente + x.operacion) {
+              <button type="button" class="mf-btn mf-btn-chico" (click)="descargarNuevo(x)" [disabled]="!!descargando() || aplicando()" [title]="x.dato.aux">
+                ⬇ Descargar nuevo Excel{{ corregidos().length > 1 ? ' · ' + x.operacion : '' }}
+              </button>
+            }
+          </span>
+        </div>
+      }
 
       @for (g of gruposTareas(); track g.id; let ng = $index) {
         <div class="tr-grupo" [attr.data-grupo]="g.id">
           <h3 class="tr-grupo-titulo"><span class="tr-grupo-num">{{ ng + 1 }}</span>{{ g.titulo }} <small>{{ g.ayuda }}</small></h3>
           <ul class="tr-lista">
             @for (tarea of g.tareas; track tarea.clave; let i = $index) {
-              @let hecha = hechas().has(tarea.clave);
+              @let hecha = estaHecha(tarea);
+              @let nCambios = cambiosDe(tarea.advertencia).length;
               @let idCheck = 'tr-' + g.id + '-' + i;
+              @let faltantes = faltantesDe(tarea.advertencia);
+              @let nTildadas = tildadas(tarea.advertencia, faltantes);
+              @if (tarea.advertencia.tipo === 'faltante_en_xubio' && faltantes.length) {
+                <!-- Faltantes en IVA: la lista de comprobantes a la vista y «Subir a Xubio» primero -->
+                <li class="tr-tarea tr-faltantes" [class.tr-hecha]="hecha">
+                  <div class="tr-falt-cab">
+                    <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()" (change)="alternarHecha(tarea)" />
+                    <label class="tr-texto" [for]="idCheck">
+                      <span class="tr-orden">Faltantes en IVA {{ tarea.operacion }} <span class="tr-falt-num">({{ faltantes.length }} {{ faltantes.length === 1 ? 'comprobante' : 'comprobantes' }})</span></span>
+                      <span class="tr-meta"><strong>{{ tarea.cliente }}</strong> · {{ nTildadas }} de {{ faltantes.length }} {{ nTildadas === 1 ? 'tildado' : 'tildados' }} para subir</span>
+                    </label>
+                    <span class="tr-acciones">
+                      @if (puedeSubir(tarea.advertencia)) {
+                        <button type="button" class="mf-btn mf-btn-chico mf-btn-ok" (click)="subirAXubio(tarea.advertencia)"
+                          [disabled]="!perspectiva.canEdit() || !nTildadas"
+                          [title]="perspectiva.motivoBloqueo() ?? (nTildadas ? 'Lleva los tildados a «Faltantes a Xubio», listos para cargar' : 'Tildá al menos un comprobante')">⬆ Subir a Xubio</button>
+                      }
+                      @if (destinoVisible(tarea); as d) {
+                        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
+                      }
+                    </span>
+                  </div>
+                  <div class="tr-falt-tabla">
+                    <table>
+                      <thead><tr>
+                        <th class="tr-falt-sel">
+                          <input type="checkbox" [checked]="nTildadas === faltantes.length" [indeterminate]="nTildadas > 0 && nTildadas < faltantes.length"
+                            [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo() ?? 'Tildar / destildar todos'" aria-label="Subir todos" (change)="alternarTodas(tarea.advertencia, faltantes, $event)" />
+                        </th><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th class="tr-falt-cuit">CUIT</th><th>Razón social</th><th class="num">Total</th></tr></thead>
+                      <tbody>
+                        @for (f of faltantes.slice(0, maxFaltantes); track $index) {
+                          @let va = incluida(tarea.advertencia, f);
+                          <tr [class.tr-falt-fuera]="!va">
+                            <td class="tr-falt-sel">
+                              <input type="checkbox" [checked]="va" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()"
+                                [attr.aria-label]="'Subir ' + f.comprobante" (change)="alternarFila(tarea.advertencia, f, $event)" />
+                            </td>
+                            <td>{{ f.fecha }}</td>
+                            <td [title]="f.tipoCompleto">{{ f.tipo }}</td>
+                            <td class="mono">{{ f.comprobante }}</td>
+                            <td class="mono tr-falt-cuit">{{ f.cuit }}</td>
+                            <td class="tr-falt-razon" [title]="f.nota ? f.razon + ' · ' + f.nota : f.razon">
+                              @if (f.nota) { <span class="tr-falt-nota">{{ f.nota }}</span> }
+                              {{ f.razon }}
+                            </td>
+                            <td class="num">{{ f.total }}</td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                  </div>
+                  @if (faltantes.length > maxFaltantes) {
+                    <button type="button" class="mf-btn-link tr-falt-mas" (click)="verDetalle(tarea)">Ver los {{ faltantes.length }} comprobantes</button>
+                  }
+                </li>
+              } @else if (nCambios) {
+              <!-- Corrección: el checkbox la elige para «Aplicar cambios» (no la da por hecha) -->
+              @let nElegidos = elegidos(tarea.advertencia);
+              <li class="tr-tarea" [class.tr-elegida]="nElegidos > 0">
+                <input type="checkbox" class="tr-check tr-check-aplicar" [id]="idCheck" [checked]="nElegidos === nCambios" [indeterminate]="nElegidos > 0 && nElegidos < nCambios"
+                  [disabled]="!perspectiva.canEdit() || aplicando()" [attr.title]="perspectiva.motivoBloqueo() ?? 'Elegir para corregir con el dato de ARCA'" (change)="alternarCambios(tarea.advertencia, $event)" />
+                <label class="tr-texto" [for]="idCheck">
+                  <span class="tr-orden">{{ tarea.orden }}</span>
+                  <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ nElegidos }} de {{ nCambios }} {{ nCambios === 1 ? 'seleccionado' : 'seleccionados' }} para aplicar</span>
+                </label>
+                <span class="tr-acciones">
+                  <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)" [disabled]="aplicando()">Ver y elegir</button>
+                </span>
+              </li>
+              } @else {
               <li class="tr-tarea" [class.tr-hecha]="hecha">
-                <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" (change)="alternarHecha(tarea)" [disabled]="perspectiva.soloVer()" />
+                <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()" (change)="alternarHecha(tarea)" />
                 <label class="tr-texto" [for]="idCheck">
                   <span class="tr-orden">{{ tarea.orden }}</span>
                   <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ tarea.porque }}</span>
@@ -138,25 +239,17 @@
                   @if (tarea.advertencia.comprobantes.length) {
                     <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)">Ver comprobantes</button>
                   }
-                  @if (tarea.destino; as d) {
-                    @if (perspectiva.esCliente()) {
-                      <button type="button" class="mf-btn mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
-                    }
+                  @if (destinoVisible(tarea); as d) {
+                    <button type="button" class="mf-btn mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
                   }
                 </span>
               </li>
+              }
             }
           </ul>
         </div>
       }
 
-      @if (conteoErrores().info) {
-        <p class="tr-info">
-          <span aria-hidden="true">ⓘ</span>
-          {{ conteoErrores().info }} aviso{{ conteoErrores().info === 1 ? '' : 's' }} informativo{{ conteoErrores().info === 1 ? '' : 's' }}: no hace falta hacer nada.
-          <button type="button" class="mf-btn-link" (click)="verErrores()">Ver</button>
-        </p>
-      }
     </section>
   }
 
@@ -170,13 +263,11 @@
           @if (siguienteCliente(); as s) { Sigue {{ s }} en {{ segundosPausa() }} s. } @else { Sigue en {{ segundosPausa() }} s. }
         </strong>
       </div>
-      @if (perspectiva.esCliente()) {
-        <div class="flex flex-wrap gap-2">
-          <button type="button" class="mf-btn" (click)="store.responder('continuar')">Continuar ahora</button>
-          <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('no_preguntar')">No preguntar más</button>
-          <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')">Cancelar todo</button>
-        </div>
-      }
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="mf-btn" (click)="store.responder('continuar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">Continuar ahora</button>
+        <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('no_preguntar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">No preguntar más</button>
+        <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">Cancelar todo</button>
+      </div>
     </section>
   }
 
@@ -186,7 +277,7 @@
     <ul class="ej-clientes">
       @for (c of clientes(); track c.nombre) {
         <li>
-          <details class="ej-cliente" [open]="c.conError || c.hallazgos > 0 || c.origen.estado === 'en_curso'" [class.ej-cliente-error]="c.conError">
+          <details class="ej-cliente" [open]="c.prioritarias.length > 0 || c.conError || c.hallazgos > 0 || c.origen.estado === 'en_curso'" [class.ej-cliente-error]="c.conError">
             <summary>
               <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
               <span class="ej-cliente-nombre" [title]="c.nombre">{{ c.nombre }}</span>
@@ -211,12 +302,38 @@
             </summary>
 
             <div class="ej-cliente-cuerpo">
-              @if (!c.problemas.length && !c.archivos.length) {
+              @if (!c.problemas.length && !c.archivos.length && !c.prioritarias.length) {
                 <p class="mf-tenue m-0 text-sm">{{ c.origen.estado === 'pendiente' ? 'Todavía no empezó.' : c.origen.estado === 'en_curso' ? 'Bajando los archivos…' : 'Sin archivos generados.' }}</p>
+              }
+              @if (!activa()) {
+                @for (a of c.prioritarias; track a.titulo + a.operacion) {
+                  @let filasFalt = faltantesDe(a);
+                  @let nTildadasC = tildadas(a, filasFalt);
+                  <div class="ej-prioritaria mb-2">
+                    <div class="min-w-0 flex-1">
+                      <strong class="block">Faltantes en IVA {{ a.operacion }}</strong>
+                      <span class="mf-tenue block text-sm">
+                        @if (filasFalt.length) {
+                          {{ filasFalt.length }} {{ filasFalt.length === 1 ? 'comprobante' : 'comprobantes' }} en el Excel · {{ nTildadasC }} {{ nTildadasC === 1 ? 'tildado' : 'tildados' }} para subir
+                        } @else {
+                          No hay comprobantes en la hoja del Excel
+                        }
+                      </span>
+                    </div>
+                    @if (filasFalt.length) {
+                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verAdvertencia(a)">Ver comprobantes</button>
+                    }
+                    @if (puedeSubir(a)) {
+                      <button type="button" class="mf-btn mf-btn-chico mf-btn-ok" (click)="subirAXubio(a)"
+                        [disabled]="!perspectiva.canEdit() || !nTildadasC"
+                        [title]="perspectiva.motivoBloqueo() ?? (nTildadasC ? 'Lleva los tildados a «Faltantes a Xubio», listos para cargar' : 'Tildá al menos un comprobante')">⬆ Subir a Xubio</button>
+                    }
+                  </div>
+                }
               }
               @for (p of c.problemas; track p.titulo; let primero = $first) {
                 <app-alerta [class.mt-2]="!primero" [nivel]="p.nivel" [titulo]="p.titulo" [mensajes]="[p.mensaje]"
-                  [orden]="p.tarea?.orden ?? ''" [accion]="p.tarea?.destino?.texto ?? ''" (accionar)="p.tarea && irA(p.tarea)" />
+                  [orden]="p.tarea?.orden ?? ''" [accion]="(p.tarea && destinoVisible(p.tarea)?.texto) ?? ''" (accionar)="p.tarea && irA(p.tarea)" />
               }
 
               @if (c.archivos.length) {
@@ -274,7 +391,7 @@
       @for (h of store.historial(); track h.id) {
         @let insH = insigniaEjecucion[h.estado];
         <li>
-          @if (perspectiva.esCliente() && h.estado !== 'en_curso' && h.estado !== 'esperando') {
+          @if (perspectiva.canEdit() && h.estado !== 'en_curso' && h.estado !== 'esperando') {
             <button type="button" class="ej-hist-borrar" (click)="borrarDelHistorial(h)" [attr.aria-label]="'Borrar del historial el control de ' + periodoLegibleDe(h.periodo)" title="Borrar del historial">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
             </button>
@@ -284,7 +401,7 @@
               <span class="ej-hist-periodo first-letter:uppercase" [title]="h.periodo">{{ periodoLegibleDe(h.periodo) }}</span>
               <span class="mf-punto shrink-0" [class]="'ej-hist-punto ej-hist-' + h.estado" [class.mf-latido]="insH.latido" [title]="insH.texto"></span>
             </span>
-            <span class="ej-hist-meta">{{ fechaCorta(h.creada) }} · {{ h.clientes }} {{ h.clientes === 1 ? 'cliente' : 'clientes' }}@if (h.usuario) { · {{ h.usuario }} }</span>
+            <span class="ej-hist-meta">{{ fechaCorta(h.creada) }} · {{ h.clientes }} {{ h.clientes === 1 ? 'cliente' : 'clientes' }}</span>
             <span class="ej-hist-res" [class.ej-hist-res-mal]="h.totales.con_errores > 0">{{ h.estado === 'cancelada' ? 'Cancelado' : h.estado === 'error' ? 'Se cortó' : resultadoDe(h) }}</span>
           </a>
         </li>

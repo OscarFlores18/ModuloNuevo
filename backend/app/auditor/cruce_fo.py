@@ -186,29 +186,6 @@ def _clase_comprobante(tipo) -> str:
     return "FC"
 
 
-def _anuladas_con_nc(items: list[dict]) -> list[dict]:
-    """Pares factura + nota de crédito del mismo CUIT y el mismo importe."""
-    def importe(f):
-        try:
-            return round(abs(float(_valor(f, "Imp. Total") or 0)), 2)
-        except (TypeError, ValueError):
-            return None
-
-    notas = [f for f in items if _clase_comprobante(_valor(f, "Tipo")) == "NC"]
-    usadas: list[dict] = []
-    for nc in notas:
-        clave = (_solo_digitos(_valor(nc, "Nro. Doc.")), importe(nc))
-        for fc in items:
-            if fc is nc or any(fc is u for u in usadas):
-                continue
-            if _clase_comprobante(_valor(fc, "Tipo")) == "FC" and (
-                _solo_digitos(_valor(fc, "Nro. Doc.")), importe(fc)
-            ) == clave and clave[1]:
-                usadas += [fc, nc]
-                break
-    return usadas
-
-
 def _faltantes_por_cuit(df_arca, df_xubio, col_cuit_arca):
     """Filas de ARCA sin par en Xubio y al revés, comparando CUIT + comprobante +
     tipo (factura / nota de crédito / débito). Un comprobante cargado dos veces
@@ -453,10 +430,8 @@ def diagnosticar(
     liq_con_extracto = [f for f in liquidaciones if _solo_digitos(_valor(f, "Nro. Doc.")) in cuits_extracto]
     falta_x = [f for f in falta_x if f not in liq_con_extracto]
 
-    # Factura y nota de crédito del mismo proveedor por el mismo importe, las dos
-    # sin cargar: se anulan entre sí, no hay nada que registrar.
-    anuladas = _anuladas_con_nc(falta_x)
-    falta_x = [f for f in falta_x if not any(f is a for a in anuladas)]
+    # Factura y nota de crédito del mismo período quedan las dos como faltantes:
+    # quien sube elige a mano cuáles cargar (no se emparejan solas).
 
 
     # Tiques (peajes, combustible...) y extractos bancarios casi nunca figuran en
@@ -569,22 +544,15 @@ def diagnosticar(
     falta_a = [f for f in falta_a if f not in exterior]
 
     # Todo lo de ARCA sin par en Xubio va junto, como el bloque «Partidas de
-    # ARCA no encontradas en el Libro IVA …» del Excel. Las anuladas con NC y
-    # las liquidaciones bancarias se marcan como normales (`motivo`).
-    normales_arca = (
-        [{**f, "motivo": "anulada"} for f in anuladas]
-        + [{**f, "motivo": "liquidacion"} for f in liq_con_extracto]
-    )
+    # ARCA no encontradas en el Libro IVA …» del Excel. Las liquidaciones
+    # bancarias se marcan como normales (`motivo`).
+    normales_arca = [{**f, "motivo": "liquidacion"} for f in liq_con_extracto]
     if falta_x or normales_arca:
         partes = []
         if falta_x:
             partes.append(
                 f"{len(falta_x)} no {'está' if len(falta_x) == 1 else 'están'} en el libro: "
                 "subilos a Xubio desde «Faltantes a Xubio»."
-            )
-        if anuladas:
-            partes.append(
-                f"{len(anuladas)} son factura y nota de crédito por el mismo importe: se anulan, no hace falta cargarlas."
             )
         if liq_con_extracto:
             partes.append(
@@ -829,7 +797,6 @@ def _etiqueta_xubio(item: dict) -> str:
 ETIQUETA_ARCA = {
     "faltante_en_xubio": "No está subido a Xubio",
     "total_no_cierra": "Las columnas no suman el Imp. Total: revisar la factura",
-    "anulada_con_nc": "Anulada con nota de crédito (no hace falta cargarla)",
     "liquidacion_bancaria": "Liquidación bancaria: en Xubio está como extracto",
     "letra_distinta": "Letra distinta: corregir en Xubio",
     "tipo_distinto": "Tipo distinto: corregir en Xubio",
@@ -854,7 +821,7 @@ def etiquetar_filas(wb, errores: list[dict]) -> None:
                 continue
             f = {c["columna"]: c["valor"] for c in item.get("fila", [])}
             if item.get("origen") == "arca":
-                motivo = {"anulada": "anulada_con_nc", "liquidacion": "liquidacion_bancaria"}.get(item.get("motivo"))
+                motivo = {"liquidacion": "liquidacion_bancaria"}.get(item.get("motivo"))
                 clave_tipo = motivo or e["tipo"]
                 if clave_tipo in ETIQUETA_ARCA:
                     de_arca[_clave_fila(f.get("Nro. Doc."), f.get("Comprobante"), f.get("Tipo"))] = ETIQUETA_ARCA[clave_tipo]
@@ -921,6 +888,7 @@ def procesar_cruce(
     ruta_arca_manual=None,
     ruta_xubio_manual=None,
     log: Callable[[str], None] = print,
+    ruta_salida_manual=None,
     avisar_letras_distintas: Callable[[list[dict]], None] | None = None,
     avisar_errores: Callable[[list[dict]], None] | None = None,
     avisar_resumen: Callable[[dict], None] | None = None,
@@ -948,7 +916,8 @@ def procesar_cruce(
     ruta_control, numero_control, previos = ruta_siguiente_control(
         directorio_guardado, operacion, fecha_desde, empresa
     )
-    ruta_salida = str(ruta_control)
+    # Al re-chequear con el Libro IVA corregido, el AUX nuevo no pisa el original.
+    ruta_salida = str(ruta_salida_manual) if ruta_salida_manual else str(ruta_control)
 
     if not os.path.exists(ruta_arca):
         raise ArchivoNoEncontrado(

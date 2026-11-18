@@ -97,21 +97,6 @@ def test_factura_y_nota_de_credito_con_el_mismo_numero_no_son_duplicado(tmp_path
     assert _clase_comprobante("13 - Nota de Crédito C") == "NC"
 
 
-def test_anuladas_con_nota_de_credito():
-    from backend.app.auditor.cruce_fo import _anuladas_con_nc
-
-    def fila(tipo, cuit, total):
-        return {"origen": "arca", "fila": [
-            {"columna": "Tipo", "valor": tipo},
-            {"columna": "Nro. Doc.", "valor": cuit},
-            {"columna": "Imp. Total", "valor": total},
-        ]}
-
-    fc, nc, otra = fila("11 - Factura C", "27942062635", 623532.18), fila("13 - Nota de Crédito C", "27942062635", 623532.18), fila("11 - Factura C", "20374382803", 120000.0)
-    anuladas = _anuladas_con_nc([fc, otra, nc])
-    assert any(a is fc for a in anuladas) and any(a is nc for a in anuladas)
-    assert not any(a is otra for a in anuladas)
-
 
 def test_cloudflare_permitido_para_el_login_de_arca():
     from backend.app.core import config

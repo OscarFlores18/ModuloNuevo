@@ -4,17 +4,18 @@ import { filter } from 'rxjs';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { Usuario } from './core/models';
 import { ClientesStore } from './core/services/clientes.store';
-import { Perspectiva, PerspectivaService } from './core/services/perspectiva.service';
 import { EjecucionStore } from './core/services/ejecucion.store';
+import { PerspectivaService } from './core/services/perspectiva.service';
 import { SesionService } from './core/services/sesion.service';
 import { Circuito } from './core/ui/circuito';
 import { Recorrido } from './core/ui/recorrido';
 import { RecorridoService } from './core/ui/recorrido.service';
 import { Toasts } from './core/ui/toast';
+import { ElegirPerfil } from './features/perfil/elegir-perfil';
 
 @Component({
   host: { '(window:scroll)': 'medirScroll()', '(window:resize)': 'medirScroll()' },
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, Circuito, Recorrido],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, Circuito, Recorrido, ElegirPerfil],
   selector: 'app-root',
   styleUrl: './app.css',
   templateUrl: './app.html',
@@ -64,12 +65,6 @@ export class App {
     this.hayScroll.set(el.scrollTop > el.clientHeight * 0.8);
   }
 
-  /** «Usuario» solo ve Ejecuciones: si estaba en otra pantalla, se lo lleva ahí. */
-  protected elegirPerspectiva(p: Perspectiva): void {
-    this.perspectiva.elegir(p);
-    if (p === 'usuario' && !this.router.url.startsWith('/ejecuciones')) void this.router.navigate(['/ejecuciones']);
-  }
-
   /** El «?» del encabezado: el recorrido de la pantalla en la que se está. */
   protected verRecorrido(): void {
     this.recorrido.iniciar(this.recorrido.pantallaDe(this.router.url));
@@ -89,6 +84,16 @@ export class App {
     } finally {
       this.actualizando.set(false);
     }
+  }
+
+  /** Vuelve a «¿Cómo deseas ingresar?». */
+  protected cambiarPerfil(): void {
+    this.perspectiva.cambiar();
+  }
+
+  /** Recién elegido: a la pantalla de inicio de esa perspectiva (el empleado no ve Nuevo control). */
+  protected alElegirPerfil(): void {
+    void this.router.navigateByUrl('/');
   }
 
   protected formatearFecha(d: Date): string {
