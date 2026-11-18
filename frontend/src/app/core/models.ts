@@ -200,6 +200,8 @@ export type TipoError =
   | 'anulada_con_nc'
   | 'exterior_sin_arca'
   | 'tipo_distinto'
+  | 'cuit_distinto'
+  | 'importe_distinto'
   | 'paso_error';
 
 /** Un error del control (ventana de errores), con cómo solucionarlo. */
@@ -215,6 +217,8 @@ export interface Advertencia {
   acciones: string[];
   /** Cuántos comprobantes hay en total (en `comprobantes` llegan hasta 10). */
   total: number;
+  /** Cuántos hay que tocar de verdad (sin los normales). No viene en controles viejos. */
+  a_corregir?: number;
   comprobantes: (ComprobanteLetraDistinta | FilaConError)[];
   /** La hoja del Excel de la auditoría donde se ven todos. */
   hoja: string | null;
@@ -233,7 +237,6 @@ export function estaActiva(estado: EstadoEjecucion | undefined | null): boolean 
   return estado === 'en_curso' || estado === 'esperando';
 }
 
-/** El mensaje de error que manda la API ({detail: {mensaje}} o {detail: "..."}). */
 /**
  * Un error de la API ya traducido: `message` es lo que se le muestra al contador
  * y `tecnico` el detalle (código HTTP, respuesta del backend) para reportarlo.

@@ -152,6 +152,30 @@ def _valor(item: dict, columna: str):
     return None
 
 
+def _numero(valor) -> float | None:
+    """Un importe de ARCA o de Xubio como número («604887,5», «1.234,56», 604887.5)."""
+    if valor is None:
+        return None
+    if isinstance(valor, (int, float, np.integer, np.floating)):
+        v = float(valor)
+        return None if np.isnan(v) else v
+    texto = str(valor).replace("$", "").replace(" ", "").strip()
+    if not texto:
+        return None
+    if "," in texto and "." in texto:
+        texto = texto.replace(".", "").replace(",", ".")
+    elif "," in texto:
+        texto = texto.replace(",", ".")
+    try:
+        return float(texto)
+    except ValueError:
+        return None
+
+
+# Diferencias menores a esto son redondeos (centavos, tipo de cambio).
+TOLERANCIA_IMPORTE = 1.0
+
+
 def _clase_comprobante(tipo) -> str:
     """«FC», «NC» o «ND» según el tipo (para no confundir factura con nota)."""
     t = str(tipo or "").lower()
@@ -219,6 +243,50 @@ def _faltantes_por_cuit(df_arca, df_xubio, col_cuit_arca):
 MAX_FILAS_POR_ERROR = 500
 
 
+def _importes_distintos(operacion, df_arca, df_xubio, columnas_arca, columnas_xubio, col_cuit_arca, col_total_arca):
+    """Pares ARCA / Xubio del mismo comprobante (mismo CUIT en Compras, mismo tipo)
+    cuyo total difiere en más de ``TOLERANCIA_IMPORTE``. Los importes de ARCA en
+    otra moneda se pasan a pesos con su tipo de cambio. Solo se comparan
+    comprobantes únicos de cada lado: los repetidos ya se informan aparte."""
+    if col_total_arca is None or "Total" not in df_xubio.columns or "Clave_Py" not in df_arca.columns:
+        return []
+    usa_cuit = operacion == "Compras" and col_cuit_arca is not None and "CUIT" in df_xubio.columns
+    col_tc = next((c for c in df_arca.columns if "tipo cambio" in str(c).lower()), None)
+    tipo_a = df_arca["Tipo"] if "Tipo" in df_arca.columns else pd.Series([""] * len(df_arca), index=df_arca.index)
+    tipo_x = df_xubio["Tipo"] if "Tipo" in df_xubio.columns else pd.Series([""] * len(df_xubio), index=df_xubio.index)
+
+    def clave(cuit, comp, tipo):
+        return (_solo_digitos(cuit) if usa_cuit else "", str(comp), _clase_comprobante(tipo))
+
+    por_clave_a: dict[tuple, list] = {}
+    for i, fila in df_arca.iterrows():
+        por_clave_a.setdefault(clave(fila.get(col_cuit_arca) if usa_cuit else "", fila["Clave_Py"], tipo_a[i]), []).append(fila)
+    por_clave_x: dict[tuple, list] = {}
+    for i, fila in df_xubio.iterrows():
+        if "extracto" in str(tipo_x[i]).lower():
+            continue
+        por_clave_x.setdefault(clave(fila.get("CUIT") if usa_cuit else "", fila["Comprobante"], tipo_x[i]), []).append(fila)
+
+    salida = []
+    for k, filas_x in por_clave_x.items():
+        filas_a = por_clave_a.get(k)
+        if not filas_a or len(filas_a) != 1 or len(filas_x) != 1:
+            continue
+        fa, fx = filas_a[0], filas_x[0]
+        total_a, total_x = _numero(fa.get(col_total_arca)), _numero(fx.get("Total"))
+        if total_a is None or total_x is None:
+            continue
+        tc = _numero(fa.get(col_tc)) if col_tc else None
+        if tc and tc > 0:
+            total_a *= tc
+        if abs(abs(total_a) - abs(total_x)) > TOLERANCIA_IMPORTE:
+            salida += [
+                {"origen": "arca", "fila": _fila_vista(fa, columnas_arca)},
+                {"origen": "xubio", "fila": _fila_vista(fx, columnas_xubio)},
+            ]
+    return salida
+
+
 def _clave_cuit(cuit, comprobante) -> tuple[str, str]:
     return (_solo_digitos(cuit), str(comprobante))
 
@@ -242,7 +310,6 @@ def diagnosticar(
     trae hasta ``MAX_FILAS_POR_ERROR`` filas tal como están en la planilla.
     """
     libro = f"Libro IVA {operacion}"
-    tercero = "proveedor" if operacion == "Compras" else "cliente"
     columnas_arca = [
         ("Fecha", col_fecha_arca),
         ("Tipo", 'Tipo' if 'Tipo' in df_arca.columns else None),
@@ -268,7 +335,7 @@ def diagnosticar(
             salida.append({"origen": origen, "fila": _fila_vista(fila, columnas)})
         return salida
 
-    def error(tipo, gravedad, titulo, detalle, acciones, items, hoja=None):
+    def error(tipo, gravedad, titulo, detalle, acciones, items, hoja=None, a_corregir=None):
         return {
             "tipo": tipo,
             "gravedad": gravedad,  # «grave»: el control no sirve; «corregir»: cargar bien en Xubio
@@ -278,6 +345,8 @@ def diagnosticar(
             "acciones": acciones,  # qué hacer, en etiquetas cortas («Corregir en Xubio»)
             "total": len(items),
             "comprobantes": items[:MAX_FILAS_POR_ERROR],
+            # Cuántos hay que tocar de verdad (sin los que son normales).
+            "a_corregir": len(items) if a_corregir is None else a_corregir,
             "hoja": hoja,
         }
 
@@ -372,6 +441,50 @@ def diagnosticar(
             tipo_distinto,
         ))
 
+    # Mismo comprobante e importe, pero en Xubio con otro CUIT: es el mismo
+    # comprobante cargado a otro proveedor, no dos faltantes.
+    cuit_distinto = []
+    if operacion == "Compras":
+        for f in list(falta_x):
+            total_a = _numero(_valor(f, "Imp. Total"))
+            for xf in falta_a:
+                total_x = _numero(_valor(xf, "Total"))
+                if (
+                    str(_valor(xf, "Comprobante")) == str(_valor(f, "Comprobante"))
+                    and _clase_comprobante(_valor(xf, "Tipo")) == _clase_comprobante(_valor(f, "Tipo"))
+                    and total_a is not None and total_x is not None
+                    and abs(abs(total_a) - abs(total_x)) <= TOLERANCIA_IMPORTE
+                ):
+                    cuit_distinto += [f, xf]
+                    falta_x.remove(f)
+                    falta_a.remove(xf)
+                    break
+    if cuit_distinto:
+        errores.append(error(
+            "cuit_distinto", "corregir",
+            "CUIT distinto entre ARCA y Xubio",
+            "Mismo comprobante e importe; en Xubio quedó cargado con otro CUIT (otro proveedor).",
+            ["Corregir en Xubio"],
+            cuit_distinto,
+            a_corregir=len(cuit_distinto) // 2,
+        ))
+
+    # Mismo comprobante en los dos lados pero con otro total: el importe quedó mal
+    # cargado en Xubio (o falta una percepción, un impuesto interno...).
+    importe_distinto = _importes_distintos(
+        operacion, df_arca, df_xubio, columnas_arca, columnas_xubio, col_cuit_arca, col_total_arca,
+    )
+    if importe_distinto:
+        errores.append(error(
+            "importe_distinto", "corregir",
+            "Importe distinto entre ARCA y Xubio",
+            "El mismo comprobante tiene otro total en Xubio. Revisá el importe, las percepciones y los impuestos internos.",
+            ["Corregir en Xubio"],
+            importe_distinto,
+            hoja="Libro Iva",
+            a_corregir=len(importe_distinto) // 2,
+        ))
+
     # Proveedores del exterior (CUIT genérico 50-/51-/55-): no están en ARCA.
     exterior = [f for f in falta_a if _solo_digitos(_valor(f, "CUIT"))[:2] in ("50", "51", "55")]
     falta_a = [f for f in falta_a if f not in exterior]
@@ -388,7 +501,7 @@ def diagnosticar(
         if falta_x:
             partes.append(
                 f"{len(falta_x)} no {'está' if len(falta_x) == 1 else 'están'} en el libro: "
-                "subilos a Xubio desde «Convertir AUX»."
+                "subilos a Xubio desde «Faltantes a Xubio»."
             )
         if anuladas:
             partes.append(
@@ -403,9 +516,10 @@ def diagnosticar(
             "faltante_en_xubio", "corregir" if falta_x else "info",
             f"Partidas de ARCA no encontradas en el {libro}",
             " ".join(partes),
-            ["Subir desde Convertir AUX"] if falta_x else ["Sin acción"],
+            ["Subir desde Faltantes a Xubio"] if falta_x else ["Sin acción"],
             falta_x + normales_arca,
             hoja=f"Faltantes en Libro IVA {operacion}",
+            a_corregir=len(falta_x),
         ))
     # Todo lo del Libro IVA sin par en ARCA va junto, como en la sección
     # «Partidas del Libro IVA … no encontradas en ARCA» del Excel. Los extractos,
@@ -437,17 +551,20 @@ def diagnosticar(
             ["Revisar en Xubio", "Consultar al cliente"] if falta_a else ["Sin acción"],
             falta_a + normales,
             hoja="Mis Comprobantes",
+            a_corregir=len(falta_a),
         ))
 
     # Duplicados reales: mismo CUIT, mismo número y mismo tipo (una factura y una
     # nota de crédito pueden compartir número). El mismo número de proveedores
     # distintos tampoco es un error.
     repetidos = []
+    copias = 0
     if 'CUIT' in df_xubio.columns:
         cuits = df_xubio['CUIT'].map(_solo_digitos)
         claves = cuits + "|" + df_xubio['Comprobante'].astype(str) + "|" + df_xubio['Tipo'].map(_clase_comprobante)
         mask = claves.duplicated(keep=False) & (cuits != "")
         repetidos = filas(df_xubio[mask], columnas_xubio, "xubio")
+        copias = int(claves[mask].duplicated(keep="first").sum())  # las que sobran
     if repetidos:
         errores.append(error(
             "duplicado", "corregir",
@@ -456,6 +573,7 @@ def diagnosticar(
             ["Eliminar en Xubio"],
             repetidos,
             hoja="Libro Iva",
+            a_corregir=copias,
         ))
 
     return errores
@@ -468,6 +586,8 @@ ERRORES_EN_NEGRITA = {
     "duplicado": "Duplicado",
     "letra_distinta": "Letra distinta",
     "tipo_distinto": "Tipo distinto",
+    "cuit_distinto": "CUIT distinto",
+    "importe_distinto": "Importe distinto",
     "faltante_en_xubio": "No está subido a Xubio",
     "faltante_en_arca": "Faltante en ARCA",
 }
@@ -553,7 +673,7 @@ def marcar_errores(wb, errores: list[dict], operacion: str) -> None:
                 for tipo_error, (_, xubio) in claves.items():
                     if clave in xubio:
                         resaltar(ws, fila, hasta)
-                        if c_est and tipo_error in ("letra_distinta", "tipo_distinto", "duplicado"):
+                        if c_est and tipo_error in ("letra_distinta", "tipo_distinto", "duplicado", "cuit_distinto", "importe_distinto"):
                             ws.cell(fila, c_est).value = ERRORES_EN_NEGRITA[tipo_error]
                         break
 
@@ -1127,7 +1247,6 @@ def procesar_cruce(
     df_faltantes_arca = df_faltantes_arca.drop(columns=['Clave_Py', 'Clave_Unica', 'Clave_Conciliacion'], errors='ignore')
 
     original_max_row_arca = len(df_arca) + 1
-    original_max_row_xubio = len(df_xubio) + 1
 
     if not df_importados_a.empty:
         df_vacia = pd.DataFrame([[np.nan]*len(df_arca.columns)], columns=df_arca.columns)

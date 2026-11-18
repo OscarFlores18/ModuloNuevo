@@ -94,6 +94,31 @@ def _permitido(url: str) -> bool:
 # acelera cada carga de página de ARCA y Xubio.
 RECURSOS_PESADOS = frozenset({"image", "media"})
 
+# Donde las imágenes sí hacen falta: el login de ARCA y de Xubio y los captchas
+# («No soy un robot» muestra fotos). Sin ellas el captcha no se puede resolver
+# y el login queda trabado.
+HOSTS_CON_IMAGENES = (
+    "auth.afip.gob.ar",
+    "connect.visma.com",
+    "google.com",
+    "gstatic.com",
+    "recaptcha.net",
+    "challenges.cloudflare.com",
+)
+
+
+def _url_del_marco(request) -> str:
+    """La página que pidió el recurso (el captcha pide fotos desde su iframe)."""
+    try:
+        return request.frame.url or ""
+    except Exception:
+        return ""
+
+
+def _necesita_imagenes(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in HOSTS_CON_IMAGENES)
+
 
 def _instalar_filtro_salida(context, log: Callable[[str], None]) -> None:
     modo = config.EGRESS_MODO
@@ -106,7 +131,12 @@ def _instalar_filtro_salida(context, log: Callable[[str], None]) -> None:
 
     def manejar(route) -> None:
         url = route.request.url
-        if aligerar and route.request.resource_type in RECURSOS_PESADOS:
+        if (
+            aligerar
+            and route.request.resource_type in RECURSOS_PESADOS
+            and not _necesita_imagenes(url)
+            and not _necesita_imagenes(_url_del_marco(route.request))
+        ):
             route.abort("blockedbyclient")
             return
         if not filtrar or _permitido(url):

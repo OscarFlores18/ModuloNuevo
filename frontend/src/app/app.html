@@ -2,14 +2,14 @@
 <header class="cf-header">
   <div class="cf-header-interior">
     <!-- Fila superior: título e información -->
-    <div class="mb-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
-      <div class="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
-        <h1 class="m-0 text-[1.45rem] font-extrabold tracking-tight">Control de Facturas</h1>
-        <span class="text-[0.8rem] text-slate-300">Mis Comprobantes de ARCA contra los Libros IVA de Xubio — compras y ventas</span>
-      </div>
-      <div class="text-sm text-slate-200">
-        Última actualización:
+    <div class="mb-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
+      <h1 class="m-0 text-[1.45rem] font-extrabold tracking-tight" title="Mis Comprobantes de ARCA contra los Libros IVA de Xubio">Control de Facturas</h1>
+      <div class="flex items-center text-sm text-slate-200">
+        Actualizado:&nbsp;
         <span class="font-extrabold text-white">{{ ultimaActualizacion() ? formatearFecha(ultimaActualizacion()!) : '—' }}</span>
+        <button type="button" class="ml-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md border border-white/30 align-middle text-white transition-colors hover:bg-white/15 disabled:opacity-60" (click)="actualizar()" [disabled]="actualizando()" [attr.aria-label]="actualizando() ? 'Actualizando' : 'Actualizar'" title="Actualizar: vuelve a traer clientes y ejecuciones del servidor">
+          <svg class="h-3.5 w-3.5" [class.animate-spin]="actualizando()" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6" /></svg>
+        </button>
       </div>
     </div>
 
@@ -23,7 +23,7 @@
             <span class="cf-tab-badge !bg-emerald-600" title="Hay un control en curso"><span class="mf-punto mf-latido" aria-hidden="true"></span>En curso</span>
           }
         </a>
-        <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Convertir AUX</a>
+        <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Faltantes a Xubio</a>
         <a routerLink="/clientes" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
           Clientes
           @if (clientes.lista().length) {
@@ -55,18 +55,18 @@
   <footer class="mf-pie">
     <span>Control de Facturas V-1.0.0</span>
     <span class="mf-sep">·</span>
-    <span>Los bots abren Chrome en la computadora del servidor</span>
+    <span>Los bots abren Chrome en la computadora donde corre el servidor</span>
     @if (!sesion.conectado()) {
       <span class="mf-sep">·</span>
-      <span class="mf-aviso-chico">Modo local: sin ContadorWeb</span>
+      <span>Modo local</span>
     }
   </footer>
 </main>
 
-<!-- Ir al final de la página y volver arriba -->
+<!-- Volver arriba -->
 @if (hayScroll()) {
-  <button type="button" class="cf-flotante" (click)="saltar()" [attr.aria-label]="abajo() ? 'Volver arriba' : 'Ir al final de la página'" [title]="abajo() ? 'Volver arriba' : 'Ir al final'">
-    <svg class="h-5 w-5" [class.rotate-180]="abajo()" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  <button type="button" class="cf-flotante" (click)="saltar()" aria-label="Volver arriba" title="Volver arriba">
+    <svg class="h-5 w-5 rotate-180" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <path d="M12 5v14M5 12l7 7 7-7" />
     </svg>
   </button>

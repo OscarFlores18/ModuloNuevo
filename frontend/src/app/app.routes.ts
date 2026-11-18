@@ -25,7 +25,7 @@ export const routes: Routes = [
   },
   {
     path: 'convertir-aux',
-    title: 'Convertir AUX · Control de Facturas',
+    title: 'Faltantes a Xubio · Control de Facturas',
     loadComponent: () => import('./features/convertir/convertir').then((m) => m.ConvertirPantalla),
   },
   { path: '**', redirectTo: '' },

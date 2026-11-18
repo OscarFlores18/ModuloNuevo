@@ -19,7 +19,6 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import Page, sync_playwright
 
-from ..core import config
 from ..core.errors import TimeoutDescarga
 from ..core.models import BotResult
 from .navegador import como_fuente, lanzar, nuevo_contexto

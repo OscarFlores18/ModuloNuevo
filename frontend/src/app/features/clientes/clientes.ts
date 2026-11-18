@@ -1,6 +1,6 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { CuitPipe } from '../../core/cuit.pipe';
+import { CuitPipe, formatearCuit } from '../../core/cuit.pipe';
 import { Cliente, mensajeDeError } from '../../core/models';
 import { AccesoClientesService } from '../../core/services/acceso-clientes.service';
 import { ClientesStore } from '../../core/services/clientes.store';
@@ -72,99 +72,112 @@ import { ClienteForm } from './cliente-form';
       <app-alerta [nivel]="a.nivel" [mensajes]="a.mensajes" [descartable]="true" (cerrado)="avisoPrecarga.set(null)" />
     }
 
-    <!-- Tarjetas: siguen al total, no a los filtros -->
-    <section class="mf-cards" aria-label="Resumen">
-      <article class="mf-card">
-        <span class="mf-card-num">{{ store.lista().length }}</span>
-        <span class="mf-card-etiq">Clientes</span>
-      </article>
-      <article class="mf-card">
-        <span class="mf-card-num">{{ store.lista().length - store.incompletos() }}</span>
-        <span class="mf-card-etiq">Con datos completos</span>
-      </article>
-      <article class="mf-card" [class.mf-card-alerta]="store.incompletos() > 0">
-        <span class="mf-card-num">{{ store.incompletos() }}</span>
-        <span class="mf-card-etiq">Con datos faltantes</span>
-      </article>
-      <article class="mf-card">
-        <span class="mf-card-num">{{ sinClave() }}</span>
-        <span class="mf-card-etiq">Sin clave fiscal</span>
-      </article>
-    </section>
-
-    <section class="mf-panel" aria-labelledby="t-lista">
-      <div class="mf-panel-titulo">
-        <h2 id="t-lista">Listado</h2>
-        <span class="mf-sub">{{ visibles().length }} de {{ store.lista().length }}</span>
-        <div class="mf-filtros">
-          <input class="mf-input !w-64" type="search" [value]="busqueda()" (input)="busqueda.set($any($event.target).value)" placeholder="Buscar nombre o CUIT…" aria-label="Buscar cliente" />
-          <label class="mf-check">
-            <input type="checkbox" [checked]="soloIncompletos()" (change)="soloIncompletos.set($any($event.target).checked)" />
-            Con datos faltantes
-          </label>
+    <!-- Lista a la izquierda; a la derecha el resumen o el cliente que se está editando -->
+    <div class="cl-grilla" [class.cl-grilla-con-panel]="anchoGrande()">
+      <section class="mf-panel" aria-labelledby="t-lista">
+        <div class="mf-panel-titulo">
+          <h2 id="t-lista">Listado</h2>
+          <span class="mf-sub">{{ visibles().length }} de {{ store.lista().length }}</span>
+          <div class="mf-filtros">
+            <input class="mf-input !w-64" type="search" [value]="busqueda()" (input)="busqueda.set($any($event.target).value)" placeholder="Buscar nombre o CUIT…" aria-label="Buscar cliente" />
+          </div>
         </div>
-      </div>
 
-      <div class="mf-scroll">
-        <table class="mf-tabla">
-          <thead>
-            <tr>
-              <th>Cliente</th>
-              <th>CUIT representado</th>
-              <th>CUIT de ingreso</th>
-              <th>Clave fiscal</th>
-              <th>Estado</th>
-              <th><span class="sr-only">Acciones</span></th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (c of visibles(); track c.nombre) {
-              <tr [class.mf-fila]="sesion.esSupervisor()" (click)="sesion.esSupervisor() && abrir(c)">
-                <td class="max-w-[18rem] truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</td>
-                <td class="mono">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : '—' }}</td>
-                <td class="mono">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</td>
-                <td>
-                  @if (c.arca.tiene_clave) { <span class="mf-badge mf-badge-ok">Cargada</span> } @else { <span class="mf-badge mf-badge-aviso">Falta</span> }
-                </td>
-                <td>
-                  @if (c.faltantes.length) {
-                    <span class="mf-badge mf-badge-error" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan {{ c.faltantes.length }}</span>
-                  } @else {
-                    <span class="mf-badge mf-badge-acento">Completo</span>
-                  }
-                </td>
-                <td class="num">
-                  @if (sesion.esSupervisor()) {
-                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="$event.stopPropagation(); abrir(c)" [attr.aria-label]="'Editar ' + c.nombre">Editar</button>
-                  }
-                </td>
-              </tr>
-            } @empty {
+        <!-- Filtros de un clic, con su cantidad (reemplazan a las tarjetas) -->
+        <div class="cl-filtros" role="group" aria-label="Filtrar clientes">
+          @for (f of filtros(); track f.id) {
+            <button type="button" class="cl-filtro" [class.activo]="filtro() === f.id" [class.cl-filtro-alerta]="f.alerta && f.cantidad > 0"
+              [attr.aria-pressed]="filtro() === f.id" (click)="filtro.set(f.id)">
+              {{ f.texto }} <span class="cl-filtro-num">{{ f.cantidad }}</span>
+            </button>
+          }
+        </div>
+
+        <div class="mf-scroll">
+          <table class="mf-tabla">
+            <thead>
               <tr>
-                <td colspan="7" class="mf-tenue">
-                  @if (store.cargando() && !store.cargado()) {
-                    Cargando clientes…
-                  } @else if (busqueda() || soloIncompletos()) {
-                    Nada que mostrar con esos filtros.
-                  } @else {
-                    Todavía no hay clientes.
-                    @if (sesion.esSupervisor()) { <button type="button" class="mf-btn-link" (click)="abrir(null)">Cargar el primero</button> }
-                  }
-                </td>
+                <th>Cliente</th>
+                <th>CUIT representado</th>
+                <th>CUIT de ingreso</th>
+                <th>Clave fiscal</th>
+                <th>Estado</th>
+                <th><span class="sr-only">Acciones</span></th>
               </tr>
-            }
-          </tbody>
-        </table>
-      </div>
-      <p class="mf-ayuda mb-0 mt-3">
-        Se guardan en <code>config.json</code>, el mismo archivo que usa la app de escritorio.
-        <a routerLink="/control" class="mf-btn-link">Ir a Nuevo control</a>
-      </p>
-    </section>
+            </thead>
+            <tbody>
+              @for (c of visibles(); track c.nombre) {
+                <tr [class.mf-fila]="sesion.esSupervisor()" [class.mf-fila-activa]="formAbierto() && editando()?.nombre === c.nombre" (click)="sesion.esSupervisor() && abrir(c)">
+                  <td class="max-w-[18rem] truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</td>
+                  <td class="mono whitespace-nowrap">{{ c.arca.cuit_representado ? (c.arca.cuit_representado | cuit) : '—' }}</td>
+                  <td class="mono whitespace-nowrap">{{ c.arca.cuit_login ? (c.arca.cuit_login | cuit) : '—' }}</td>
+                  <td>
+                    @if (c.arca.tiene_clave) { <span class="mf-badge mf-badge-ok">Cargada</span> } @else { <span class="mf-badge mf-badge-aviso">Falta</span> }
+                  </td>
+                  <td>
+                    @if (c.faltantes.length) {
+                      <span class="mf-badge mf-badge-error" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan {{ c.faltantes.length }}</span>
+                    } @else {
+                      <span class="mf-badge mf-badge-acento">Completo</span>
+                    }
+                  </td>
+                  <td class="num">
+                    @if (sesion.esSupervisor()) {
+                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="$event.stopPropagation(); abrir(c)" [attr.aria-label]="'Editar ' + c.nombre">Editar</button>
+                    }
+                  </td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="7" class="mf-tenue">
+                    @if (store.cargando() && !store.cargado()) {
+                      Cargando clientes…
+                    } @else if (busqueda() || filtro() !== 'todos') {
+                      Nada que mostrar con esos filtros.
+                    } @else {
+                      Todavía no hay clientes.
+                      @if (sesion.esSupervisor()) { <button type="button" class="mf-btn-link" (click)="abrir(null)">Cargar el primero</button> }
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <p class="mf-ayuda mb-0 mt-3">
+          Se guardan en <code>config.json</code>, el mismo archivo que usa la app de escritorio.
+          <a routerLink="/control" class="mf-btn-link">Ir a Nuevo control</a>
+        </p>
+      </section>
+
+      @if (anchoGrande()) {
+        <aside class="cl-lado" aria-label="Detalle del cliente">
+          @if (formAbierto()) {
+            <app-cliente-form [enPanel]="true" [(abierto)]="formAbierto" [cliente]="editando()" (guardado)="guardadoRecien.set($event)" />
+          } @else {
+            <section class="mf-panel cl-resumen" aria-labelledby="t-resumen-cl">
+              <h2 id="t-resumen-cl">Resumen</h2>
+              <dl>
+                <div><dt>Clientes</dt><dd>{{ store.lista().length }}</dd></div>
+                <div><dt>Con datos completos</dt><dd class="cl-ok">{{ store.lista().length - store.incompletos() }}</dd></div>
+                <div><dt>Con datos faltantes</dt><dd [class.cl-mal]="store.incompletos() > 0">{{ store.incompletos() }}</dd></div>
+                <div><dt>Sin clave fiscal</dt><dd [class.cl-mal]="sinClave() > 0">{{ sinClave() }}</dd></div>
+              </dl>
+              <p class="mf-tenue m-0 text-sm">Tocá un cliente de la lista para ver y editar sus datos acá.</p>
+              @if (sesion.esSupervisor()) {
+                <button type="button" class="mf-btn w-full" (click)="abrir(null)">+ Nuevo cliente</button>
+              }
+            </section>
+          }
+        </aside>
+      }
+    </div>
 
     }
 
-    <app-cliente-form [(abierto)]="formAbierto" [cliente]="editando()" (guardado)="guardadoRecien.set($event)" />
+    @if (!anchoGrande()) {
+      <app-cliente-form [(abierto)]="formAbierto" [cliente]="editando()" (guardado)="guardadoRecien.set($event)" />
+    }
   `,
 })
 export class ClientesPantalla {
@@ -173,7 +186,10 @@ export class ClientesPantalla {
   protected readonly sesion = inject(SesionService);
 
   protected readonly busqueda = signal('');
-  protected readonly soloIncompletos = signal(false);
+  /** Qué clientes se muestran (los botones de arriba de la tabla). */
+  protected readonly filtro = signal<'todos' | 'completos' | 'faltantes' | 'sin_clave'>('todos');
+  /** Pantalla ancha: el cliente se edita en el panel de la derecha, no en una ventana. */
+  protected readonly anchoGrande = signal(typeof matchMedia !== 'undefined' && matchMedia('(min-width: 1024px)').matches);
   protected readonly formAbierto = signal(false);
   protected readonly editando = signal<Cliente | null>(null);
   protected readonly guardadoRecien = signal<string | null>(null);
@@ -191,7 +207,13 @@ export class ClientesPantalla {
     const digitos = q.replace(/\D/g, '');
     return this.store
       .lista()
-      .filter((c) => !this.soloIncompletos() || c.faltantes.length)
+      .filter((c) => {
+        const f = this.filtro();
+        if (f === 'completos') return !c.faltantes.length;
+        if (f === 'faltantes') return c.faltantes.length > 0;
+        if (f === 'sin_clave') return !c.arca.tiene_clave;
+        return true;
+      })
       .filter(
         (c) =>
           !q ||
@@ -200,7 +222,24 @@ export class ClientesPantalla {
       );
   });
 
+  protected readonly filtros = computed(() => {
+    const total = this.store.lista().length;
+    const faltan = this.store.incompletos();
+    return [
+      { id: 'todos' as const, texto: 'Todos', cantidad: total, alerta: false },
+      { id: 'completos' as const, texto: 'Completos', cantidad: total - faltan, alerta: false },
+      { id: 'faltantes' as const, texto: 'Con datos faltantes', cantidad: faltan, alerta: true },
+      { id: 'sin_clave' as const, texto: 'Sin clave fiscal', cantidad: this.sinClave(), alerta: true },
+    ];
+  });
+
   constructor() {
+    if (typeof matchMedia !== 'undefined') {
+      const consulta = matchMedia('(min-width: 1024px)');
+      const cambiar = (e: MediaQueryListEvent) => this.anchoGrande.set(e.matches);
+      consulta.addEventListener('change', cambiar);
+      inject(DestroyRef).onDestroy(() => consulta.removeEventListener('change', cambiar));
+    }
     void this.acceso.revisar();
     void this.store.cargar(true);
   }
@@ -237,7 +276,7 @@ export class ClientesPantalla {
       if (r.completados.length) mensajes.push(`Se completó la clave fiscal de ${r.completados.length}: ${lista(r.completados)}.`);
       if (r.ya_estaban.length) mensajes.push(`Ya estaban ${r.ya_estaban.length}.`);
       if (!r.con_clave) {
-        mensajes.push('Falta la clave fiscal del CUIT de ingreso 20-23510216-2: cargala editando uno de ellos y volvé a precargar para que se copie al resto.');
+        mensajes.push(`Falta la clave fiscal del CUIT de ingreso ${formatearCuit(r.cuit_ingreso)}: cargala editando uno de ellos y volvé a precargar para que se copie al resto.`);
       }
       const hubo = r.agregados.length || r.completados.length;
       this.avisoPrecarga.set({ nivel: hubo ? 'ok' : 'info', mensajes: mensajes.length ? mensajes : ['No había nada para agregar.'] });

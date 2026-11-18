@@ -43,6 +43,7 @@ class ResultadoPrecarga:
             "ya_estaban": self.ya_estaban,
             "con_clave": self.con_clave,
             "completados": self.completados,
+            "cuit_ingreso": CUIT_INGRESO,
         }
 
 

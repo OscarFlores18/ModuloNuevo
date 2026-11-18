@@ -1,5 +1,7 @@
 @let e = ej();
 
+<div class="ej-layout" [class.ej-layout-con-historial]="store.historial().length > 0">
+<div class="ej-detalle">
 @if (store.error(); as err) { <app-alerta nivel="error" titulo="No se pudo consultar la ejecución." [mensajes]="[err]" /> }
 
 @if (!e) {
@@ -16,18 +18,25 @@
   <section class="mf-panel mf-panel-acento" aria-labelledby="t-ejecucion">
     <header class="flex flex-wrap items-center justify-between gap-3">
       <div class="min-w-0">
-        <h2 id="t-ejecucion" class="m-0 text-xl font-bold">Ejecución del control</h2>
-        <p class="m-0 mt-0.5 font-semibold">Período {{ e.periodo }}</p>
+        <h2 id="t-ejecucion" class="m-0 text-xl font-bold first-letter:uppercase">{{ titulo() }}</h2>
+        <p class="mf-sub m-0 mt-0.5">{{ bajada() }}</p>
       </div>
       @if (activa()) {
         <button type="button" class="mf-btn mf-btn-rojo inline-flex items-center gap-2" (click)="detener()" [disabled]="e.cancelar_pedido">
           @if (e.cancelar_pedido) {
             <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
           }
-          {{ e.cancelar_pedido ? 'Deteniendo…' : 'Detener bot' }}
+          {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar control' }}
         </button>
       } @else {
-        <a routerLink="/control" class="mf-btn">Nuevo control</a>
+        <div class="flex flex-wrap gap-2">
+          @if (reintento(); as r) {
+            <button type="button" class="mf-btn mf-btn-suave" (click)="reintentar()" [title]="'Arma un control nuevo con: ' + r.clientes.join(', ')">
+              Reintentar {{ r.clientes.length === 1 ? 'el que falló' : 'los ' + r.clientes.length + ' que fallaron' }}
+            </button>
+          }
+          <a routerLink="/control" class="mf-btn">Nuevo control</a>
+        </div>
       }
     </header>
 
@@ -40,10 +49,23 @@
         <dt>Progreso</dt>
         <dd>{{ procesados() }} <small>de {{ e.clientes }} {{ e.clientes === 1 ? 'cliente' : 'clientes' }}</small></dd>
       </div>
-      <div class="ej-kpi" [class.ej-kpi-error]="errores() > 0">
-        <dt>Errores</dt>
-        <dd>{{ errores() }}</dd>
-      </div>
+      @if (activa()) {
+        <div class="ej-kpi" [class.ej-kpi-error]="errores() > 0">
+          <dt>Pasos con error</dt>
+          <dd>{{ errores() }}</dd>
+        </div>
+      } @else {
+        <div class="ej-kpi" [class.ej-kpi-error]="pendientes() > 0" [class.ej-kpi-ok]="!pendientes()">
+          <dt>Para hacer@if (conteoErrores().grave) { <span class="ej-kpi-grave">· {{ conteoErrores().grave }} grave{{ conteoErrores().grave === 1 ? '' : 's' }}</span> }</dt>
+          <dd>
+            @if (tareas().length) {
+              <button type="button" class="ej-kpi-link" (click)="irATareas()" title="Ir a la lista de tareas">{{ pendientes() }} <small>{{ pendientes() ? 'de ' + tareas().length + (tareas().length === 1 ? ' tarea' : ' tareas') : 'todo hecho' }}</small></button>
+            } @else {
+              <span>0 <small>todo en orden</small></span>
+            }
+          </dd>
+        </div>
+      }
       <div class="ej-kpi">
         <dt>Duración</dt>
         <dd class="tabular-nums" role="timer">{{ duracion() || '—' }}</dd>
@@ -56,17 +78,64 @@
     </div>
   </section>
 
-  <!-- Errores que no frenan el control: se muestran al terminar (ventana de errores) -->
-  @if (!activa() && e.advertencias?.length) {
-    @let n = conteoErrores();
-    <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-3" aria-labelledby="t-advertencias">
-      @if (n.grave) { <span class="mf-badge shrink-0" style="background: var(--color-error); color: #fff">{{ n.grave }} grave{{ n.grave === 1 ? '' : 's' }}</span> }
-      @if (n.corregir) { <span class="mf-badge mf-badge-aviso shrink-0">{{ n.corregir }} a corregir</span> }
-      @if (n.info) { <span class="mf-badge shrink-0">{{ n.info }} informativo{{ n.info === 1 ? '' : 's' }}</span> }
-      <strong id="t-advertencias" class="min-w-0 flex-1 text-sm">
-        {{ n.grave + n.corregir ? 'El control se hizo, pero hay errores para revisar y corregir.' : 'El control se hizo sin errores. Hay avisos informativos.' }}
-      </strong>
-      <button type="button" class="mf-btn mf-btn-mini" (click)="verErrores()">Ver errores</button>
+  <!-- Qué hay que hacer: los hallazgos como órdenes, en el orden en que conviene hacerlas -->
+  @if (!activa() && (tareas().length || conteoErrores().info)) {
+    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" aria-labelledby="t-tareas" id="t-tareas">
+      <header class="tr-cab">
+        <div class="min-w-0 flex-1">
+          <h2 class="m-0 text-lg font-bold">{{ pendientes() ? 'Qué hay que hacer' : tareas().length ? 'Todo hecho' : 'Nada para corregir' }}</h2>
+          <p class="mf-sub m-0 mt-0.5">
+            @if (!tareas().length) {
+              El control salió bien: solo hay avisos para que sepas.
+            } @else if (!pendientes()) {
+              Tildaste todas las tareas de este control.
+            } @else {
+              Tildá cada una cuando la termines · quedan {{ pendientes() }} de {{ tareas().length }}.
+            }
+          </p>
+        </div>
+        @if (tareas().length) {
+          <div class="tr-avance" role="progressbar" [attr.aria-valuenow]="tareas().length - pendientes()" aria-valuemin="0" [attr.aria-valuemax]="tareas().length" aria-label="Tareas hechas">
+            <div [style.width.%]="((tareas().length - pendientes()) / tareas().length) * 100"></div>
+          </div>
+        }
+        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()">Ver todos los hallazgos</button>
+      </header>
+
+      @for (g of gruposTareas(); track g.id; let ng = $index) {
+        <div class="tr-grupo" [attr.data-grupo]="g.id">
+          <h3 class="tr-grupo-titulo"><span class="tr-grupo-num">{{ ng + 1 }}</span>{{ g.titulo }} <small>{{ g.ayuda }}</small></h3>
+          <ul class="tr-lista">
+            @for (tarea of g.tareas; track tarea.clave; let i = $index) {
+              @let hecha = hechas().has(tarea.clave);
+              @let idCheck = 'tr-' + g.id + '-' + i;
+              <li class="tr-tarea" [class.tr-hecha]="hecha">
+                <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" (change)="alternarHecha(tarea)" />
+                <label class="tr-texto" [for]="idCheck">
+                  <span class="tr-orden">{{ tarea.orden }}</span>
+                  <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ tarea.porque }}</span>
+                </label>
+                <span class="tr-acciones">
+                  @if (tarea.advertencia.comprobantes.length) {
+                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)">Ver comprobantes</button>
+                  }
+                  @if (tarea.destino; as d) {
+                    <button type="button" class="mf-btn mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
+                  }
+                </span>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+
+      @if (conteoErrores().info) {
+        <p class="tr-info">
+          <span aria-hidden="true">ⓘ</span>
+          {{ conteoErrores().info }} aviso{{ conteoErrores().info === 1 ? '' : 's' }} informativo{{ conteoErrores().info === 1 ? '' : 's' }}: no hace falta hacer nada.
+          <button type="button" class="mf-btn-link" (click)="verErrores()">Ver</button>
+        </p>
+      }
     </section>
   }
 
@@ -88,73 +157,61 @@
     </section>
   }
 
-  <!-- 2. Clientes -->
+  <!-- 2. Clientes: una fila por cliente con sus tres etapas; abiertos los que tienen algo para mirar -->
   <section aria-labelledby="t-clientes-ej">
     <h2 id="t-clientes-ej" class="m-0 mb-2 text-lg font-bold">Clientes</h2>
     <ul class="ej-clientes">
       @for (c of clientes(); track c.nombre) {
         <li>
-          <!-- Abierto al aparecer; si se cierra, queda cerrado aunque la pantalla se actualice -->
-          <details class="ej-cliente" open [class.ej-cliente-error]="c.conError">
+          <details class="ej-cliente" [open]="c.conError || c.hallazgos > 0 || c.origen.estado === 'en_curso'" [class.ej-cliente-error]="c.conError">
             <summary>
               <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
               <span class="ej-cliente-nombre" [title]="c.nombre">{{ c.nombre }}</span>
-              <span [class]="c.insignia.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="c.insignia.latido" aria-hidden="true"></span>{{ c.insignia.texto }}</span>
-              <span class="mf-barra ej-cliente-barra" role="progressbar" [attr.aria-valuenow]="c.avance" aria-valuemin="0" aria-valuemax="100" [attr.aria-label]="'Avance de ' + c.nombre">
-                <span class="mf-barra-relleno block" [style.width.%]="c.avance" [style.background]="c.conError ? 'var(--color-error)' : c.avance === 100 ? 'var(--color-ok)' : null"></span>
+              <span class="ej-etapas" [attr.aria-label]="'Pasos de ' + c.nombre">
+                @for (et of c.etapas; track et.id) {
+                  <span class="ej-etapa-chip" [attr.data-estado]="et.estado" [title]="et.titulo + ': ' + textoEtapa[et.estado]">
+                    @switch (et.estado) {
+                      @case ('ok') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg> }
+                      @case ('error') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg> }
+                      @case ('procesando') { <span class="ej-spinner" aria-hidden="true"></span> }
+                      @case ('aviso') { <span aria-hidden="true">!</span> }
+                      @default { <span aria-hidden="true">–</span> }
+                    }
+                    {{ et.titulo }}
+                  </span>
+                }
               </span>
+              @if (c.hallazgos && !activa()) {
+                <span class="mf-badge mf-badge-aviso shrink-0" [title]="'Hallazgos de la auditoría o pasos que fallaron para ' + c.nombre">{{ c.hallazgos }} a revisar</span>
+              }
+              <span [class]="c.insignia.clase" class="ej-pildora shrink-0"><span class="mf-punto" [class.mf-latido]="c.insignia.latido" aria-hidden="true"></span>{{ c.insignia.texto }}</span>
             </summary>
 
-            <!-- 3. Detalle: línea de tiempo -->
             <div class="ej-cliente-cuerpo">
-              <ol class="ej-stepper" [attr.aria-label]="'Pasos de ' + c.nombre">
-                @for (et of c.etapas; track et.id; let n = $index) {
-                  <li class="ej-etapa" [attr.data-estado]="et.estado">
-                    <span class="ej-etapa-icono" aria-hidden="true">
-                      @switch (et.estado) {
-                        @case ('ok') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg> }
-                        @case ('error') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg> }
-                        @case ('procesando') { <span class="ej-spinner"></span> }
-                        @case ('aviso') { ! }
-                        @case ('omitido') { – }
-                        @default { {{ n + 1 }} }
-                      }
-                    </span>
-                    <span class="ej-etapa-nombre">{{ et.titulo }}</span>
-                    <span [class]="claseEtapa[et.estado]">
-                      @if (et.estado === 'procesando') { <span class="mf-punto mf-latido" aria-hidden="true"></span> }
-                      {{ textoEtapa[et.estado] }}
-                    </span>
-                  </li>
-                }
-              </ol>
-
-              @for (p of c.problemas; track p.titulo) {
-                <app-alerta class="mt-3" [nivel]="p.nivel" [titulo]="p.titulo" [mensajes]="[p.mensaje]" />
+              @if (!c.problemas.length && !c.archivos.length) {
+                <p class="mf-tenue m-0 text-sm">{{ c.origen.estado === 'pendiente' ? 'Todavía no empezó.' : c.origen.estado === 'en_curso' ? 'Bajando los archivos…' : 'Sin archivos generados.' }}</p>
+              }
+              @for (p of c.problemas; track p.titulo; let primero = $first) {
+                <app-alerta [class.mt-2]="!primero" [nivel]="p.nivel" [titulo]="p.titulo" [mensajes]="[p.mensaje]"
+                  [orden]="p.tarea?.orden ?? ''" [accion]="p.tarea?.destino?.texto ?? ''" (accionar)="p.tarea && irA(p.tarea)" />
               }
 
               @if (c.archivos.length) {
-                <div class="mt-3">
-                  <button type="button" class="mf-btn mf-btn-suave" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
-                    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
-                    {{ carpetaAbierta(c.nombre) ? 'Ocultar archivos' : 'Ver archivos (' + c.archivos.length + ')' }}
-                  </button>
-
-                  @if (carpetaAbierta(c.nombre)) {
-                    @if (errorDescarga(); as err) { <app-alerta class="mt-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
-                    <div class="ej-carpeta">
-                      <div class="ej-carpeta-ruta">
-                        <span class="mf-tenue min-w-0 flex-1">
-                          @if (dialogosLocales()) {
-                            Descargar todos: elegí la carpeta del cliente y adentro se crea la del período (mmaaaa) con «Control de facturas» y la carpeta de este control (1er control, 2do control…), donde van Ventas y Compras juntos. Si cerrás sin elegir, se crea la carpeta del cliente en Descargas.
-                          } @else {
-                            Descargar todos baja un .zip con las carpetas del cliente, del período, «Control de facturas» y la de este control (Ventas y Compras juntos).
-                          }
-                        </span>
-                        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'">
-                          {{ descargando() === c.indice + '/*' ? 'Descargando…' : 'Descargar todos' }}
-                        </button>
-                      </div>
+                <div [class.mt-3]="c.problemas.length">
+                  @if (errorDescarga(); as err) { <app-alerta class="mb-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
+                  <div class="ej-carpeta">
+                    <div class="ej-carpeta-ruta">
+                      <button type="button" class="ej-carpeta-titulo" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
+                        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                        Archivos ({{ c.archivos.length }})
+                        <span class="mf-tenue text-xs font-semibold">{{ carpetaAbierta(c.nombre) ? 'Ocultar ▴' : 'Mostrar ▾' }}</span>
+                      </button>
+                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico ml-auto" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'"
+                        [title]="dialogosLocales() ? 'Elegís la carpeta del cliente y adentro se arma mmaaaa / Control de facturas / N° de control. Si cerrás sin elegir, va a Descargas.' : 'Un .zip con las carpetas del cliente, del período y de este control.'">
+                        {{ descargando() === c.indice + '/*' ? 'Descargando…' : dialogosLocales() ? 'Guardar todos en…' : 'Descargar todos (.zip)' }}
+                      </button>
+                    </div>
+                    @if (carpetaAbierta(c.nombre)) {
                       <ul class="ej-archivos">
                         @for (a of c.archivos; track a.nombre) {
                           @let clave = c.indice + '/' + a.nombre;
@@ -162,14 +219,14 @@
                             <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
                             <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
                             <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
-                            <button type="button" class="mf-btn mf-btn-chico" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
+                            <button type="button" class="mf-btn mf-btn-chico" [class.mf-btn-suave]="a.tipo !== 'auditoria'" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
                               {{ descargando() === clave ? 'Descargando…' : 'Descargar' }}
                             </button>
                           </li>
                         }
                       </ul>
-                    </div>
-                  }
+                    }
+                  </div>
                 </div>
               }
             </div>
@@ -180,3 +237,31 @@
   </section>
 
 }
+
+</div>
+
+<!-- Historial: los controles anteriores, como una bandeja (quedan guardados en el servidor) -->
+@if (store.historial().length) {
+  <aside class="ej-historial" aria-labelledby="t-historial">
+    <div class="ej-historial-cab">
+      <h2 id="t-historial">Historial</h2>
+      <span class="mf-sub">{{ store.historial().length }} {{ store.historial().length === 1 ? 'control' : 'controles' }}</span>
+    </div>
+    <ul class="ej-historial-lista">
+      @for (h of store.historial(); track h.id) {
+        @let insH = insigniaEjecucion[h.estado];
+        <li>
+          <a [routerLink]="['/ejecuciones', h.id]" class="ej-hist-item" [class.activo]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null">
+            <span class="ej-hist-fila">
+              <span class="ej-hist-periodo first-letter:uppercase" [title]="h.periodo">{{ periodoLegibleDe(h.periodo) }}</span>
+              <span class="mf-punto shrink-0" [class]="'ej-hist-punto ej-hist-' + h.estado" [class.mf-latido]="insH.latido" [title]="insH.texto"></span>
+            </span>
+            <span class="ej-hist-meta">{{ fechaCorta(h.creada) }} · {{ h.clientes }} {{ h.clientes === 1 ? 'cliente' : 'clientes' }}@if (h.usuario) { · {{ h.usuario }} }</span>
+            <span class="ej-hist-res" [class.ej-hist-res-mal]="h.totales.con_errores > 0">{{ h.estado === 'cancelada' ? 'Cancelado' : h.estado === 'error' ? 'Se cortó' : resultadoDe(h) }}</span>
+          </a>
+        </li>
+      }
+    </ul>
+  </aside>
+}
+</div>

@@ -60,9 +60,9 @@ def test_faltantes_de_los_dos_lados(tmp_path: Path):
     assert errores["faltante_en_xubio"]["comprobantes"][0]["origen"] == "arca"
     assert errores["faltante_en_arca"]["comprobantes"][0]["origen"] == "xubio"
     assert errores["faltante_en_xubio"]["hoja"] == "Faltantes en Libro IVA Compras"
-    # Lo que hay que hacer: subirlas desde la pestaña «Convertir AUX».
-    assert errores["faltante_en_xubio"]["acciones"] == ["Subir desde Convertir AUX"]
-    assert "desde «Convertir AUX»" in errores["faltante_en_xubio"]["detalle"]
+    # Lo que hay que hacer: subirlas desde la pestaña «Faltantes a Xubio».
+    assert errores["faltante_en_xubio"]["acciones"] == ["Subir desde Faltantes a Xubio"]
+    assert "desde «Faltantes a Xubio»" in errores["faltante_en_xubio"]["detalle"]
 
 
 def test_mismo_numero_de_otro_proveedor_no_es_duplicado(tmp_path: Path):

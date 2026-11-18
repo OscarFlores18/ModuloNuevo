@@ -16,8 +16,9 @@ import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { SesionService } from '../../core/services/sesion.service';
+import { Reintento, leerReintento } from '../../core/reintento';
+import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
-import { AnchoAjustable } from '../../core/ui/ancho-ajustable';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 
@@ -68,7 +69,7 @@ function dmyAFecha(dmy: string): Date {
 
 @Component({
   selector: 'app-nuevo-control',
-  imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado, AnchoAjustable],
+  imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado, Alerta],
   templateUrl: './control.html',
 })
 export class NuevoControl {
@@ -173,6 +174,24 @@ export class NuevoControl {
   protected readonly hoyIso = aIso(new Date());
   protected readonly mesActualIso = this.hoyIso.slice(0, 7);
 
+  /** Un clic para lo de todos los meses: el anterior (lo normal) y el que corre. */
+  protected readonly mesesRapidos = (() => {
+    const hoy = new Date();
+    const anterior = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+    const iso = (f: Date) => `${f.getFullYear()}-${dos(f.getMonth() + 1)}`;
+    const corto = (f: Date) => nombreDelMes(iso(f)).split(' ')[0];
+    return [
+      { valor: iso(anterior), texto: `Mes anterior (${corto(anterior)})` },
+      { valor: iso(hoy), texto: `Este mes (${corto(hoy)})` },
+    ];
+  })();
+
+  protected elegirMes(mes: string): void {
+    const c = this.form.controls.periodo.controls.mes;
+    c.setValue(mes);
+    c.markAsDirty();
+  }
+
   /**
    * Qué período se va a controlar, explicado: días, si se corta en hoy, si
    * abarca varios meses, o qué corregir. Lo ve quien arma el control antes de
@@ -243,6 +262,36 @@ export class NuevoControl {
 
   protected readonly intentado = signal(false);
 
+  /** Lo que falta para poder ejecutar, en pocas palabras (panel de «Ejecutar»). */
+  protected readonly faltan = computed(() => {
+    this.valor();
+    this.ajustes();
+    const f = this.form.controls;
+    const p: { texto: string; seccion: string }[] = [];
+    if (f.clientes.invalid) p.push({ texto: 'Elegir clientes', seccion: 't-clientes' });
+    if (f.periodo.invalid || !this.periodo()) p.push({ texto: 'Completar el período', seccion: 't-parametros' });
+    if (f.operaciones.invalid) p.push({ texto: 'Elegir operaciones', seccion: 't-parametros' });
+    if (f.xubio.invalid) p.push({ texto: 'Cuenta de Xubio', seccion: 't-xubio' });
+    return p;
+  });
+
+  /** Elegidos a los que les falta algún dato: el bot los va a marcar con error. */
+  protected readonly incompletos = computed(() => this.elegidos().filter((c) => c.faltantes.length));
+
+  protected sacarIncompletos(): void {
+    const fuera = new Set(this.incompletos().map((c) => c.nombre));
+    this.setClientes(this.form.controls.clientes.value.filter((n) => !fuera.has(n)));
+  }
+
+  /** Lleva a la sección que falta completar y la remarca un momento. */
+  protected irA(seccion: string): void {
+    const caja = document.getElementById(seccion)?.closest('section');
+    if (!caja) return;
+    caja.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    caja.classList.add('nc-resaltar');
+    setTimeout(() => caja.classList.remove('nc-resaltar'), 1600);
+  }
+
   // --- 1er / 2do control ---------------------------------------------------------------
 
   /** Lo que respondió el servidor para la selección y el período actuales. */
@@ -299,6 +348,10 @@ export class NuevoControl {
     void this.cargarAjustes();
     this.reaccionarACambios();
 
+    // Viene de «Reintentar los que fallaron» (Ejecuciones).
+    const reintento = leerReintento(typeof history !== 'undefined' ? history.state : null);
+    if (reintento) this.aplicarReintento(reintento);
+
     // Errores de conexión de la lista de clientes: toast, no un cartel en el layout.
     // Solo depende del error: el toast se dispara fuera del seguimiento del effect.
     effect(() => {
@@ -335,21 +388,62 @@ export class NuevoControl {
       if (valor && valor > this.mesActualIso) {
         const pedido = nombreDelMes(valor);
         mes.setValue(this.mesActualIso);
-        void this.alertas.mostrarAviso(
-          `${pedido.replace(/^./, (l) => l.toUpperCase())} todavía no comenzó`,
-          `No hay información en ARCA ni en Xubio para controlar. Se dejó ${nombreDelMes(this.mesActualIso)}.`,
-        );
+        this.avisoPeriodo.set(`${pedido.replace(/^./, (l) => l.toUpperCase())} todavía no empezó: se dejó ${nombreDelMes(this.mesActualIso)}.`);
+      } else if (valor && valor !== this.mesActualIso) {
+        this.avisoPeriodo.set(null);
       }
     });
     desde.valueChanges.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((valor) => {
       if (valor && valor > this.hoyIso) {
         desde.setValue(this.hoyIso);
-        void this.alertas.mostrarAviso(
-          'Esa fecha todavía no llegó',
-          `ARCA no tiene comprobantes de días futuros. Se dejó «Desde» en hoy (${isoADmy(this.hoyIso)}).`,
-        );
+        this.avisoPeriodo.set(`Esa fecha todavía no llegó: se dejó «Desde» en hoy (${isoADmy(this.hoyIso)}).`);
+      } else if (valor && valor !== this.hoyIso) {
+        this.avisoPeriodo.set(null);
       }
     });
+  }
+
+  /** Se corrigió una fecha futura: se avisa al lado del período, sin ventana. */
+  protected readonly avisoPeriodo = signal<string | null>(null);
+
+  /** Aviso arriba del formulario cuando se armó desde un control anterior. */
+  protected readonly avisoReintento = signal<string | null>(null);
+
+  /**
+   * Carga clientes, período y operaciones del control que se reintenta. Un mes
+   * (o un año) completo vuelve como «Mes completo» («Año completo»); cualquier
+   * otro período, como rango de fechas.
+   */
+  private aplicarReintento(r: Reintento): void {
+    const [dd, mm, aaaa] = r.desde.split('/');
+    const [hd, hm, ha] = r.hasta.split('/');
+    const { periodo, operaciones, clientes } = this.form.controls;
+    const finDeAnio = (hm === '12' && hd === '31') || r.hasta === isoADmy(this.hoyIso);
+    if (dd === '01' && mm === hm && aaaa === ha) {
+      periodo.controls.modo.setValue('mes');
+      periodo.controls.mes.setValue(`${aaaa}-${mm}`);
+    } else if (dd === '01' && mm === '01' && aaaa === ha && finDeAnio && this.anios.includes(aaaa)) {
+      periodo.controls.modo.setValue('anio');
+      periodo.controls.anio.setValue(aaaa);
+    } else {
+      periodo.controls.modo.setValue('rango');
+      periodo.controls.desde.setValue(`${aaaa}-${mm}-${dd}`);
+      periodo.controls.hasta.setValue(`${ha}-${hm}-${hd}`);
+    }
+    operaciones.setValue({ ventas: !!r.ventas, compras: !!r.compras });
+    clientes.setValue([...r.clientes]);
+    const n = r.clientes.length;
+    const cuando = new Date(r.creada);
+    const fecha = isNaN(cuando.getTime()) ? '' : ` del ${cuando.toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' })}`;
+    this.avisoReintento.set(
+      `Reintento del control${fecha}: se ${n === 1 ? 'cargó el cliente que falló' : `cargaron los ${n} clientes que fallaron`}, con el mismo período y las mismas operaciones. Revisá y ejecutá.`,
+    );
+    // Si se recarga la página, el formulario no se vuelve a pisar.
+    try {
+      history.replaceState({ ...history.state, reintento: null }, '');
+    } catch {
+      // Sin acceso al historial del navegador no pasa nada.
+    }
   }
 
   private async cargarAjustes(): Promise<void> {
@@ -421,39 +515,37 @@ export class NuevoControl {
     return !!c && c.enabled && c.invalid && (c.dirty || this.intentado());
   }
 
-  /** Lo que falta, en palabras, para el toast. */
-  private problemas(): string[] {
-    const f = this.form.controls;
-    const p: string[] = [];
-    if (f.clientes.invalid) p.push('elegí al menos un cliente');
-    if (f.periodo.hasError('rangoInvertido')) p.push('«Hasta» es anterior a «Desde»');
-    else if (f.periodo.hasError('periodoFuturo')) p.push('el período todavía no empezó');
-    else if (f.periodo.invalid) p.push('completá el período');
-    if (f.operaciones.invalid) p.push('elegí Ventas, Compras o las dos');
-    if (f.xubio.invalid) p.push('faltan usuario y/o contraseña de Xubio');
-    return p;
-  }
-
   protected async ejecutar(): Promise<void> {
     this.intentado.set(true);
     const periodo = this.periodo();
     if (this.form.invalid || !periodo) {
+      // Sin ventana: lo que falta está escrito al lado del botón; se lleva a la primera sección.
       this.form.markAllAsTouched();
-      const p = this.problemas().map((x) => x.replace(/^./, (l) => l.toUpperCase()) + '.');
-      void this.alertas.mostrarAviso('Faltan datos para ejecutar', 'Antes de ejecutar el control:', p);
+      const primera = this.faltan()[0];
+      if (primera) this.irA(primera.seccion);
       return;
     }
 
-    // Los clientes con datos incompletos no frenan: el bot los marca con error. Se avisa igual.
-    const incompletos = this.elegidos().filter((c) => c.faltantes.length);
+    // Los clientes con datos incompletos no frenan: el bot los marca con error.
+    // Lo normal es sacarlos y correr el resto.
+    const incompletos = this.incompletos();
     if (incompletos.length) {
-      const seguir = await this.alertas.confirmar(
-        'Clientes con datos incompletos',
-        'Estos clientes van a terminar con error. ¿Ejecutar el control igual?',
+      const todos = incompletos.length === this.elegidos().length;
+      const r = await this.alertas.elegir(
+        incompletos.length === 1 ? 'Un cliente tiene datos incompletos' : `${incompletos.length} clientes tienen datos incompletos`,
+        todos
+          ? 'Van a terminar con error. Completá sus datos en Clientes o ejecutá igual.'
+          : 'Van a terminar con error. Podés correr el control sin ellos y completarlos después.',
+        todos ? 'Ir a Clientes' : 'Ejecutar sin ellos',
         'Ejecutar igual',
         incompletos.map((c) => `${c.nombre}: falta ${c.faltantes.join(', ')}`),
       );
-      if (!seguir) return;
+      if (!r) return;
+      if (todos && r === 'recomendada') {
+        void this.router.navigate(['/clientes']);
+        return;
+      }
+      if (!todos && r === 'recomendada') this.sacarIncompletos();
     }
 
     const v = this.form.getRawValue();

@@ -107,6 +107,8 @@ export interface ResultadoPrecarga {
   con_clave: boolean;
   /** Precargados que ya estaban sin clave y se completaron con la compartida. */
   completados: string[];
+  /** El CUIT con el que entran a ARCA todos los precargados. */
+  cuit_ingreso: string;
   clientes: Cliente[];
 }
 

@@ -305,6 +305,11 @@ Advertencias para el testeo en Render:
   venció, se vuelve a entrar sin cerrar el navegador y se reintenta el paso.
 - Entre clientes hay una pausa (`MODULONUEVO_PAUSA_S`) con cuenta regresiva:
   «Continuar», «Cancelar todo» o «No preguntar más».
+- Cada control terminado queda en el **historial** de «Ejecuciones»
+  (`MODULONUEVO_DATA_DIR/ejecuciones/<id>.json`, los últimos 100): sobrevive a
+  un reinicio del backend. Desde un control con clientes que fallaron,
+  «Reintentar los que fallaron» abre «Nuevo control» con esos clientes, el
+  mismo período y las mismas operaciones.
 
 ---
 
@@ -396,7 +401,7 @@ python -m pytest
 
 Los tests no abren Chrome: cubren rutas, storage, modelos, API (con un job
 simulado), el contrato web (con sesiones simuladas) y el auditor con Excel
-sintéticos de ARCA y Xubio. Resultado esperado: **31 passed**.
+sintéticos de ARCA y Xubio. Resultado esperado: **146 passed**.
 
 ---
 

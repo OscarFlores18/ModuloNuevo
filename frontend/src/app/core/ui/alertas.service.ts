@@ -111,6 +111,36 @@ export class AlertasService {
     });
   }
 
+  /**
+   * Pregunta con dos salidas además de «Volver»: la recomendada (botón azul) y
+   * otra (botón gris). Devuelve 'recomendada', 'otra' o null si se volvió.
+   */
+  async elegir(
+    titulo: string,
+    mensaje: string,
+    recomendada: string,
+    otra: string,
+    items: string[] = [],
+  ): Promise<'recomendada' | 'otra' | null> {
+    const lista = items.length
+      ? `<ul class="m-0 mt-3 list-disc space-y-1 pl-5 text-left">${items.map((i) => `<li>${esc(i)}</li>`).join('')}</ul>`
+      : '';
+    const r = await Swal.fire({
+      icon: 'question',
+      iconColor: '#b7791f',
+      title: titulo,
+      html: `<p class="m-0">${esc(mensaje)}</p>${lista}`,
+      showDenyButton: true,
+      showCancelButton: true,
+      confirmButtonText: recomendada,
+      denyButtonText: otra,
+      cancelButtonText: 'Volver',
+      buttonsStyling: false,
+      customClass: { ...CLASES, denyButton: CLASES?.cancelButton },
+    });
+    return r.isConfirmed ? 'recomendada' : r.isDenied ? 'otra' : null;
+  }
+
   /** Pregunta antes de seguir con algo que no es peligroso pero conviene revisar. */
   async confirmar(titulo: string, mensaje: string, textoConfirmar = 'Seguir igual', items: string[] = []): Promise<boolean> {
     const lista = items.length

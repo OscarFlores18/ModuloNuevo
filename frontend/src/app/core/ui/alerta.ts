@@ -11,7 +11,8 @@ const CLASES: Record<Tono, string> = {
 
 /**
  * Aviso con borde de color a la izquierda (`mf-aviso`): título en negrita y,
- * abajo, el mensaje o la lista. Con `descartable`, una ✕ lo cierra.
+ * abajo, el mensaje o la lista. Con `orden`, qué hacer (en negrita, con flecha);
+ * con `accion`, un botón a la derecha que lo resuelve. Con `descartable`, una ✕ lo cierra.
  */
 @Component({
   selector: 'app-alerta',
@@ -27,7 +28,11 @@ const CLASES: Record<Tono, string> = {
             @for (m of mensajes(); track m) { <li>{{ m }}</li> }
           </ul>
         }
+        @if (orden()) { <p class="mf-aviso-orden">→ {{ orden() }}</p> }
       </div>
+      @if (accion()) {
+        <button type="button" class="mf-btn mf-btn-chico shrink-0 self-center" (click)="accionar.emit()">{{ accion() }}</button>
+      }
       @if (descartable()) {
         <button type="button" (click)="cerrado.emit()" class="mf-icono-btn -my-1 -mr-2" aria-label="Cerrar aviso">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -41,7 +46,12 @@ export class Alerta {
   readonly titulo = input('');
   readonly nivel = input<Tono>('aviso');
   readonly descartable = input(false);
+  /** Qué hacer, en imperativo: «Corregí la clave fiscal de ARCA y volvé a correrlo». */
+  readonly orden = input('');
+  /** Texto del botón que lo resuelve («Ir a Clientes»). */
+  readonly accion = input('');
   readonly cerrado = output<void>();
+  readonly accionar = output<void>();
 
   protected readonly clase = computed(() => CLASES[this.nivel()]);
   /** alert interrumpe al lector de pantalla: solo para errores. */

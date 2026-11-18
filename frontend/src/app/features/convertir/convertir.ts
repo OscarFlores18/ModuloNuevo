@@ -31,6 +31,12 @@ interface ArchivoElegido {
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
     .zona.encima { border-color: var(--color-acento); background: #eff6ff; }
+    .zona { justify-content: center; }
+    .zona.con-archivos { align-items: stretch; justify-content: space-between; padding: 12px; gap: 12px; }
+    .fx-elegidos { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .fx-elegidos li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--color-borde); border-radius: 8px; background: #fff; }
+    .fx-agregar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+    .fx-agregar-mas, .fx-agregar-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
     .op { display: inline-block; min-width: 68px; padding: 0 8px; border-radius: 4px; font-size: .74rem; font-weight: 800; text-transform: uppercase; text-align: center; }
     .op-ventas { background: #e0f2fe; color: #075985; }
     .op-compras { background: #fef3c7; color: #92400e; }
@@ -38,48 +44,52 @@ interface ArchivoElegido {
   `,
   template: `
     <app-encabezado
-      titulo="Convertir AUX a CSV"
-      bajada="Partidas de ARCA no encontradas en el Libro IVA, en el formato CSV de Mis Comprobantes. Aparte de los controles."
+      titulo="Faltantes a Xubio"
+      bajada="Los comprobantes de ARCA que faltan en el Libro IVA de Xubio, listos para importarlos. No cambia ningún control."
     />
 
+    <!-- Dos columnas: elegir los AUX a la izquierda, los .zip para Xubio a la derecha -->
+    <div class="fx-grilla">
     <section class="mf-panel" aria-labelledby="t-elegir">
-      <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los AUX</h2>
-      <p class="mf-sub m-0 mt-1">
-        Los Excel de auditoría (AUX) de Ventas y de Compras, de uno o varios clientes, con cualquier nombre. Se detecta
-        solo la hoja de faltantes, si es Ventas o Compras, el cliente y el período.
-      </p>
+      <div class="fx-cab">
+        <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los AUX</h2>
+        <p class="mf-sub m-0 mt-1">Los Excel AUX que armó el control, de uno o varios clientes. El cliente, el período y la operación se reconocen solos.</p>
+      </div>
 
+      <div class="fx-cuerpo">
+      <!-- Los elegidos quedan dentro del cuadro: se pueden soltar más encima -->
       <div
-        class="zona mt-3"
+        class="zona"
+        [class.con-archivos]="elegidos().length"
         [class.encima]="encima()"
         (dragover)="$event.preventDefault(); encima.set(true)"
         (dragleave)="encima.set(false)"
         (drop)="soltar($event)"
       >
-        <span class="font-semibold">Arrastrá los AUX acá</span>
-        <span class="mf-tenue text-sm">o</span>
-        <label class="mf-btn mf-btn-suave cursor-pointer">
-          Elegir archivos
-          <input type="file" accept=".xlsx,.xls" multiple class="sr-only" (change)="elegir($event)" />
-        </label>
-      </div>
-
-      @if (elegidos().length) {
-        <ul class="ej-archivos mt-3">
-          @for (e of elegidos(); track e.archivo.name; let i = $index) {
-            <li>
-              <span class="op" [class]="'op op-' + (e.operacion === 'Ventas' ? 'ventas' : e.operacion === 'Compras' ? 'compras' : 'otro')">{{ e.operacion }}</span>
-              <span class="min-w-0 flex-1">
-                <strong class="block truncate" [title]="e.archivo.name">{{ e.cliente }}</strong>
-                <span class="mf-tenue block truncate text-sm">{{ e.archivo.name }}</span>
-              </span>
-              <button type="button" class="mf-icono-btn" (click)="quitar(i)" [attr.aria-label]="'Quitar ' + e.archivo.name" [disabled]="convirtiendo()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-              </button>
-            </li>
-          }
-        </ul>
-        <div class="mt-3 flex flex-wrap items-center justify-end gap-2">
+        @if (elegidos().length) {
+          <ul class="fx-elegidos">
+            @for (e of elegidos(); track e.archivo.name; let i = $index) {
+              <li>
+                <span class="op" [class]="'op op-' + (e.operacion === 'Ventas' ? 'ventas' : e.operacion === 'Compras' ? 'compras' : 'otro')">{{ e.operacion }}</span>
+                <span class="min-w-0 flex-1 text-left">
+                  <strong class="block truncate" [title]="e.archivo.name">{{ e.cliente }}</strong>
+                  <span class="mf-tenue block truncate text-sm">{{ e.archivo.name }}</span>
+                </span>
+                <button type="button" class="mf-icono-btn" (click)="quitar(i)" [attr.aria-label]="'Quitar ' + e.archivo.name" [disabled]="convirtiendo()">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                </button>
+              </li>
+            }
+          </ul>
+          <div class="fx-agregar">
+            <span class="fx-agregar-mas">
+              <span class="mf-tenue text-sm">Arrastrá más acá o</span>
+              <label class="mf-btn mf-btn-suave mf-btn-chico cursor-pointer">
+                Agregar
+                <input type="file" accept=".xlsx,.xls" multiple class="sr-only" (change)="elegir($event)" />
+              </label>
+            </span>
+            <span class="fx-agregar-acciones">
           <button type="button" class="mf-btn mf-btn-suave" (click)="limpiar()" [disabled]="convirtiendo()">Sacar todos</button>
           <button type="button" class="mf-btn inline-flex items-center gap-2" (click)="convertir()" [disabled]="convirtiendo()" [attr.aria-busy]="convirtiendo()">
             @if (convirtiendo()) {
@@ -87,27 +97,34 @@ interface ArchivoElegido {
             }
             {{ convirtiendo() ? 'Convirtiendo…' : 'Convertir ' + elegidos().length + (elegidos().length === 1 ? ' archivo' : ' archivos') }}
           </button>
-        </div>
-      }
+            </span>
+          </div>
+        } @else {
+          <span class="font-semibold">Arrastrá los AUX acá</span>
+          <span class="mf-tenue text-sm">o</span>
+          <label class="mf-btn mf-btn-suave cursor-pointer">
+            Elegir archivos
+            <input type="file" accept=".xlsx,.xls" multiple class="sr-only" (change)="elegir($event)" />
+          </label>
+        }
+      </div>
 
       @if (error(); as err) { <app-alerta class="mt-3" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
+      </div>
     </section>
 
     @if (resultados(); as lista) {
       <section class="mf-panel" aria-labelledby="t-resultado">
-        <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="fx-cab flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
             <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Cargalos en Xubio</h2>
-            <p class="mf-sub m-0 mt-1">
-              Se genera un .zip por operación (Compras y/o Ventas), con un solo CSV adentro: el formato que pide Xubio en
-              «Importar desde Mis Comprobantes (ARCA)». «Cargar en Xubio» lo sube por vos; «Descargar .zip» te lo deja para
-              hacerlo a mano. «Ver en Excel» trae los mismos datos para revisarlos.
-            </p>
+            <p class="mf-sub m-0 mt-1">Un .zip por operación, listo para «Importar desde Mis Comprobantes (ARCA)» en Xubio. «Ver en Excel» trae los mismos datos para revisarlos antes.</p>
           </div>
           @if (todosLosZips().length > 1) {
             <button type="button" class="mf-btn mf-btn-suave" (click)="descargarTodos()">Descargar todos ({{ todosLosZips().length }})</button>
           }
         </div>
+        <div class="fx-cuerpo">
         @if (sinPartidas().length) {
           <app-alerta
             class="mt-3"
@@ -170,8 +187,23 @@ interface ArchivoElegido {
             </li>
           }
         </ul>
+        </div>
+      </section>
+    } @else {
+      <section class="mf-panel" aria-labelledby="t-resultado-vacio">
+        <div class="fx-cab">
+          <h2 id="t-resultado-vacio" class="m-0 text-lg font-bold">2. Cargalos en Xubio</h2>
+          <p class="mf-sub m-0 mt-1">Un .zip por operación, listo para importar en Xubio, o el bot lo carga por vos.</p>
+        </div>
+        <div class="fx-cuerpo">
+          <div class="fx-vacio">
+            <strong>Acá aparecen los .zip listos para Xubio</strong>
+            <span class="text-sm">Elegí los AUX en el paso 1 y apretá «Convertir».</span>
+          </div>
+        </div>
       </section>
     }
+    </div>
   `,
 })
 export class ConvertirPantalla {

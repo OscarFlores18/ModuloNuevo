@@ -5,167 +5,208 @@
     }
   </app-encabezado>
 
-  <!-- Clientes -->
-  <section class="mf-panel !py-3" aria-labelledby="t-clientes">
-    <div class="mf-panel-titulo !mb-2">
-      <h2 id="t-clientes" class="!text-base">Clientes</h2>
-      @if (sesion.esSupervisor()) {
-        <a routerLink="/clientes" class="mf-btn mf-btn-suave mf-btn-mini ml-auto">
-          <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" /></svg>
-          Administrar
-        </a>
-      }
-    </div>
+  @if (avisoReintento(); as aviso) {
+    <app-alerta nivel="info" [mensajes]="[aviso]" [descartable]="true" (cerrado)="avisoReintento.set(null)" />
+  }
 
-    <div class="grid gap-2 md:grid-cols-2">
-      <!-- Disponibles -->
-      <div class="mf-lista">
-        <div class="mf-lista-cab">
-          <span>Disponibles ({{ disponibles().length }})</span>
-          <button type="button" class="mf-btn mf-btn-suave mf-btn-mini" (click)="agregarVisibles()" [disabled]="!disponibles().length">
-            Sumar {{ busqueda.value ? 'encontrados' : 'todos' }}
-          </button>
+  <!-- Dos columnas: a la izquierda los clientes (lo que más lugar ocupa); a la derecha
+       período, operaciones, Xubio y «Ejecutar», siempre a la vista. -->
+  <div class="nc-grilla">
+    <!-- 1. Clientes -->
+    <section class="mf-panel !py-3" aria-labelledby="t-clientes">
+      <div class="mf-panel-titulo !mb-2">
+        <h2 id="t-clientes" class="!text-base"><span class="mf-paso-num" aria-hidden="true">1</span>Clientes</h2>
+        @if (sesion.esSupervisor()) {
+          <a routerLink="/clientes" class="mf-btn mf-btn-suave mf-btn-mini ml-auto">
+            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" /></svg>
+            Administrar
+          </a>
+        }
+      </div>
+
+      <div class="grid gap-2 md:grid-cols-2">
+        <!-- Disponibles -->
+        <div class="mf-lista">
+          <div class="mf-lista-cab">
+            <span>Disponibles ({{ disponibles().length }})</span>
+            <button type="button" class="mf-btn mf-btn-suave mf-btn-mini" (click)="agregarVisibles()" [disabled]="!disponibles().length">
+              Sumar {{ busqueda.value ? 'encontrados' : 'todos' }}
+            </button>
+          </div>
+          <div class="p-1.5">
+            <input class="mf-input" type="search" [formControl]="busqueda" (keydown.enter)="alEnter($event)" placeholder="Buscar nombre o CUIT…" aria-label="Buscar cliente" />
+          </div>
+          <ul class="nc-lista-alta m-0 list-none overflow-y-auto px-1.5 pb-1.5" aria-label="Clientes disponibles">
+            @for (c of disponibles(); track c.nombre) {
+              <li>
+                <button type="button" class="mf-item !py-1" (click)="agregar(c.nombre)" [attr.aria-label]="'Sumar ' + c.nombre">
+                  <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
+                  <span class="mono mf-tenue text-xs">{{ c.arca.cuit_representado | cuit }}</span>
+                  @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">!</span> }
+                  <span class="text-acento" aria-hidden="true">+</span>
+                </button>
+              </li>
+            } @empty {
+              <li class="mf-tenue px-2 py-3 text-center text-sm">
+                {{ clientes.cargando() && !clientes.cargado() ? 'Cargando…' : busqueda.value ? 'Sin resultados.' : clientes.lista().length ? 'Todos sumados.' : 'No hay clientes.' }}
+              </li>
+            }
+          </ul>
         </div>
-        <div class="p-1.5">
-          <input class="mf-input" type="search" [formControl]="busqueda" (keydown.enter)="alEnter($event)" placeholder="Buscar nombre o CUIT…" aria-label="Buscar cliente" />
-        </div>
-        <ul class="m-0 max-h-56 list-none overflow-y-auto px-1.5 pb-1.5" aria-label="Clientes disponibles">
-          @for (c of disponibles(); track c.nombre) {
-            <li>
-              <button type="button" class="mf-item !py-1" (click)="agregar(c.nombre)" [attr.aria-label]="'Sumar ' + c.nombre">
+
+        <!-- A procesar -->
+        <div class="mf-lista" [style.border-color]="invalido('clientes') ? 'var(--color-error)' : null">
+          <div class="mf-lista-cab">
+            <span class="text-texto">A procesar ({{ elegidos().length }})</span>
+            <button type="button" class="mf-btn mf-btn-peligro mf-btn-mini" (click)="limpiar()" [disabled]="!elegidos().length">Vaciar</button>
+          </div>
+          <ol class="nc-lista-alta nc-lista-elegidos m-0 list-none space-y-0.5 overflow-y-auto p-1.5" aria-label="Clientes a procesar, en orden">
+            @for (c of elegidos(); track c.nombre; let i = $index, primero = $first, ultimo = $last) {
+              <li class="mf-item mf-item-elegido !py-1">
+                <span class="mono w-5 shrink-0 text-center text-xs font-bold text-acento">{{ i + 1 }}</span>
                 <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
-                <span class="mono mf-tenue text-xs">{{ c.arca.cuit_representado | cuit }}</span>
-                @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">!</span> }
-                <span class="text-acento" aria-hidden="true">+</span>
-              </button>
-            </li>
-          } @empty {
-            <li class="mf-tenue px-2 py-3 text-center text-sm">
-              {{ clientes.cargando() && !clientes.cargado() ? 'Cargando…' : busqueda.value ? 'Sin resultados.' : clientes.lista().length ? 'Todos sumados.' : 'No hay clientes.' }}
-            </li>
-          }
-        </ul>
-      </div>
-
-      <!-- A procesar -->
-      <div class="mf-lista" [style.border-color]="invalido('clientes') ? 'var(--color-error)' : null">
-        <div class="mf-lista-cab">
-          <span class="text-texto">A procesar ({{ elegidos().length }})</span>
-          <button type="button" class="mf-btn mf-btn-peligro mf-btn-mini" (click)="limpiar()" [disabled]="!elegidos().length">Vaciar</button>
+                @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span> }
+                @for (e of etiquetasControl(c.nombre); track e.texto) {
+                  <span class="mf-badge shrink-0" [class.mf-badge-aviso]="e.repetido" [class.mf-badge-ok]="!e.repetido" [title]="e.titulo">{{ e.texto }}</span>
+                }
+                <button type="button" class="mf-icono-btn" (click)="mover(i, -1)" [disabled]="primero" [attr.aria-label]="'Subir ' + c.nombre">▴</button>
+                <button type="button" class="mf-icono-btn" (click)="mover(i, 1)" [disabled]="ultimo" [attr.aria-label]="'Bajar ' + c.nombre">▾</button>
+                <button type="button" class="mf-icono-btn mf-icono-btn-peligro" (click)="quitar(c.nombre)" [attr.aria-label]="'Quitar ' + c.nombre">✕</button>
+              </li>
+            } @empty {
+              <li class="mf-tenue px-2 py-6 text-center text-sm">Tocá un cliente de «Disponibles» para sumarlo.</li>
+            }
+          </ol>
         </div>
-        <ol class="m-0 max-h-[17.5rem] list-none space-y-0.5 overflow-y-auto p-1.5" aria-label="Clientes a procesar, en orden">
-          @for (c of elegidos(); track c.nombre; let i = $index, primero = $first, ultimo = $last) {
-            <li class="mf-item mf-item-elegido !py-1">
-              <span class="mono w-5 shrink-0 text-center text-xs font-bold text-acento">{{ i + 1 }}</span>
-              <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
-              @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span> }
-              @for (e of etiquetasControl(c.nombre); track e.texto) {
-                <span class="mf-badge shrink-0" [class.mf-badge-aviso]="e.repetido" [class.mf-badge-ok]="!e.repetido" [title]="e.titulo">{{ e.texto }}</span>
-              }
-              <button type="button" class="mf-icono-btn" (click)="mover(i, -1)" [disabled]="primero" [attr.aria-label]="'Subir ' + c.nombre">▴</button>
-              <button type="button" class="mf-icono-btn" (click)="mover(i, 1)" [disabled]="ultimo" [attr.aria-label]="'Bajar ' + c.nombre">▾</button>
-              <button type="button" class="mf-icono-btn mf-icono-btn-peligro" (click)="quitar(c.nombre)" [attr.aria-label]="'Quitar ' + c.nombre">✕</button>
-            </li>
-          } @empty {
-            <li class="mf-tenue px-2 py-3 text-center text-sm">Ninguno.</li>
-          }
-        </ol>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Período y operaciones -->
-  <section class="mf-panel !py-3" aria-label="Parámetros">
-    <div class="flex flex-wrap items-start gap-x-8 gap-y-3">
-      <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
-        <legend class="mf-campo-etiqueta">Período</legend>
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="mf-segmentado" role="radiogroup" aria-label="Tipo de período">
+    <!-- Columna derecha -->
+    <div class="nc-lado">
+      <!-- 2. Período y operaciones -->
+      <section class="mf-panel !py-3" aria-labelledby="t-parametros">
+        <div class="mf-panel-titulo !mb-2">
+          <h2 id="t-parametros" class="!text-base"><span class="mf-paso-num" aria-hidden="true">2</span>Período y operaciones</h2>
+        </div>
+
+        <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
+          <legend class="mf-campo-etiqueta">Período</legend>
+          <div class="mf-segmentado nc-ancho" role="radiogroup" aria-label="Tipo de período">
             @for (t of tiposPeriodo; track t.id) {
               <label [class.activo]="modo() === t.id"><input type="radio" formControlName="modo" [value]="t.id" class="sr-only" />{{ t.texto }}</label>
             }
           </div>
-          @if (modo() === 'mes') {
-            <input class="mf-input mf-ajustable [--min-ancho:9rem]" appAnchoAjustable type="month" [max]="mesActualIso" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes') || form.controls.periodo.hasError('periodoFuturo')" />
-          } @else if (modo() === 'anio') {
-            <select class="mf-select !w-28" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
-              <option value="" disabled>Año…</option>
-              @for (a of anios; track a) { <option [value]="a">{{ a }}</option> }
-            </select>
-          } @else {
-            <input class="mf-input !w-40" type="date" [max]="hoyIso" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido') || form.controls.periodo.hasError('periodoFuturo')" />
-            <span class="mf-tenue">a</span>
-            <input class="mf-input !w-40" type="date" [max]="hoyIso" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
-          }
-        </div>
-        @if (explicacionPeriodo(); as ex) {
-          <div class="mt-1.5 text-xs" aria-live="polite">
-            @if (ex.error) {
-              <p class="m-0 font-semibold" style="color: var(--color-error)">{{ ex.error }}</p>
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            @if (modo() === 'mes') {
+              <input class="mf-input !w-52" type="month" [max]="mesActualIso" formControlName="mes" aria-label="Mes" [attr.aria-invalid]="invalido('periodo.mes') || form.controls.periodo.hasError('periodoFuturo')" />
+              <!-- Ancho fijo y renglón propio: los atajos no se mueven al cambiar de mes -->
+              <div class="nc-meses-rapidos">
+                @for (m of mesesRapidos; track m.valor) {
+                  <button type="button" class="mf-btn mf-btn-suave mf-btn-mini" [class.mf-btn-elegido]="valor().periodo?.mes === m.valor" (click)="elegirMes(m.valor)">{{ m.texto }}</button>
+                }
+              </div>
+            } @else if (modo() === 'anio') {
+              <select class="mf-select !w-28" formControlName="anio" aria-label="Año" [attr.aria-invalid]="invalido('periodo.anio')">
+                <option value="" disabled>Año…</option>
+                @for (a of anios; track a) { <option [value]="a">{{ a }}</option> }
+              </select>
             } @else {
-              <p class="m-0 mf-tenue">{{ ex.texto }}</p>
-              @for (a of ex.avisos; track a) { <p class="m-0" style="color: var(--color-aviso-texto)">{{ a }}</p> }
+              <input class="mf-input !w-40" type="date" [max]="hoyIso" formControlName="desde" aria-label="Desde" [attr.aria-invalid]="invalido('periodo.desde') || form.controls.periodo.hasError('rangoInvertido') || form.controls.periodo.hasError('periodoFuturo')" />
+              <span class="mf-tenue">a</span>
+              <input class="mf-input !w-40" type="date" [max]="hoyIso" formControlName="hasta" aria-label="Hasta" [attr.aria-invalid]="invalido('periodo.hasta') || form.controls.periodo.hasError('rangoInvertido')" />
             }
           </div>
-        }
-      </fieldset>
-
-      <fieldset class="m-0 border-0 p-0">
-        <legend class="mf-campo-etiqueta">Operaciones</legend>
-        <div class="mf-segmentado" [class.mf-segmentado-invalido]="invalido('operaciones')" role="radiogroup" aria-label="Operaciones a controlar">
-          @for (o of opcionesOperaciones; track o.id) {
-            <label [class.activo]="operacion() === o.id">
-              <input type="radio" name="operaciones" class="sr-only" [checked]="operacion() === o.id" (change)="elegirOperacion(o.id)" />{{ o.texto }}
-            </label>
+          @if (avisoPeriodo(); as av) {
+            <app-alerta class="mt-2" nivel="aviso" [mensajes]="[av]" [descartable]="true" (cerrado)="avisoPeriodo.set(null)" />
           }
-        </div>
-      </fieldset>
-
-    </div>
-  </section>
-
-  <!-- Xubio -->
-  <section class="mf-panel !py-3" aria-label="Cuenta de Xubio">
-    <div class="grid gap-3 md:grid-cols-2">
-      <ng-container formGroupName="xubio">
-          <label class="mf-campo">
-            <span>Usuario Xubio</span>
-            <input class="mf-input" type="email" formControlName="usuario" autocomplete="username" [attr.aria-invalid]="invalido('xubio')" />
-          </label>
-          @if (guardadaXubio() && !cambiandoClave()) {
-            <div class="mf-campo">
-              <span id="t-clave-xubio">Contraseña Xubio</span>
-              <div class="mf-input flex items-center gap-2" role="status" aria-labelledby="t-clave-xubio">
-                <span class="font-bold" style="color: var(--color-ok)" aria-hidden="true">✓</span>
-                <span class="min-w-0 flex-1 truncate">Guardada · no hace falta escribirla</span>
-                <button type="button" class="mf-btn mf-btn-suave mf-btn-mini" (click)="cambiandoClave.set(true)">Cambiar</button>
-              </div>
+          @if (explicacionPeriodo(); as ex) {
+            <div class="mt-1.5 text-xs" aria-live="polite">
+              @if (ex.error) {
+                <p class="m-0 font-semibold" style="color: var(--color-error)">{{ ex.error }}</p>
+              } @else {
+                <p class="m-0 mf-tenue">{{ ex.texto }}</p>
+                @for (a of ex.avisos; track a) { <p class="m-0" style="color: var(--color-aviso-texto)">{{ a }}</p> }
+              }
             </div>
-          } @else {
+          }
+        </fieldset>
+
+        <fieldset class="m-0 mt-3 border-0 p-0">
+          <legend class="mf-campo-etiqueta">Operaciones</legend>
+          <div class="mf-segmentado nc-ancho" [class.mf-segmentado-invalido]="invalido('operaciones')" role="radiogroup" aria-label="Operaciones a controlar">
+            @for (o of opcionesOperaciones; track o.id) {
+              <label [class.activo]="operacion() === o.id">
+                <input type="radio" name="operaciones" class="sr-only" [checked]="operacion() === o.id" (change)="elegirOperacion(o.id)" />{{ o.texto }}
+              </label>
+            }
+          </div>
+        </fieldset>
+      </section>
+
+      <!-- 3. Xubio: una línea si la contraseña ya está guardada -->
+      <section class="mf-panel !py-3" aria-labelledby="t-xubio" formGroupName="xubio">
+        <div class="mf-panel-titulo !mb-2">
+          <h2 id="t-xubio" class="!text-base"><span class="mf-paso-num" aria-hidden="true">3</span>Cuenta de Xubio</h2>
+        </div>
+        @if (guardadaXubio() && !cambiandoClave()) {
+          <div class="nc-xubio-lista" role="status">
+            <span class="nc-xubio-ok" aria-hidden="true">✓</span>
+            <span class="min-w-0 flex-1">
+              <strong class="block truncate" [title]="valor().xubio?.usuario ?? ''">{{ valor().xubio?.usuario }}</strong>
+              <span class="mf-tenue text-xs">Contraseña guardada</span>
+            </span>
+            <button type="button" class="mf-btn mf-btn-suave mf-btn-mini" (click)="cambiandoClave.set(true)">Cambiar</button>
+          </div>
+        } @else {
+          <div class="flex flex-col gap-2">
             <label class="mf-campo">
-              <span>Contraseña Xubio</span>
+              <span>Usuario</span>
+              <input class="mf-input" type="email" formControlName="usuario" autocomplete="username" [attr.aria-invalid]="invalido('xubio')" />
+            </label>
+            <label class="mf-campo">
+              <span>Contraseña</span>
               <input class="mf-input" type="password" formControlName="clave" autocomplete="current-password"
                 [placeholder]="guardadaXubio() ? 'Nueva contraseña' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
-              @if (guardadaXubio()) {
-                <button type="button" class="mf-btn mf-btn-suave mf-btn-mini mt-1 self-start" (click)="usarGuardada()">Usar la guardada</button>
-              }
             </label>
-          }
-      </ng-container>
-    </div>
-    <label class="mf-check mt-2" formGroupName="xubio"><input type="checkbox" formControlName="recordar" />Recordar la contraseña de Xubio (queda guardada y cifrada en el servidor)</label>
-  </section>
+            <div class="flex flex-wrap items-center gap-2">
+              <label class="mf-check"><input type="checkbox" formControlName="recordar" />Recordar (queda cifrada en el servidor)</label>
+              @if (guardadaXubio()) {
+                <button type="button" class="mf-btn mf-btn-suave mf-btn-mini ml-auto" (click)="usarGuardada()">Usar la guardada</button>
+              }
+            </div>
+          </div>
+        }
+      </section>
 
-  <!-- Acción -->
-  <div class="mf-barra-accion">
-    <p class="mf-tenue m-0 min-w-0 flex-1 truncate text-sm">
-      <strong class="text-texto">{{ elegidos().length || 'Ningún' }} {{ elegidos().length === 1 || !elegidos().length ? 'cliente' : 'clientes' }}</strong>@if (resumen()) { · {{ resumen() }} }
-    </p>
-    <button type="submit" class="mf-btn mf-btn-grande inline-flex items-center gap-2" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()" [attr.aria-busy]="ejecucion.enviando() || ejecucion.hayActiva()">
-      @if (ejecucion.enviando() || ejecucion.hayActiva()) {
-        <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
-      }
-      {{ ejecucion.enviando() ? 'Iniciando…' : ejecucion.hayActiva() ? 'Control en curso…' : 'Ejecutar control' }}
-    </button>
+      <!-- Ejecutar: resumen de lo que se va a hacer y lo que falta -->
+      <div class="mf-panel nc-ejecutar">
+        <div class="min-w-0 flex-1">
+          <p class="m-0 text-sm">
+            <strong class="text-texto">{{ elegidos().length || 'Ningún' }} {{ elegidos().length === 1 || !elegidos().length ? 'cliente' : 'clientes' }}</strong>
+            @if (resumen()) { <span class="mf-tenue"> · {{ resumen() }}</span> }
+          </p>
+          @if (faltan().length) {
+            <p class="nc-falta m-0 mt-1 text-xs" [class.nc-falta-fuerte]="intentado()">
+              Para ejecutar falta:
+              @for (f of faltan(); track f.texto) {
+                <button type="button" class="nc-falta-chip" (click)="irA(f.seccion)">{{ f.texto }}</button>
+              }
+            </p>
+          }
+          @if (incompletos().length) {
+            <p class="nc-incompletos m-0 mt-1 text-xs">
+              ⚠ {{ incompletos().length === 1 ? '1 cliente tiene' : incompletos().length + ' clientes tienen' }} datos incompletos: va{{ incompletos().length === 1 ? '' : 'n' }} a fallar.
+              <button type="button" class="mf-btn-link" (click)="sacarIncompletos()">Sacarlo{{ incompletos().length === 1 ? '' : 's' }}</button>
+            </p>
+          }
+        </div>
+        <button type="submit" class="mf-btn mf-btn-grande nc-boton inline-flex items-center justify-center gap-2" [disabled]="ejecucion.enviando() || ejecucion.hayActiva()" [attr.aria-busy]="ejecucion.enviando() || ejecucion.hayActiva()">
+          @if (ejecucion.enviando() || ejecucion.hayActiva()) {
+            <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
+          }
+          {{ ejecucion.enviando() ? 'Iniciando…' : ejecucion.hayActiva() ? 'Control en curso…' : 'Ejecutar control' }}
+        </button>
+      </div>
+    </div>
   </div>
 </form>
