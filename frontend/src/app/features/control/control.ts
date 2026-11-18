@@ -15,6 +15,7 @@ import { Ajustes, Cliente, ControlesPorCliente, ErrorApi, PasoId, ResumenControl
 import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
+import { PerspectivaService } from '../../core/services/perspectiva.service';
 import { SesionService } from '../../core/services/sesion.service';
 import { Reintento, leerReintento } from '../../core/reintento';
 import { Alerta } from '../../core/ui/alerta';
@@ -82,6 +83,8 @@ export class NuevoControl {
   protected readonly clientes = inject(ClientesStore);
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly sesion = inject(SesionService);
+  /** Empleado: ve todo el formulario, pero «Ejecutar control» queda bloqueado. */
+  protected readonly perspectiva = inject(PerspectivaService);
 
   protected readonly anios = aniosRecientes();
   protected readonly tiposPeriodo: { id: ModoPeriodo; texto: string }[] = [
@@ -516,6 +519,7 @@ export class NuevoControl {
   }
 
   protected async ejecutar(): Promise<void> {
+    if (!this.perspectiva.canEdit()) return;
     this.intentado.set(true);
     const periodo = this.periodo();
     if (this.form.invalid || !periodo) {

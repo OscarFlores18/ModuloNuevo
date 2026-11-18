@@ -1,10 +1,15 @@
 import { Routes } from '@angular/router';
+import { inicioSegunPerspectiva, soloAccesoTotal } from './core/services/perspectiva.service';
 
-/** Sin pantalla de ingreso: quién es lo da ContadorWeb (ver core/services/sesion.service.ts). */
+/**
+ * Sin pantalla de ingreso: quién es lo da ContadorWeb (ver core/services/sesion.service.ts).
+ * Empleado no tiene Nuevo control; el resto lo ve con las acciones bloqueadas.
+ */
 export const routes: Routes = [
-  { path: '', pathMatch: 'full', redirectTo: 'control' },
+  { path: '', pathMatch: 'full', redirectTo: inicioSegunPerspectiva },
   {
     path: 'control',
+    canActivate: [soloAccesoTotal],
     title: 'Nuevo control · Control de Facturas',
     loadComponent: () => import('./features/control/control').then((m) => m.NuevoControl),
   },

@@ -1,15 +1,31 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { carpetaDelPeriodo, duracion, periodoLegible, periodoLegibleDe, tamanoLegible } from '../../core/fechas';
-import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../../core/models';
+import { carpetaDelPeriodo, periodoLegible, periodoLegibleDe, tamanoLegible } from '../../core/fechas';
+import { Advertencia, ArchivoGenerado, ClienteEjecucion, Corregido, FilaFaltanteExcel, PasoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../../core/models';
 import { descargarBlob } from '../../core/descargar';
 import { reintentoDe } from '../../core/reintento';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
+import { PerspectivaService } from '../../core/services/perspectiva.service';
+import { auxDe } from '../../core/services/subida-xubio.service';
 import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { ToastService } from '../../core/ui/toast';
-import { contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
+import {
+  FaltantesDelExcel,
+  HojasExcel,
+  FilaFaltante,
+  CambioPar,
+  cambiosDisponibles,
+  claveExcel,
+  contarErrores,
+  esPrioridad,
+  faltanteDesdeExcel,
+  faltantesParaCargar,
+  filasDelExcel,
+  mostrarVentanaDeErrores,
+} from './ventana-errores';
+import { CorreccionElegida, elegirParaAplicar, estaIncluida, excluidasDe, guardarPrecarga, incluir, paraAplicar } from './seleccion';
 import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
 import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
 
@@ -35,6 +51,8 @@ interface ClienteVista {
   problemas: Problema[];
   /** Hallazgos de la auditoría y pasos fallidos de este cliente (grave + a corregir). */
   hallazgos: number;
+  /** Partidas de ARCA no encontradas en el Libro IVA: van arriba y abren el acordeón. */
+  prioritarias: Advertencia[];
   carpeta: string;
   archivos: ArchivoGenerado[];
   origen: ClienteEjecucion;
@@ -71,6 +89,8 @@ export class EjecucionPantalla {
   private readonly toast = inject(ToastService);
   private readonly alertas = inject(AlertasService);
   protected readonly store = inject(EjecucionStore);
+  /** Empleado: sin nada de Nuevo control (reintentar, «Volver a correr»); cancelar y responder bloqueados; descargar sí. */
+  protected readonly perspectiva = inject(PerspectivaService);
 
   /** De la ruta /ejecuciones/:id. */
   readonly id = input<string>();
@@ -107,13 +127,16 @@ export class EjecucionPantalla {
     return p ? `Control de ${periodoLegible(p.desde, p.hasta)}` : '';
   });
 
-  /** «Iniciado el 17/11/2026 18:05 · Ana · Ventas y Compras». */
+  /** «Iniciado el 17/11/26 18:05 · Ventas y Compras». */
   protected readonly bajada = computed(() => {
     const e = this.ej();
     if (!e) return '';
     const ops = [e.parametros.ventas && 'Ventas', e.parametros.compras && 'Compras'].filter(Boolean).join(' y ');
-    return [`Iniciado el ${this.fechaCorta(e.creada)}`, e.usuario, ops].filter(Boolean).join(' · ');
+    return [`Iniciado el ${this.fechaCorta(e.creada)}`, ops].filter(Boolean).join(' · ');
   });
+
+  /** Comprobantes de ARCA que pasaron por el control (todas las operaciones de todos los clientes). */
+  protected readonly comprobantesControlados = computed(() => (this.ej()?.resumenes ?? []).reduce((n, r) => n + r.arca, 0));
 
   protected readonly periodoLegibleDe = periodoLegibleDe;
 
@@ -122,10 +145,96 @@ export class EjecucionPantalla {
   protected readonly tareas = computed(() => (this.activa() ? [] : tareasDe(this.ej()?.advertencias ?? [])));
   /** Tildadas por el usuario (se guardan en este navegador, por control). */
   protected readonly hechas = signal<ReadonlySet<string>>(new Set());
-  protected readonly pendientes = computed(() => this.tareas().filter((t) => !this.hechas().has(t.clave)).length);
+  protected readonly pendientes = computed(() => this.tareas().filter((t) => !this.estaHecha(t)).length);
   protected readonly gruposTareas = computed(() =>
     GRUPOS.map((g) => ({ ...g, tareas: this.tareas().filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length),
   );
+
+  /**
+   * Hecha a mano (tilde). Las correcciones (letra, tipo, importe, CUIT) no: su checkbox
+   * las elige para «Aplicar cambios» y desaparecen recién cuando el re-chequeo las da por buenas.
+   */
+  protected estaHecha(t: Tarea): boolean {
+    return !this.cambiosDe(t.advertencia).length && this.hechas().has(t.clave);
+  }
+
+  // --- Aplicar cambios: elegir con checkbox, corregir de verdad con el botón ----------
+
+  /** Los pares de «Error» que se pueden corregir con el dato de ARCA. */
+  protected readonly cambios = computed(() => (this.activa() ? [] : cambiosDisponibles(this.ej()?.advertencias ?? [])));
+  /** Los tildados (se guardan en este navegador, por control). */
+  protected readonly seleccionados = computed(() => {
+    const id = this.ej()?.id;
+    return this.cambios().filter((c) => paraAplicar(id, c.clave));
+  });
+  /** Esperando al servidor: los checkboxes y el botón quedan bloqueados. */
+  protected readonly aplicando = signal(false);
+
+  protected cambiosDe(a: Advertencia): CambioPar[] {
+    return this.cambios().filter((c) => c.datos.cliente === a.cliente && c.datos.operacion === a.operacion && TIPO_CAMPO[a.tipo] === c.datos.campo);
+  }
+
+  protected elegidos(a: Advertencia): number {
+    const id = this.ej()?.id;
+    return this.cambiosDe(a).filter((c) => paraAplicar(id, c.clave)).length;
+  }
+
+  protected alternarCambios(a: Advertencia, ev: Event): void {
+    if (!this.perspectiva.canEdit() || this.aplicando()) return;
+    elegirParaAplicar(this.ej()?.id, this.cambiosDe(a).map((c) => c.clave), (ev.target as HTMLInputElement).checked);
+  }
+
+  /** Lo que ya dejó «Aplicar cambios»: el Excel nuevo de cada cliente y operación. */
+  protected readonly corregidos = computed(() =>
+    (this.ej()?.detalle_clientes ?? []).flatMap((c, indice) =>
+      (['Compras', 'Ventas'] as const)
+        .map((op) => ({ indice, cliente: c.nombre, operacion: op, dato: c.corregidos?.[op] }))
+        .filter((x): x is { indice: number; cliente: string; operacion: 'Compras' | 'Ventas'; dato: Corregido } => !!x.dato),
+    ),
+  );
+
+  /**
+   * Manda los tildados al servidor: corrige el Libro IVA, vuelve a cruzar y devuelve el
+   * control nuevo. Recién con esa respuesta cambia la pantalla.
+   */
+  protected async aplicarCambios(): Promise<void> {
+    const e = this.ej();
+    const elegidos = this.seleccionados();
+    if (!e || !elegidos.length || this.aplicando() || !this.perspectiva.canEdit()) return;
+    this.aplicando.set(true);
+    try {
+      const r = await this.api.aplicarCambios(e.id, elegidos.map((c) => c.datos));
+      elegirParaAplicar(e.id, elegidos.map((c) => c.clave), false);
+      this.store.reemplazar(r.ejecucion);
+      void this.cargarHojas(e.id);
+      const aplicados = r.resultados.reduce((n, x) => n + x.aplicados, 0);
+      const fallidos = r.resultados.flatMap((x) => x.no_aplicados);
+      this.toast.ok('Excel actualizado', `${aplicados} ${aplicados === 1 ? 'cambio aplicado' : 'cambios aplicados'} y control re-chequeado.`);
+      if (fallidos.length) {
+        this.toast.aviso(
+          `${fallidos.length} ${fallidos.length === 1 ? 'cambio no se aplicó' : 'cambios no se aplicaron'}`,
+          fallidos.map((f) => `${f.comprobante || f.numero}: ${f.motivo}`).join(' '),
+        );
+      }
+    } catch (err) {
+      void this.alertas.mostrarErrorHumano('No se pudieron aplicar los cambios', '', mensajeDeError(err));
+    } finally {
+      this.aplicando.set(false);
+    }
+  }
+
+  /** «Descargar nuevo Excel»: el control re-chequeado. */
+  protected descargarNuevo(x: { indice: number; dato: Corregido }): void {
+    const c = this.clientes().find((v) => v.indice === x.indice);
+    const archivo = c?.archivos.find((a) => a.nombre === x.dato.aux);
+    if (c && archivo) void this.descargar(c, archivo);
+  }
+
+  /** Para la ventana de hallazgos: cuántos hay tildados y el botón. */
+  private readonly aplicarDesdeVentana = {
+    contar: () => this.seleccionados().length,
+    alAplicar: () => void this.aplicarCambios(),
+  };
 
   protected alternarHecha(t: Tarea): void {
     const id = this.ej()?.id;
@@ -137,9 +246,15 @@ export class EjecucionPantalla {
     guardarHechas(id, nuevas);
   }
 
+  /** El destino del botón de la tarea; el empleado no ve los que arman un control nuevo. */
+  protected destinoVisible(t: Tarea): Tarea['destino'] {
+    const d = t.destino;
+    return d && ('ruta' in d || this.perspectiva.canEdit()) ? d : undefined;
+  }
+
   /** El botón de la tarea: una pantalla de la app o un control nuevo solo con ese cliente. */
   protected irA(t: Tarea): void {
-    const d = t.destino;
+    const d = this.destinoVisible(t);
     if (!d) return;
     if ('ruta' in d) {
       void this.router.navigate([d.ruta]);
@@ -152,9 +267,128 @@ export class EjecucionPantalla {
     void this.router.navigate(['/control'], { state: { reintento } });
   }
 
+  /** Se muestra «Subir a Xubio»: control terminado y está el AUX (deshabilitado si no hay partidas o es Empleado). */
+  protected puedeSubir(a: Advertencia): boolean {
+    const c = this.clientes().find((x) => x.nombre === a.cliente);
+    return a.tipo === 'faltante_en_xubio' && !!a.operacion && !this.activa() && !!c && !!auxDe(c.origen, a.operacion);
+  }
+
+  /**
+   * Lleva a «Faltantes a Xubio» con el paso 2 ya armado: el AUX del control sin las
+   * filas destildadas y las correcciones elegidas en «Error». Sin arrastrar archivos.
+   */
+  protected subirAXubio(a: Advertencia): void {
+    const e = this.ej();
+    const c = this.clientes().find((x) => x.nombre === a.cliente);
+    if (!this.perspectiva.canEdit() || !e || !c || !a.operacion) return;
+    const aux = auxDe(c.origen, a.operacion);
+    if (!aux) {
+      this.toast.error('No se encontró el AUX de este control.', `${c.nombre} · ${a.operacion}: usá «Faltantes a Xubio» con el archivo.`);
+      return;
+    }
+    const filas = this.faltantesDe(a);
+    const partidas = filas.filter((f) => this.incluida(a, f));
+    if (!partidas.length) {
+      this.toast.aviso('No hay comprobantes tildados.', 'Tildá al menos uno para subirlo a Xubio.');
+      return;
+    }
+    guardarPrecarga({
+      ejecucionId: e.id,
+      indice: c.indice,
+      cliente: c.nombre,
+      operacion: a.operacion,
+      aux,
+      excluir: excluidasDe(e.id, c.nombre, a.operacion),
+      partidas: partidas.map(({ fecha, tipo, comprobante, cuit, razon, total }) => ({ fecha, tipo, comprobante, cuit, razon, total })),
+      total: filas.length,
+      correcciones: correccionesHechas(c.origen.corregidos?.[a.operacion]),
+    });
+    void this.router.navigate(['/convertir-aux'], { queryParams: { desde: 'control' } });
+  }
+
+  // --- Qué se sube: checkbox por comprobante (la misma elección que en la ventana) -----
+
+  protected incluida(a: Advertencia, f: FilaFaltante): boolean {
+    return estaIncluida(this.ej()?.id, a.cliente, a.operacion ?? '', f.clave);
+  }
+
+  protected tildadas(a: Advertencia, filas: readonly FilaFaltante[]): number {
+    return filas.filter((f) => this.incluida(a, f)).length;
+  }
+
+  protected alternarFila(a: Advertencia, f: FilaFaltante, ev: Event): void {
+    if (!this.perspectiva.canEdit()) return;
+    incluir(this.ej()?.id, a.cliente, a.operacion ?? '', f.clave, (ev.target as HTMLInputElement).checked);
+  }
+
+  protected alternarTodas(a: Advertencia, filas: readonly FilaFaltante[], ev: Event): void {
+    if (!this.perspectiva.canEdit()) return;
+    const si = (ev.target as HTMLInputElement).checked;
+    for (const f of filas) incluir(this.ej()?.id, a.cliente, a.operacion ?? '', f.clave, si);
+  }
+
+  /** Para la ventana de hallazgos (función suelta: se pasa como callback). */
+  private readonly alSubir = (a: Advertencia) => this.subirAXubio(a);
+
+  /** La ventana de hallazgos con una advertencia (las prioritarias del acordeón del cliente). */
+  protected verAdvertencia(a: Advertencia): void {
+    const reales = a.comprobantes.length || a.tipo !== 'faltante_en_xubio' ? [a] : [];
+    void mostrarVentanaDeErrores(reales, [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojaDe(a), this.aplicarDesdeVentana);
+  }
+
   /** La ventana de hallazgos solo con esa tarea: los comprobantes tal cual están en el Excel. */
   protected verDetalle(t: Tarea): void {
-    void mostrarVentanaDeErrores([t.advertencia]);
+    void mostrarVentanaDeErrores([t.advertencia], [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojaDe(t.advertencia), this.aplicarDesdeVentana);
+  }
+
+  // --- Lo que no cruzó, tal como está en los AUX ---------------------------------------
+
+  /** Por «cliente|operación»: partidas de ARCA sin Libro IVA y del Libro IVA sin ARCA, leídas del Excel. */
+  private readonly hojas = signal<HojasExcel>({ sinLibro: new Map(), sinArca: new Map() });
+
+  /** Solo la parte del Excel de esa advertencia (para abrir la ventana con un solo hallazgo). */
+  private hojaDe(a: Advertencia): HojasExcel | undefined {
+    if (!a.operacion || (a.tipo !== 'faltante_en_xubio' && a.tipo !== 'faltante_en_arca')) return undefined;
+    const clave = claveExcel(a.cliente, a.operacion);
+    const lado = a.tipo === 'faltante_en_xubio' ? 'sinLibro' : 'sinArca';
+    const filas = this.hojas()[lado].get(clave);
+    if (!filas) return undefined;
+    const vacio: FaltantesDelExcel = new Map();
+    return { sinLibro: vacio, sinArca: vacio, [lado]: new Map([[clave, filas]]) };
+  }
+
+  /** Para «Qué hay que hacer» y el acordeón: la hoja del Excel o, si no se pudo leer, lo del hallazgo. */
+  protected faltantesDe(a: Advertencia): FilaFaltante[] {
+    const filas = a.operacion ? this.hojas().sinLibro.get(claveExcel(a.cliente, a.operacion)) : undefined;
+    return filas && a.operacion ? filasDelExcel(filas, this.ej()?.advertencias ?? [], a.cliente, a.operacion) : faltantesParaCargar(a);
+  }
+
+  /** Lee las hojas cuando el control terminó (una vez por control). */
+  private readonly claveHojas = computed(() => {
+    const e = this.ej();
+    return e && !estaActiva(e.estado) ? e.id : null;
+  });
+
+  private async cargarHojas(id: string): Promise<void> {
+    const e = this.ej();
+    if (!e) return;
+    const sinLibro = new Map<string, FilaFaltanteExcel[]>();
+    const sinArca = new Map<string, FilaFaltanteExcel[]>();
+    await Promise.all(
+      e.detalle_clientes.map(async (c, indice) => {
+        if (!c.archivos.some((a) => /^AUX - Control de facturas/i.test(a.nombre))) return;
+        try {
+          const leido = await this.api.faltantes(id, indice);
+          for (const op of ['Ventas', 'Compras'] as const) {
+            if (leido.sin_libro?.[op]) sinLibro.set(claveExcel(c.nombre, op), leido.sin_libro[op]);
+            if (leido.sin_arca?.[op]) sinArca.set(claveExcel(c.nombre, op), leido.sin_arca[op]);
+          }
+        } catch {
+          // Sin el Excel se muestra lo del hallazgo.
+        }
+      }),
+    );
+    if (this.claveHojas() === id) this.hojas.set({ sinLibro, sinArca });
   }
 
   protected irATareas(): void {
@@ -171,6 +405,7 @@ export class EjecucionPantalla {
 
   /** Abre Nuevo control con esos clientes, el mismo período y las mismas operaciones. */
   protected reintentar(): void {
+    if (!this.perspectiva.canEdit()) return;
     const r = this.reintento();
     if (r) void this.router.navigate(['/control'], { state: { reintento: r } });
   }
@@ -190,16 +425,11 @@ export class EjecucionPantalla {
     return partes.join(' · ') || '—';
   }
 
-  // --- Cronómetro --------------------------------------------------------------------
+  // --- Reloj (cuenta regresiva de la pausa entre clientes) ---------------------------
 
   /** Avanza una vez por segundo solo mientras el control está activo. */
   private readonly ahora = signal(Date.now());
 
-  /** Desde `creada` (backend) hasta `terminada` o, si sigue corriendo, hasta ahora. */
-  protected readonly duracion = computed(() => {
-    const e = this.ej();
-    return e ? duracion(e.creada, e.terminada, this.ahora()) : '';
-  });
 
   // --- KPIs --------------------------------------------------------------------------
 
@@ -228,11 +458,27 @@ export class EjecucionPantalla {
         ),
       })),
       hallazgos: (this.ej()?.advertencias ?? []).filter((a) => a.cliente === c.nombre && a.gravedad !== 'info').length,
+      prioritarias: this.prioritariasDe(c.nombre),
       carpeta: c.carpeta,
       archivos: ordenarArchivos(c.archivos),
       origen: c,
     })),
   );
+
+  /**
+   * Faltantes en IVA del cliente: los hallazgos «faltante_en_xubio» y, si la hoja del
+   * Excel tiene partidas de una operación sin hallazgo (el control las pasó a «Error»),
+   * uno armado desde la hoja, para que se vean igual que en el Excel.
+   */
+  private prioritariasDe(cliente: string): Advertencia[] {
+    const reales = (this.ej()?.advertencias ?? []).filter((a) => a.cliente === cliente && esPrioridad(a));
+    const desdeHoja = (['Ventas', 'Compras'] as const)
+      .filter((op) => !reales.some((a) => a.operacion === op))
+      .map((op) => [op, this.hojas().sinLibro.get(claveExcel(cliente, op))?.length ?? 0] as const)
+      .filter(([, n]) => n > 0)
+      .map(([op, n]) => faltanteDesdeExcel(cliente, op, n));
+    return [...reales, ...desdeHoja];
+  }
 
   // --- Pausa entre clientes ----------------------------------------------------------
 
@@ -244,9 +490,13 @@ export class EjecucionPantalla {
 
   protected readonly conteoErrores = computed(() => contarErrores(this.ej()?.advertencias ?? []));
 
+  /** Cuántas filas de faltantes se muestran en la tarjeta (el resto, en «Ver comprobantes»). */
+  protected readonly maxFaltantes = 8;
+
   protected verErrores(): void {
     const a = this.ej()?.advertencias;
-    if (a?.length) void mostrarVentanaDeErrores(a, this.ej()?.resumenes ?? []);
+    if (a?.length || this.hojas().sinLibro.size || this.hojas().sinArca.size)
+      void mostrarVentanaDeErrores(a ?? [], this.ej()?.resumenes ?? [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojas(), this.aplicarDesdeVentana);
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -260,7 +510,7 @@ export class EjecucionPantalla {
     this.api.ajustes().then((a) => this.dialogosLocales.set(a.dialogos_locales), () => this.dialogosLocales.set(false));
     void this.store.cargarHistorial();
 
-    // El reloj corre solo con el control activo: al finalizar, el cronómetro queda quieto.
+    // El reloj corre solo con el control activo.
     effect((alLimpiar) => {
       if (!this.activa()) return;
       this.ahora.set(Date.now());
@@ -271,6 +521,15 @@ export class EjecucionPantalla {
     effect(() => {
       const id = this.id();
       untracked(() => void this.abrir(id));
+    });
+
+    // Al terminar (o al abrir uno terminado), se leen las hojas «Faltantes en Libro IVA».
+    effect(() => {
+      const id = this.claveHojas();
+      untracked(() => {
+        this.hojas.set({ sinLibro: new Map(), sinArca: new Map() });
+        if (id) void this.cargarHojas(id);
+      });
     });
 
     // Las tildes de cada control se recuperan al abrirlo.
@@ -302,6 +561,7 @@ export class EjecucionPantalla {
 
   /** Pide confirmación (SweetAlert2) y, si se confirma, frena el control. */
   protected async detener(): Promise<void> {
+    if (!this.perspectiva.canEdit()) return;
     const ok = await this.alertas.confirmarAccionPeligrosa(
       '¿Detener el bot?',
       'El paso que se está haciendo termina igual; después se frena y los clientes que faltan quedan sin hacer.',
@@ -384,6 +644,29 @@ export class EjecucionPantalla {
 }
 
 const ORDEN_ARCHIVO: Record<string, number> = { auditoria: 0, arca: 1, xubio: 2, otro: 3 };
+
+/** Qué campo corrige cada tipo de error (para encontrar los pares de una tarea). */
+const TIPO_CAMPO: Partial<Record<Advertencia['tipo'], string>> = {
+  letra_distinta: 'letra',
+  tipo_distinto: 'tipo',
+  importe_distinto: 'importe',
+  cuit_distinto: 'cuit',
+};
+
+const NOMBRE_CAMPO: Record<string, string> = { letra: 'Letra', tipo: 'Tipo', importe: 'Importe', cuit: 'CUIT' };
+const PESOS = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
+
+/** Lo ya corregido en el Excel («Aplicar cambios»): falta hacerlo también en Xubio. */
+function correccionesHechas(c: Corregido | undefined): CorreccionElegida[] {
+  return (c?.cambios ?? []).map((x) => {
+    const valor = x.campo === 'importe' && typeof x.valor_arca === 'number' ? PESOS.format(x.valor_arca) : String(x.valor_arca);
+    return {
+      comprobante: x.comprobante || `${x.pv}-${x.numero}`,
+      razon: '',
+      texto: `${NOMBRE_CAMPO[x.campo] ?? x.campo}: ${String(x.antes ?? '?')} → ${valor} (ya corregido en el Excel; corregilo también en Xubio)`,
+    };
+  });
+}
 
 /** Primero el AUX (el que se abre para revisar) y después lo que bajaron ARCA y Xubio. */
 function ordenarArchivos(archivos: ArchivoGenerado[]): ArchivoGenerado[] {

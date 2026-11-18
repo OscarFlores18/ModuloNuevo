@@ -1,3 +1,7 @@
+@if (!sesion.sinSesion() && perspectiva.necesitaElegir()) {
+<!-- Sin perspectiva elegida: «¿Cómo deseas ingresar?» -->
+<app-elegir-perfil (elegido)="alElegirPerfil()" />
+} @else {
 <!-- Encabezado principal: fijo arriba al desplazarse -->
 <header class="cf-header">
   <div class="cf-header-interior">
@@ -16,7 +20,9 @@
     <!-- Fila inferior: pestañas y acciones -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <nav class="flex flex-wrap gap-2" aria-label="Secciones">
-        <a routerLink="/control" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Nuevo control</a>
+        @if (perspectiva.canEdit()) {
+          <a routerLink="/control" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Nuevo control</a>
+        }
         <a routerLink="/ejecuciones" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
           Ejecuciones
           @if (ejecucion.hayActiva()) {
@@ -33,9 +39,16 @@
       </nav>
 
       <!-- Controles de la derecha -->
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         @if (sesion.conectado() && sesion.usuario(); as u) {
           <span class="cf-control inline-flex items-center" [title]="rolesDe(u)">{{ u.nombre }}</span>
+        }
+        <span class="cf-vista" [class.cf-vista-total]="perspectiva.canEdit()"
+          [title]="perspectiva.canEdit() ? 'Puede usar todas las acciones' : 'Ve todo y descarga; el resto de las acciones está bloqueado'">
+          Vista: {{ perspectiva.nombre() }}
+        </span>
+        @if (perspectiva.puedeAccesoTotal()) {
+          <button type="button" class="cf-control cf-control-gris" (click)="cambiarPerfil()">Cambiar perfil</button>
         }
       </div>
     </div>
@@ -70,6 +83,8 @@
       <path d="M12 5v14M5 12l7 7 7-7" />
     </svg>
   </button>
+}
+
 }
 
 <app-toasts />

@@ -1,22 +1,56 @@
 import Swal from 'sweetalert2';
 import { formatearCuit } from '../../core/cuit.pipe';
-import { ResumenOperacion, Advertencia, CeldaVista, ComprobanteLetraDistinta, FilaConError } from '../../core/models';
-import { ordenDe } from './tareas';
+import { ResumenOperacion, Advertencia, CambioElegido, CampoCambio, CeldaVista, ComprobanteLetraDistinta, FilaConError, FilaFaltanteExcel } from '../../core/models';
+import { claveCambio, claveFila, elegirParaAplicar, estaIncluida, incluir, paraAplicar } from './seleccion';
+import { aCorregir, cantidadComprobantes, ordenDe } from './tareas';
 
 /**
  * Ventana de hallazgos al terminar un control: qué encontró la auditoría (y qué
  * pasos fallaron), qué hacer y las filas tal como están en el Excel, con el
  * error remarcado. Solo muestra: no modifica nada.
  *
- * - Las píldoras del encabezado («X corregir», «Y info») filtran las tarjetas.
- * - Las acciones que llevan a algún lado son botones a la derecha; las demás son
- *   etiquetas de estado debajo del título.
- * - Las tarjetas INFO arrancan plegadas («Ver detalle ▾»).
- * - Un solo scroll (el de la lista) y «Entendido» siempre a la vista.
+ * - Arriba, una tira compacta con el resultado de cada operación (Ventas / Compras).
+ * - Tres bloques por cliente:
+ *   - «Subir a Xubio» (azul, siempre abierto, arriba de todo): partidas de ARCA no
+ *     encontradas en el Libro IVA, tal como la hoja «Faltantes en Libro IVA» del AUX,
+ *     con un checkbox por fila (qué va a Xubio) y «⬆ Subir a Xubio», que lleva lo
+ *     tildado a «Faltantes a Xubio».
+ *   - «Error» (rojo, abierto): letra, tipo, importe, CUIT o repetido, en una sola
+ *     tabla de pares ARCA/Xubio con la columna «Corrección en Xubio». Cada par se
+ *     tilda para corregirlo con el dato de ARCA; «Aplicar cambios» lo hace de verdad
+ *     (corrige el Libro IVA en el servidor y vuelve a cruzar).
+ *   - «A revisar» (ámbar, abierto): partidas del Libro IVA no encontradas en ARCA,
+ *     tal como el bloque al pie de la primera hoja del AUX.
+ *   Del Libro IVA, lo que el control ya explicó (tiques, extractos, exterior) lleva
+ *   una observación; de los dos lados, lo que también está en «Error» lo avisa.
+ * - Filtros: Todos | Error | Subir a Xubio | A revisar.
+ * - Cada comprobante se tilda como cargado / resuelto (solo Acceso Total; queda en
+ *   este navegador). Comprobante y CUIT se copian con un clic.
+ * - Lo grave (el control no sirve) va aparte, arriba de los bloques.
+ * - Se cuentan comprobantes (pares ARCA/Xubio), nunca filas.
+ * - La grilla entra en el ancho de la ventana: sin scroll horizontal.
+ * - Los botones de resolución solo responden en la vista Acceso Total (`canEdit`).
  */
 
 /** Primero lo grave, después lo mal cargado, después lo que falta y al final lo informativo. */
 const ORDEN_CLASE: Record<string, number> = { grave: 0, mal: 1, aviso: 2, info: 3 };
+
+/**
+ * El aviso prioritario del estudio: «Partidas de ARCA no encontradas en el Libro IVA»
+ * (no al revés). Va en «Subir a Xubio», el primer bloque, siempre abierto.
+ */
+export function esPrioridad(e: Advertencia): boolean {
+  return e.tipo === 'faltante_en_xubio';
+}
+
+/**
+ * Las «Partidas de ARCA no encontradas en el Libro IVA» siempre arriba (aunque sean
+ * informativas); después, de lo más grave a lo informativo.
+ */
+export function ordenarHallazgos(errores: readonly Advertencia[]): Advertencia[] {
+  const prioridad = (e: Advertencia) => (e.tipo === 'faltante_en_xubio' ? 0 : 1);
+  return [...errores].sort((a, b) => prioridad(a) - prioridad(b) || ORDEN_CLASE[claseDe(a)] - ORDEN_CLASE[claseDe(b)]);
+}
 
 /**
  * Qué es cada hallazgo. Un comprobante que falta en un lado NO es un error de
@@ -33,13 +67,8 @@ function claseDe(e: Advertencia): Clase {
   return AVISOS.has(e.tipo) ? 'aviso' : 'mal';
 }
 
-function etiquetaDe(e: Advertencia): string {
-  const clase = claseDe(e);
-  if (clase === 'grave') return 'Grave';
-  if (clase === 'info') return 'Info';
-  if (e.tipo === 'faltante_en_xubio') return 'Falta cargar';
-  if (e.tipo === 'faltante_en_arca') return 'A revisar';
-  return 'Error';
+function esFaltante(e: Advertencia): boolean {
+  return AVISOS.has(e.tipo);
 }
 
 /** Columnas comunes a ARCA y Xubio (cada planilla las llama distinto). */
@@ -88,6 +117,31 @@ function cuit(v: CeldaVista['valor'] | undefined): string {
   return formatearCuit(typeof v === 'number' ? String(Math.trunc(v)) : String(v));
 }
 
+const ABREVIATURAS: [RegExp, string][] = [
+  [/^factura\b/i, 'FC'],
+  // ARCA: «Nota de Crédito A»; Xubio: «Nota Crédito».
+  [/^nota (de )?cr[eé]dito\b/i, 'NC'],
+  [/^nota (de )?d[eé]bito\b/i, 'ND'],
+  // ARCA lo manda como «Liquidaciónes A».
+  [/^liquidaci[oó]n(es)?\b/i, 'Liq.'],
+  [/^recibo\b/i, 'Rec.'],
+  [/^tique factura\b/i, 'TF'],
+  [/^otro comprobante\b/i, 'Otro'],
+  [/^extracto bancario\b/i, 'Extracto'],
+];
+
+/**
+ * «1 - Factura A» → «FC A», «3 - Nota de Crédito A» → «NC A», «63 - Liquidación A» → «Liq. A».
+ * Lo que no reconoce queda como vino (sin el código del principio). El nombre completo va en el tooltip.
+ */
+export function abreviarTipo(tipo: string): string {
+  const sinCodigo = tipo.replace(/^\s*\d+\s*-\s*/, '').trim();
+  for (const [patron, corto] of ABREVIATURAS) {
+    if (patron.test(sinCodigo)) return sinCodigo.replace(patron, corto).replace(/\s+/g, ' ');
+  }
+  return sinCodigo;
+}
+
 function normalizar(fila: CeldaVista[]): Partial<Record<Columna, CeldaVista['valor']>> {
   const salida: Partial<Record<Columna, CeldaVista['valor']>> = {};
   for (const c of fila) {
@@ -97,47 +151,347 @@ function normalizar(fila: CeldaVista[]): Partial<Record<Columna, CeldaVista['val
   return salida;
 }
 
+function aNumero(v: CeldaVista['valor'] | undefined): number | null {
+  if (typeof v === 'number') return v;
+  if (typeof v !== 'string') return null;
+  const limpio = v.trim().replace(/\$|\s/g, '');
+  // «604.887,50» (es-AR) o «604887.5» / «604887,5».
+  const n = Number(/,\d{1,2}$/.test(limpio) ? limpio.replace(/\./g, '').replace(',', '.') : limpio.replace(/,/g, ''));
+  return Number.isFinite(n) ? n : null;
+}
+
+function pesos(n: number): string {
+  return `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function plural(n: number, uno: string, varios: string): string {
+  return `${n} ${n === 1 ? uno : varios}`;
+}
+
+/** Una partida de ARCA que hay que cargar en Xubio, lista para mostrar. */
+export interface FilaFaltante {
+  /** «CUIT|comprobante»: para el checkbox de «Subir a Xubio». */
+  clave: string;
+  fecha: string;
+  tipo: string;
+  tipoCompleto: string;
+  comprobante: string;
+  cuit: string;
+  razon: string;
+  total: string;
+  /** Por qué no hace falta cargarla, o que ya figura en «Error» (solo con la hoja del Excel). */
+  nota?: string;
+}
+
+// --- La hoja «Faltantes en Libro IVA» del Excel ---------------------------------------
+//
+// Lo que se muestra en «Subir a Xubio» es la hoja tal como está en el AUX (es lo mismo
+// que sube el botón), sin etiquetas: cada fila lleva un checkbox para elegir a mano si
+// va (una factura y su NC del mismo período, gastos no computables…). Solo se avisa si
+// la misma partida figura en «Error» (letra/tipo/CUIT distinto).
+
+/** Las hojas «Faltantes en Libro IVA» de los AUX, por «cliente|operación». */
+export type FaltantesDelExcel = ReadonlyMap<string, readonly FilaFaltanteExcel[]>;
+
+/** Lo que no cruzó, de cada lado, tal como está en los AUX. */
+export interface HojasExcel {
+  /** Partidas de ARCA no encontradas en el Libro IVA (hoja «Faltantes en Libro IVA»). */
+  sinLibro: FaltantesDelExcel;
+  /** Partidas del Libro IVA no encontradas en ARCA (bloque al pie de la primera hoja). */
+  sinArca: FaltantesDelExcel;
+}
+
+export function claveExcel(cliente: string, operacion: string): string {
+  return `${cliente}|${operacion}`;
+}
+
+/** Solo las hojas de ese cliente. */
+function excelDelCliente(excel: FaltantesDelExcel | undefined, cliente: string): FaltantesDelExcel {
+  return new Map([...(excel ?? new Map<string, readonly FilaFaltanteExcel[]>())].filter(([k]) => k.startsWith(`${cliente}|`)));
+}
+
+const claveComprobante = claveFila;
+
+const NOTA_EN_ERROR: Record<string, string> = {
+  letra_distinta: 'Ver «Error»: letra distinta',
+  tipo_distinto: 'Ver «Error»: tipo distinto',
+  importe_distinto: 'Ver «Error»: importe distinto',
+  cuit_distinto: 'Ver «Error»: CUIT distinto',
+};
+
+/**
+ * Las observaciones de cada partida (por CUIT y comprobante) según lo que encontró el
+ * control. Lado ARCA: solo lo que pasó a «Error» (qué se sube lo decide quien sube).
+ * Lado Libro IVA: tiques / extractos, exterior y el lado Xubio de lo que pasó a «Error».
+ */
+function notasDe(errores: readonly Advertencia[], cliente: string, operacion: string, lado: 'arca' | 'xubio'): Map<string, NonNullable<FilaVista['nota']>> {
+  const notas = new Map<string, NonNullable<FilaVista['nota']>>();
+  const anotar = (fila: CeldaVista[], nota: NonNullable<FilaVista['nota']>) => {
+    const d = normalizar(fila);
+    notas.set(claveComprobante(d['CUIT'], d['Comprobante']), nota);
+  };
+  const faltante = lado === 'arca' ? 'faltante_en_xubio' : 'faltante_en_arca';
+  for (const e of errores) {
+    if (e.cliente !== cliente || e.operacion !== operacion) continue;
+    if (e.tipo === faltante) {
+      if (lado === 'arca') continue;
+      for (const f of e.comprobantes as FilaConError[]) {
+        const nota = f.motivo && NOTA_MOTIVO[f.motivo];
+        if (nota) anotar(f.fila, nota);
+      }
+    } else if (NOTA_EN_ERROR[e.tipo]) {
+      const nota = { texto: NOTA_EN_ERROR[e.tipo], tono: 'azul' as const };
+      if (e.tipo === 'letra_distinta') {
+        for (const c of e.comprobantes as ComprobanteLetraDistinta[]) anotar(lado === 'arca' ? c.fila_arca : c.fila_xubio, nota);
+      } else {
+        for (const f of e.comprobantes as FilaConError[]) if (f.origen === lado) anotar(f.fila, nota);
+      }
+    }
+  }
+  return notas;
+}
+
+function datosDeExcel(f: FilaFaltanteExcel): FilaVista['datos'] {
+  return { Fecha: f.fecha, Tipo: f.tipo, Comprobante: f.comprobante, CUIT: f.cuit, 'Razón social': f.razon, Total: f.total };
+}
+
+/** Las filas de la hoja, listas para la tarjeta de «Qué hay que hacer» (con su observación). */
+export function filasDelExcel(filas: readonly FilaFaltanteExcel[], errores: readonly Advertencia[], cliente: string, operacion: string): FilaFaltante[] {
+  const notas = notasDe(errores, cliente, operacion, 'arca');
+  return filas.map((f) => ({
+    clave: claveFila(f.cuit, f.comprobante),
+    fecha: f.fecha,
+    tipo: abreviarTipo(f.tipo),
+    tipoCompleto: f.tipo,
+    comprobante: f.comprobante,
+    cuit: cuit(f.cuit),
+    razon: f.razon,
+    total: importe(f.total),
+    nota: notas.get(claveComprobante(f.cuit, f.comprobante))?.texto,
+  }));
+}
+
+/** Un hallazgo «faltante_en_xubio» armado desde la hoja, cuando el control no lo informó (todas fueron a «Error»). */
+export function faltanteDesdeExcel(cliente: string, operacion: 'Ventas' | 'Compras', n: number): Advertencia {
+  return {
+    tipo: 'faltante_en_xubio',
+    gravedad: 'corregir',
+    cliente,
+    operacion,
+    titulo: `Partidas de ARCA no encontradas en el Libro IVA ${operacion}`,
+    detalle: '',
+    acciones: [],
+    total: n,
+    a_corregir: n,
+    comprobantes: [],
+    hoja: `Faltantes en Libro IVA ${operacion}`,
+  };
+}
+
+/** Las partidas de ARCA no encontradas en el Libro IVA del hallazgo (sin la hoja del Excel): todas. */
+export function faltantesParaCargar(a: Advertencia): FilaFaltante[] {
+  if (a.tipo !== 'faltante_en_xubio') return [];
+  return (a.comprobantes as FilaConError[])
+    .map((f) => {
+      const d = normalizar(f.fila);
+      const tipo = texto(d['Tipo']);
+      return {
+        clave: claveFila(d['CUIT'], d['Comprobante']),
+        fecha: texto(d['Fecha']),
+        tipo: abreviarTipo(tipo),
+        tipoCompleto: tipo,
+        comprobante: texto(d['Comprobante']),
+        cuit: cuit(d['CUIT']),
+        razon: texto(d['Razón social']),
+        total: importe(d['Total']),
+      };
+    });
+}
+
+// --- La grilla -----------------------------------------------------------------------
+
 interface FilaVista {
   origen: 'ARCA' | 'Xubio';
+  /** Ventas / Compras: se muestra solo si la tabla mezcla las dos. */
+  op?: string;
   datos: Partial<Record<Columna, CeldaVista['valor']>>;
   /** HTML ya armado para la celda Comprobante (con la letra marcada). */
   comprobante?: string;
   marca?: 'error' | 'ok' | 'aviso';
   /** En qué columna está la diferencia (por defecto, el comprobante). */
-  marcaEn?: 'Comprobante' | 'CUIT' | 'Total';
-  /** Etiqueta al lado del comprobante (ej. «Normal: extracto o tique»). */
-  nota?: string;
+  marcaEn?: 'Comprobante' | 'Tipo' | 'CUIT' | 'Total';
+  /** Por qué no hay que hacer nada con esta fila (columna «Observación»). */
+  nota?: { texto: string; tono: 'neutro' | 'azul' };
 }
 
-/** Solo el exterior lleva etiqueta: en tiques y extractos ya lo dice la columna Tipo. */
-const NOTA_MOTIVO: Partial<Record<NonNullable<FilaConError['motivo']>, string>> = {
-  exterior: 'Normal · del exterior',
-  anulada: 'Normal · anulada con nota de crédito',
-  liquidacion: 'Normal · está en el extracto del banco',
+/** Un comprobante: su par ARCA/Xubio (o sus copias repetidas) y qué cambiar en Xubio. */
+interface Grupo {
+  clase?: ClaseError;
+  filas: FilaVista[];
+  /** HTML de la celda «Corrección en Xubio». */
+  correccion?: string;
+  /** Para recordar si ya se cargó / resolvió (checkbox de la primera columna). */
+  clave?: string;
+  /** «Subir a Xubio»: el checkbox de la primera columna elige si la fila va al .zip. */
+  subir?: { op: string; fila: string; incluida: boolean };
+  /** «Error»: tildado para corregir con el dato de ARCA («Aplicar cambios»). */
+  aplicar?: { clave: string; tildado: boolean };
+}
+
+/** Qué filas ya se marcaron como cargadas / resueltas, y si se pueden tildar (Acceso Total). */
+interface Marcado {
+  canEdit: boolean;
+  hechas: ReadonlySet<string>;
+  /** Para la selección de qué se sube y qué se corrige. */
+  ejecucionId?: string;
+  cliente: string;
+  /** Hay «Aplicar cambios» (control terminado, desde Ejecuciones). */
+  conAplicar: boolean;
+}
+
+const PREFIJO_HECHAS = 'cf-hallazgos-hechos:';
+
+/** Las filas tildadas quedan en este navegador, por control (sin control, duran lo que la ventana). */
+function leerHechas(ejecucionId?: string): Set<string> {
+  if (!ejecucionId) return new Set();
+  try {
+    return new Set(JSON.parse(localStorage.getItem(PREFIJO_HECHAS + ejecucionId) ?? '[]') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+function guardarHechas(ejecucionId: string | undefined, hechas: ReadonlySet<string>): void {
+  if (!ejecucionId) return;
+  try {
+    localStorage.setItem(PREFIJO_HECHAS + ejecucionId, JSON.stringify([...hechas]));
+  } catch {
+    // Sin localStorage los tildes duran hasta cerrar la ventana.
+  }
+}
+
+/** Clave estable de un comprobante dentro de un control (para el tilde de «hecho»). */
+function claveDe(e: Advertencia, bloque: string, datos: FilaVista['datos']): string {
+  return [e.cliente, e.operacion ?? '', bloque, cuit(datos['CUIT']), texto(datos['Comprobante']), abreviarTipo(texto(datos['Tipo']))].join('|');
+}
+
+/** Lado Libro IVA: lo que es normal que no esté en ARCA (la columna ya se llama «Observación»). */
+const NOTA_MOTIVO: Partial<Record<NonNullable<FilaConError['motivo']>, NonNullable<FilaVista['nota']>>> = {
+  exterior: { texto: 'Del exterior', tono: 'neutro' },
+  tique: { texto: 'Tique / extracto', tono: 'neutro' },
 };
 
-/** Una grilla estilo Excel con las filas de ARCA y Xubio juntas. */
-function grilla(filas: FilaVista[]): string {
+/**
+ * Grilla de ancho fijo (sin scroll horizontal). Cada grupo es un `<tbody>`: los
+ * pares ARCA/Xubio quedan juntos y separados del siguiente por un borde. Las
+ * columnas Origen, Op. y Observación solo aparecen si hacen falta.
+ */
+function grilla(grupos: Grupo[], marcado?: Marcado): string {
+  const filas = grupos.flatMap((g) => g.filas);
   if (!filas.length) return '';
-  const cab = ['', ...COLUMNAS].map((c) => `<th${c === 'Total' ? ' class="num"' : ''}>${esc(c)}</th>`).join('');
-  const cuerpo = filas
-    .map((f) => {
-      const marcaEn = f.marcaEn ?? 'Comprobante';
-      const marca = (col: Columna) => (f.marca && col === marcaEn ? ` marca ${f.marca}` : '');
-      const celdas = COLUMNAS.map((col) => {
-        if (col === 'Comprobante') {
-          const clase = marca(col);
-          const nota = f.nota ? ` <span class="ve-nota">${esc(f.nota)}</span>` : '';
-          return `<td class="comp${clase}">${f.comprobante ?? esc(texto(f.datos[col]))}${nota}</td>`;
+  const conOrigen = new Set(filas.map((f) => f.origen)).size > 1;
+  const conOp = new Set(filas.map((f) => f.op).filter(Boolean)).size > 1;
+  const conNota = filas.some((f) => f.nota);
+  const conCorr = grupos.some((g) => g.correccion);
+  const conSubir = !!marcado && grupos.some((g) => g.subir);
+  const conAplicar = !!marcado && marcado.conAplicar && grupos.some((g) => g.aplicar);
+  const conHecho = !!marcado && !conSubir && !conAplicar && grupos.some((g) => g.clave);
+  const conTilde = conHecho || conSubir || conAplicar;
+  const bloqueo = marcado && !marcado.canEdit ? ` disabled title="${BLOQUEADO}"` : '';
+  const todas = grupos.every((g) => !g.subir || g.subir.incluida);
+  const todosAplicar = grupos.some((g) => g.aplicar) && grupos.every((g) => !g.aplicar || g.aplicar.tildado);
+  const cols = [
+    conTilde && '<col class="c-hecho">',
+    conOrigen && '<col class="c-origen">',
+    conOp && '<col class="c-op">',
+    '<col class="c-fecha">',
+    '<col class="c-tipo">',
+    '<col class="c-comp">',
+    '<col class="c-cuit">',
+    '<col>',
+    conNota && '<col class="c-nota">',
+    '<col class="c-total">',
+    // El importe (con la diferencia) necesita más lugar que letra o tipo.
+    conCorr && `<col class="c-corr${grupos.some((g) => g.clase === 'importe') ? ' c-corr-ancha' : ''}">`,
+  ]
+    .filter(Boolean)
+    .join('');
+  const cab = [
+    conHecho && `<th class="h-hecho" title="${marcado!.canEdit ? 'Marcá lo que ya cargaste o resolviste' : 'Marcado por quien tiene Acceso Total'}">✓</th>`,
+    conSubir &&
+      `<th class="h-hecho"><input type="checkbox" data-incluir-todas aria-label="Subir todas" title="Tildadas: van a Xubio"${todas ? ' checked' : ''}${bloqueo}></th>`,
+    conAplicar &&
+      `<th class="h-hecho"><input type="checkbox" data-aplicar-todos aria-label="Tildar todos para aplicar" title="Tildados: se corrigen con el dato de ARCA al tocar «Aplicar cambios»"${todosAplicar ? ' checked' : ''}${bloqueo}></th>`,
+    conOrigen && '<th>Origen</th>',
+    conOp && '<th>Op.</th>',
+    '<th>Fecha</th>',
+    '<th>Tipo</th>',
+    '<th>Comprobante</th>',
+    '<th class="h-cuit">CUIT</th>',
+    '<th>Razón social</th>',
+    conNota && '<th>Observación</th>',
+    '<th class="num">Total</th>',
+    conCorr && '<th class="h-corr">Corrección en Xubio</th>',
+  ]
+    .filter(Boolean)
+    .join('');
+  const fila = (f: FilaVista, inicio: string, corr: string) => {
+    const marcaEn = f.marcaEn ?? 'Comprobante';
+    const marca = (col: Columna) => (f.marca && col === marcaEn ? ` marca ${f.marca}` : '');
+    const tipo = texto(f.datos['Tipo']);
+    const razon = texto(f.datos['Razón social']);
+    const nro = texto(f.datos['Comprobante']);
+    const comp = f.comprobante ?? esc(nro);
+    const cuitTexto = cuit(f.datos['CUIT']);
+    // Comprobante y CUIT se copian con un clic (para buscarlos en Xubio).
+    const copiar = (valor: string) => (valor ? ` copiable" data-copiar="${esc(valor)}" title="Copiar ${esc(valor)}` : '');
+    return `<tr>
+      ${inicio}
+      ${conOrigen ? `<td class="origen origen-${f.origen.toLowerCase()}">${f.origen}</td>` : ''}
+      ${conOp ? `<td class="op">${esc(f.op ?? '')}</td>` : ''}
+      <td>${esc(texto(f.datos['Fecha']))}</td>
+      <td class="tipo${marca('Tipo')}" title="${esc(tipo)}">${esc(abreviarTipo(tipo))}</td>
+      <td class="comp${marca('Comprobante')}${copiar(nro)}">${comp}</td>
+      <td class="cuit${marca('CUIT')}${copiar(cuitTexto)}">${esc(cuitTexto)}</td>
+      <td class="razon" title="${esc(razon)}">${esc(razon)}</td>
+      ${conNota ? `<td>${f.nota ? `<span class="ve-nota ve-nota-${f.nota.tono}">${esc(f.nota.texto)}</span>` : ''}</td>` : ''}
+      <td class="num${marca('Total')}">${esc(importe(f.datos['Total']))}</td>
+      ${corr}
+    </tr>`;
+  };
+  const cuerpo = grupos
+    .map((g) => {
+      const hecha = conHecho && !!g.clave && marcado!.hechas.has(g.clave);
+      const fuera = conSubir && !!g.subir && !g.subir.incluida;
+      const elegido = conAplicar && !!g.aplicar?.tildado;
+      const clases = [conCorr && 've-par', hecha && 've-hecha', fuera && 've-excluida', elegido && 've-elegido'].filter(Boolean).join(' ');
+      const atributos = `${clases ? ` class="${clases}"` : ''}${g.clase ? ` data-clase="${g.clase}"` : ''}`;
+      const tilde = () => {
+        if (conAplicar) {
+          if (!g.aplicar) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
+          return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-aplicar="${esc(g.aplicar.clave)}" aria-label="Corregir con el dato de ARCA" title="Corregir con el dato de ARCA"${g.aplicar.tildado ? ' checked' : ''}${bloqueo}></td>`;
         }
-        if (col === 'CUIT') return `<td class="cuit${marca(col)}">${esc(cuit(f.datos[col]))}</td>`;
-        if (col === 'Total') return `<td class="num${marca(col)}">${esc(importe(f.datos[col]))}</td>`;
-        return `<td>${esc(texto(f.datos[col]))}</td>`;
-      }).join('');
-      return `<tr><td class="origen origen-${f.origen.toLowerCase()}">${f.origen}</td>${celdas}</tr>`;
+        if (conSubir) {
+          if (!g.subir) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
+          const { op, fila, incluida } = g.subir;
+          return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-incluir data-op="${esc(op)}" data-fila="${esc(fila)}" aria-label="Subir a Xubio"${incluida ? ' checked' : ''}${bloqueo}></td>`;
+        }
+        if (!g.clave) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
+        return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-hecho="${esc(g.clave)}" aria-label="Cargado / resuelto"${hecha ? ' checked' : ''}${bloqueo}></td>`;
+      };
+      const filasHtml = g.filas
+        .map((f, i) =>
+          fila(
+            f,
+            conTilde && i === 0 ? tilde() : '',
+            conCorr && i === 0 ? `<td class="corr" rowspan="${g.filas.length}">${g.correccion ?? ''}</td>` : '',
+          ),
+        )
+        .join('');
+      return `<tbody${atributos}>${filasHtml}</tbody>`;
     })
     .join('');
-  return `<div class="ve-grilla"><table><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
+  return `<div class="ve-grilla"><table${conCorr ? ' class="con-corr"' : ''}><colgroup>${cols}</colgroup><thead><tr>${cab}</tr></thead>${cuerpo}</table></div>`;
 }
 
 function conLetra(comprobante: string, clase: 'error' | 'ok'): string {
@@ -145,200 +499,664 @@ function conLetra(comprobante: string, clase: 'error' | 'ok'): string {
   return `<span class="letra letra-${clase}">${esc(letra)}</span>-${esc(resto.join('-'))}`;
 }
 
+/** Las filas tal como vienen (para lo grave y lo que no entra en los tres bloques). */
 function filasDe(e: Advertencia): FilaVista[] {
-  if (e.tipo === 'letra_distinta') {
-    return (e.comprobantes as ComprobanteLetraDistinta[]).flatMap((c) => [
-      { origen: 'ARCA', datos: normalizar(c.fila_arca), comprobante: conLetra(c.comprobante_arca, 'ok'), marca: 'ok' },
-      { origen: 'Xubio', datos: normalizar(c.fila_xubio), comprobante: conLetra(c.comprobante_xubio, 'error'), marca: 'error' },
-    ]);
-  }
-  // CUIT o importe distinto: van de a pares (ARCA, Xubio); se marca la columna
-  // que difiere, en verde la de ARCA y en rojo la de Xubio.
-  if (e.tipo === 'cuit_distinto' || e.tipo === 'importe_distinto') {
-    const marcaEn = e.tipo === 'cuit_distinto' ? 'CUIT' : 'Total';
-    return (e.comprobantes as FilaConError[]).map((f) => ({
-      origen: f.origen === 'arca' ? 'ARCA' : 'Xubio',
-      datos: normalizar(f.fila),
-      marca: f.origen === 'arca' ? 'ok' : 'error',
-      marcaEn,
-    }));
-  }
   const clase = claseDe(e);
   return (e.comprobantes as FilaConError[]).map((f) => ({
     origen: f.origen === 'arca' ? 'ARCA' : 'Xubio',
     datos: normalizar(f.fila),
-    // Lo que falta en un lado se marca en ámbar (aviso); lo mal cargado, en rojo.
-    marca: clase === 'info' || f.motivo ? undefined : clase === 'aviso' ? 'aviso' : 'error',
+    marca: clase === 'info' || (f.motivo && NOTA_MOTIVO[f.motivo]) ? undefined : clase === 'aviso' ? 'aviso' : 'error',
     nota: f.motivo ? NOTA_MOTIVO[f.motivo] : undefined,
   }));
 }
 
-/** La orden de cada letra distinta: «Soto Stockmayer: A → C». */
-function ordenesLetra(e: Advertencia): string {
-  if (e.tipo !== 'letra_distinta') return '';
-  return (e.comprobantes as ComprobanteLetraDistinta[])
-    .map(
-      (c) =>
-        `<li><span class="ve-orden-quien"><strong>${esc(c.proveedor)}</strong> <span class="ve-orden-comp">${esc(c.comprobante_xubio)}</span></span><span class="ve-orden-cambio">Cambiar la letra <span class="letra letra-error">${esc(c.letra_xubio)}</span> <span class="ve-flecha">→</span> <span class="letra letra-ok">${esc(c.letra_arca)}</span></span></li>`,
-    )
-    .join('');
+// --- Bloque «Error»: los mal cargados en Xubio, de a pares ----------------------------
+
+type ClaseError = 'letra' | 'tipo' | 'importe' | 'cuit' | 'duplicado';
+
+const CLASE_ERROR: Partial<Record<Advertencia['tipo'], ClaseError>> = {
+  letra_distinta: 'letra',
+  tipo_distinto: 'tipo',
+  importe_distinto: 'importe',
+  cuit_distinto: 'cuit',
+  duplicado: 'duplicado',
+};
+const ORDEN_ERROR: readonly ClaseError[] = ['letra', 'tipo', 'importe', 'cuit', 'duplicado'];
+const NOMBRE_ERROR: Record<ClaseError, string> = { letra: 'Letra', tipo: 'Tipo', importe: 'Importe', cuit: 'CUIT', duplicado: 'Repetido' };
+
+/** «Letra: A → C», con el valor de Xubio en rojo y el de ARCA en verde. `antes` y `despues` ya escapados. */
+function cambio(etiqueta: string, antes: string, despues: string, extra = ''): string {
+  return `<span class="ve-corr-et">${etiqueta}:</span> <span class="ve-valor ve-valor-error">${antes}</span> <span class="ve-flecha">→</span> <span class="ve-valor ve-valor-ok">${despues}</span>${extra}`;
 }
 
-// --- Acciones: botones (llevan a algún lado) vs. etiquetas (estado) ----------------
+/** Las filas de un error de a pares, juntadas en (ARCA, Xubio) en el orden en que vienen. */
+function paresDe(e: Advertencia): { arca: FilaVista['datos']; xubio: FilaVista['datos'] }[] {
+  const filas = e.comprobantes as FilaConError[];
+  const arca = filas.filter((f) => f.origen === 'arca');
+  const xubio = filas.filter((f) => f.origen === 'xubio');
+  return arca.slice(0, xubio.length).map((a, i) => ({ arca: normalizar(a.fila), xubio: normalizar(xubio[i].fila) }));
+}
 
-function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | null {
+function gruposError(e: Advertencia): Grupo[] {
+  const clase = CLASE_ERROR[e.tipo];
+  if (!clase) return [];
+  const op = e.operacion ?? undefined;
+  if (clase === 'letra') {
+    return (e.comprobantes as ComprobanteLetraDistinta[]).map((c) => ({
+      clase,
+      filas: [
+        { origen: 'ARCA', op, datos: normalizar(c.fila_arca), comprobante: conLetra(c.comprobante_arca, 'ok'), marca: 'ok' },
+        { origen: 'Xubio', op, datos: normalizar(c.fila_xubio), comprobante: conLetra(c.comprobante_xubio, 'error'), marca: 'error' },
+      ],
+      correccion: cambio('Letra', esc(c.letra_xubio), esc(c.letra_arca)),
+      clave: claveDe(e, 'error', normalizar(c.fila_xubio)),
+    }));
+  }
+  if (clase === 'duplicado') {
+    // Las copias del mismo comprobante (mismo CUIT, número y tipo) van juntas.
+    const porClave = new Map<string, FilaVista[]>();
+    for (const f of e.comprobantes as FilaConError[]) {
+      const datos = normalizar(f.fila);
+      const clave = [cuit(datos['CUIT']), texto(datos['Comprobante']), abreviarTipo(texto(datos['Tipo']))].join('|');
+      porClave.set(clave, [...(porClave.get(clave) ?? []), { origen: 'Xubio', op, datos, marca: 'error' }]);
+    }
+    return [...porClave.values()].map((filas) => {
+      const sobran = Math.max(1, filas.length - 1);
+      return {
+        clase,
+        filas,
+        correccion: `<span class="ve-corr-et">Repetido:</span> borrar ${sobran === 1 ? 'la copia' : `${sobran} copias`}`,
+        clave: claveDe(e, 'error', filas[0].datos),
+      };
+    });
+  }
+  const marcaEn: FilaVista['marcaEn'] = clase === 'tipo' ? 'Tipo' : clase === 'cuit' ? 'CUIT' : 'Total';
+  return paresDe(e).map(({ arca, xubio }) => {
+    let correccion: string;
+    if (clase === 'tipo') {
+      correccion = cambio('Tipo', esc(abreviarTipo(texto(xubio['Tipo']))), esc(abreviarTipo(texto(arca['Tipo']))));
+    } else if (clase === 'cuit') {
+      correccion = cambio('CUIT', esc(cuit(xubio['CUIT'])), esc(cuit(arca['CUIT'])));
+    } else {
+      const nx = aNumero(xubio['Total']);
+      const na = aNumero(arca['Total']);
+      const dif = nx !== null && na !== null ? ` <span class="ve-diferencia">(${esc(pesos(Math.abs(na) - Math.abs(nx)))})</span>` : '';
+      correccion = cambio(
+        'Importe',
+        esc(nx === null ? importe(xubio['Total']) : pesos(nx)),
+        esc(na === null ? importe(arca['Total']) : pesos(na)),
+        dif,
+      );
+    }
+    return {
+      clase,
+      filas: [
+        { origen: 'ARCA', op, datos: arca, marca: 'ok', marcaEn },
+        { origen: 'Xubio', op, datos: xubio, marca: 'error', marcaEn },
+      ],
+      correccion,
+      clave: claveDe(e, 'error', xubio),
+    };
+  });
+}
+
+/** El HTML de la corrección como texto («Importe: $1.000,00 → $1.210,00 ($210,00)»). */
+function textoPlano(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Un par de «Error» que se puede corregir con el dato de ARCA («Aplicar cambios»). */
+export interface CambioPar {
+  /** Para la selección (`claveCambio`). */
+  clave: string;
+  /** Lo que se manda al backend. */
+  datos: CambioElegido;
+  /** «Importe: $117.149,10 → $116.450,40 (-$698,70)». */
+  texto: string;
+  comprobanteArca: string;
+  razon: string;
+}
+
+const NRO_COMPROBANTE = /([A-Za-z])[-\s]*(\d+)[-\s]*(\d+)/;
+
+/** El cambio de un par (letra, tipo, importe o CUIT); null si no se puede armar. */
+function cambioDe(e: Advertencia, g: Grupo): CambioPar | null {
+  if (!g.clase || g.clase === 'duplicado' || g.filas.length < 2 || !e.operacion) return null;
+  const campo: CampoCambio = g.clase;
+  const arca = g.filas[0].datos;
+  const xubio = g.filas[1].datos;
+  const compXubio = texto(xubio['Comprobante']);
+  const m = NRO_COMPROBANTE.exec(compXubio);
+  if (!m) return null;
+  const compArca = texto(arca['Comprobante']);
+  const valorArca =
+    campo === 'letra' ? compArca.trim().charAt(0).toUpperCase()
+    : campo === 'tipo' ? texto(arca['Tipo'])
+    : campo === 'importe' ? (aNumero(arca['Total']) ?? texto(arca['Total']))
+    : texto(arca['CUIT']).replace(/\D/g, '');
+  if (valorArca === '') return null;
+  return {
+    clave: claveCambio(e.cliente, e.operacion, campo, claveFila(arca['CUIT'], compArca)),
+    datos: {
+      cliente: e.cliente,
+      operacion: e.operacion === 'Ventas' ? 'Ventas' : 'Compras',
+      campo,
+      cuit: texto(xubio['CUIT']).replace(/\D/g, ''),
+      pv: Number(m[2]),
+      numero: Number(m[3]),
+      comprobante: compXubio,
+      valorArca,
+    },
+    texto: textoPlano(g.correccion ?? ''),
+    comprobanteArca: compArca,
+    razon: texto(arca['Razón social']),
+  };
+}
+
+/** Los pares de un error, cada uno con su tilde de «Aplicar cambios». */
+function gruposConCambio(e: Advertencia, ejecucionId: string | undefined): Grupo[] {
+  return gruposError(e).map((g) => {
+    const c = cambioDe(e, g);
+    return c ? { ...g, aplicar: { clave: c.clave, tildado: paraAplicar(ejecucionId, c.clave) } } : g;
+  });
+}
+
+/** Lo que se puede corregir con «Aplicar cambios» (letra, tipo, importe y CUIT distintos). */
+export function cambiosDisponibles(errores: readonly Advertencia[]): CambioPar[] {
+  return errores
+    .filter((e) => CLASE_ERROR[e.tipo])
+    .flatMap((e) => gruposError(e).map((g) => cambioDe(e, g)))
+    .filter((c): c is CambioPar => !!c);
+}
+
+/** Cuántos comprobantes (no filas) tiene un error de carga. */
+function comprobantesConError(e: Advertencia): number {
+  return e.tipo === 'duplicado' ? gruposError(e).length : cantidadComprobantes(e);
+}
+
+// --- Conteo de los bloques -----------------------------------------------------------
+
+export interface ConteoBloques {
+  /** Comprobantes mal cargados en Xubio (pares). */
+  error: number;
+  /** Partidas de ARCA no encontradas en el Libro IVA (todas, como el Excel). */
+  soloArca: number;
+  /** Partidas del Libro IVA no encontradas en ARCA (todas, como el Excel). */
+  soloXubio: number;
+  /** De esas, las que el control ya explicó (tiques, extractos, exterior o ya en «Error»). */
+  explicadas: number;
+}
+
+/**
+ * Cuenta comprobantes, no filas. Con las hojas del Excel (ya filtradas a lo que muestra
+ * la ventana), «Subir a Xubio» y «A revisar» cuentan las filas de la hoja; sin ellas,
+ * todos los comprobantes del hallazgo.
+ */
+export function contarBloques(errores: readonly Advertencia[], sinLibro?: FaltantesDelExcel, sinArca?: FaltantesDelExcel): ConteoBloques {
+  const n: ConteoBloques = { error: 0, soloArca: 0, soloXubio: 0, explicadas: 0 };
+  const deHojas = (hojas: FaltantesDelExcel | undefined, lado: 'arca' | 'xubio') => {
+    for (const [clave, filas] of hojas ?? []) {
+      const corte = clave.lastIndexOf('|');
+      const notas = notasDe(errores, clave.slice(0, corte), clave.slice(corte + 1), lado);
+      if (lado === 'arca') n.soloArca += filas.length;
+      else n.soloXubio += filas.length;
+      n.explicadas += filas.filter((f) => notas.has(claveComprobante(f.cuit, f.comprobante))).length;
+    }
+  };
+  deHojas(sinLibro, 'arca');
+  deHojas(sinArca, 'xubio');
+  for (const e of errores) {
+    if (CLASE_ERROR[e.tipo]) {
+      n.error += comprobantesConError(e);
+      continue;
+    }
+    if (!esFaltante(e)) continue;
+    const hojas = e.tipo === 'faltante_en_xubio' ? sinLibro : sinArca;
+    if (hojas?.has(claveExcel(e.cliente, e.operacion ?? ''))) continue; // contada desde la hoja
+    if (e.tipo === 'faltante_en_xubio') n.soloArca += e.total;
+    else n.soloXubio += e.total;
+    // Lado ARCA: nada se da por explicado (qué se sube lo elige quien sube).
+    if (e.tipo === 'faltante_en_arca') n.explicadas += Math.max(0, e.total - aCorregir(e));
+  }
+  return n;
+}
+
+// --- Acciones ------------------------------------------------------------------------
+
+const BLOQUEADO = 'Bloqueado en la vista Empleado';
+
+function destinoDe(accion: string, canEdit: boolean): { href: string } | null {
   const a = accion.toLowerCase();
-  if (a.includes('clave de arca') || a.includes('cuit del cliente')) return { href: '/clientes', nuevaPestana: false };
-  if (a.includes('volver a correr')) return { href: '/control', nuevaPestana: false };
+  if (a.includes('clave de arca') || a.includes('cuit del cliente')) return { href: '/clientes' };
+  // Nuevo control no existe para el empleado: «Volver a correr» queda como etiqueta.
+  if (a.includes('volver a correr')) return canEdit ? { href: '/control' } : null;
   // «Convertir AUX» es el nombre viejo (controles guardados antes del cambio).
-  if (a.includes('faltantes a xubio') || a.includes('convertir aux')) return { href: '/convertir-aux', nuevaPestana: false };
+  if (a.includes('faltantes a xubio') || a.includes('convertir aux')) return { href: '/convertir-aux' };
   return null;
 }
 
-function botonesYEtiquetas(e: Advertencia): { botones: string; etiquetas: string } {
+function botonesYEtiquetas(e: Advertencia, canEdit: boolean): { botones: string; etiquetas: string } {
   const botones: string[] = [];
   const etiquetas: string[] = [];
   for (const accion of e.acciones) {
-    // «Corregir en Xubio» ya no se ofrece: lo que hay que cambiar está en el instructivo.
     if (accion.toLowerCase().includes('xubio')) continue;
-    const destino = destinoDe(accion);
-    if (destino) {
-      const pestana = destino.nuevaPestana ? ' target="_blank" rel="noopener"' : '';
-      botones.push(`<a class="ve-boton" href="${esc(destino.href)}"${pestana}>→ ${esc(accion)}</a>`);
+    if (accion === 'Sin acción') continue;
+    const destino = destinoDe(accion, canEdit);
+    if (destino && canEdit) {
+      botones.push(`<a class="ve-boton" href="${esc(destino.href)}">${esc(accion)} →</a>`);
+    } else if (destino) {
+      botones.push(`<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">${esc(accion)}</button>`);
     } else {
-      const nada = accion === 'Sin acción';
-      etiquetas.push(`<span class="ve-etiqueta">${nada ? '✓ ' : ''}${esc(accion)}</span>`);
+      etiquetas.push(`<span class="ve-etiqueta">${esc(accion)}</span>`);
     }
   }
   return { botones: botones.join(''), etiquetas: etiquetas.join('') };
 }
 
+/** «Subir a Xubio» de un clic en las partidas de ARCA no encontradas en el Libro IVA. */
+function botonSubir(e: Advertencia, indice: number, canEdit: boolean, conOp: boolean, tildadas = aCorregir(e)): string {
+  const texto = `⬆ Subir${conOp && e.operacion ? ` ${e.operacion}` : ''} a Xubio`;
+  const op = esc(e.operacion ?? '');
+  if (!canEdit) return `<button type="button" class="ve-boton ve-boton-chico" disabled title="${BLOQUEADO}">${esc(texto)}</button>`;
+  return `<button type="button" class="ve-boton ve-boton-chico" data-subir="${indice}" data-subir-op="${op}"${tildadas ? '' : ' disabled'} title="Lleva los comprobantes tildados a «Faltantes a Xubio», listos para cargar">${esc(texto)}</button>`;
+}
 
-function tarjeta(e: Advertencia): string {
-  const meta = [e.operacion, e.total ? `${e.total} comprobante${e.total === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
-  const mas =
-    e.total > e.comprobantes.length
-      ? `<p class="ve-mas">${e.comprobantes.length} de ${e.total}${e.hoja ? ` · el resto en la hoja «${esc(e.hoja)}»` : ''}</p>`
-      : '';
-  const letras = ordenesLetra(e);
-  const { botones, etiquetas } = botonesYEtiquetas(e);
-  const orden = ordenDe(e);
-  // Las INFO arrancan plegadas: una fila compacta con «Ver detalle ▾».
+// --- Los bloques ---------------------------------------------------------------------
+
+function cantidadTexto(n: number): string {
+  return `<span class="ve-cantidad"> (${plural(n, 'comprobante', 'comprobantes')})</span>`;
+}
+
+function plegar(n: number): string {
+  return `<span class="ve-plegar" data-abierto="Ocultar ▴" data-cerrado="${esc(`Ver detalle${n ? ` (${n})` : ''} ▾`)}" aria-hidden="true"></span>`;
+}
+
+/** «Compras» si todo el bloque es de una sola operación (si mezcla, va la columna Op.). */
+function metaOperacion(items: readonly Advertencia[]): string {
+  const ops = new Set(items.map((e) => e.operacion).filter(Boolean));
+  return ops.size === 1 ? `<span class="ve-meta">${esc([...ops][0])}</span>` : '';
+}
+
+function notaMas(mostrados: number, total: number, hoja?: string | null): string {
+  if (total <= mostrados) return '';
+  return `<p class="ve-mas">Se muestran ${mostrados} de ${total}${hoja ? ` · el resto en la hoja «${esc(hoja)}» del Excel` : ''}</p>`;
+}
+
+/**
+ * Lo que no cruzó, de un lado, tal como está en el Excel: una fila por comprobante,
+ * con su observación si el control ya la explicó. Sin la hoja (no se pudo leer),
+ * todas las del hallazgo con su observación.
+ */
+function sinCruce(
+  items: readonly Advertencia[],
+  cliente: string,
+  hojas: FaltantesDelExcel,
+  lado: 'arca' | 'xubio',
+  ejecucionId?: string,
+): { ops: ('Ventas' | 'Compras')[]; grupos: Grupo[]; porOp: Map<'Ventas' | 'Compras', { n: number; adv?: Advertencia }>; hoja: string | null } {
+  const tipo = lado === 'arca' ? 'faltante_en_xubio' : 'faltante_en_arca';
+  const bloque = lado === 'arca' ? 'subir' : 'revisar';
+  const advs = items.filter((e) => e.tipo === tipo);
+  // Una hoja vacía (esa operación no tiene partidas) no cuenta.
+  const opsHoja = [...hojas].filter(([, filas]) => filas.length).map(([k]) => k.slice(cliente.length + 1));
+  const ops = (['Ventas', 'Compras'] as const).filter((op) => opsHoja.includes(op) || advs.some((e) => e.operacion === op && e.total));
+  const grupos: Grupo[] = [];
+  const porOp = new Map<'Ventas' | 'Compras', { n: number; adv?: Advertencia }>();
+  let hoja: string | null = null;
+  for (const op of ops) {
+    const adv = advs.find((e) => e.operacion === op);
+    const ref = adv ?? faltanteDesdeExcel(cliente, op, 0);
+    const notas = notasDe(items, cliente, op, lado);
+    const origen = lado === 'arca' ? 'ARCA' : 'Xubio';
+    const fila = (datos: FilaVista['datos']): Grupo => {
+      const clave = claveComprobante(datos['CUIT'], datos['Comprobante']);
+      const nota = notas.get(clave);
+      const filas: FilaVista[] = [{ origen, op, datos, marca: nota || lado === 'arca' ? undefined : 'aviso', nota }];
+      // ARCA: el checkbox elige si va a Xubio. Libro IVA: el tilde de «revisado».
+      return lado === 'arca'
+        ? { filas, subir: { op, fila: clave, incluida: estaIncluida(ejecucionId, cliente, op, clave) } }
+        : { filas, clave: claveDe(ref, bloque, datos) };
+    };
+    const filas = hojas.get(claveExcel(cliente, op));
+    if (filas) {
+      grupos.push(...filas.map((f) => fila(datosDeExcel(f))));
+      porOp.set(op, { n: filas.length, adv });
+    } else if (adv) {
+      grupos.push(...(adv.comprobantes as FilaConError[]).map((f) => fila(normalizar(f.fila))));
+      porOp.set(op, { n: adv.total, adv });
+      hoja = adv.hoja;
+    }
+  }
+  return { ops, grupos, porOp, hoja };
+}
+
+/** «Libro IVA Compras» si es de una sola operación; si mezcla, «Libro IVA». */
+function libroDe(ops: readonly string[]): string {
+  return ops.length === 1 ? `Libro IVA ${ops[0]}` : 'Libro IVA';
+}
+
+/**
+ * «Subir a Xubio»: partidas de ARCA no encontradas en el Libro IVA, tal como están en
+ * la hoja «Faltantes en Libro IVA» del Excel (lo mismo que sube el botón). Va arriba
+ * de todo, siempre abierto.
+ */
+function bloqueSubir(
+  items: readonly Advertencia[],
+  cliente: string,
+  hojas: FaltantesDelExcel,
+  canEdit: boolean,
+  registrar: (a: Advertencia) => number,
+  conSubida: boolean,
+  marcado: Marcado,
+): string {
+  const { ops, grupos, porOp, hoja } = sinCruce(items, cliente, hojas, 'arca', marcado.ejecucionId);
+  if (!ops.length) return '';
+  let n = 0;
+  const botones: string[] = [];
+  for (const [op, { n: k, adv }] of porOp) {
+    n += k;
+    const a = adv ?? faltanteDesdeExcel(cliente, op, k);
+    const tildadas = grupos.filter((g) => g.subir?.op === op && g.subir.incluida).length;
+    if (conSubida) botones.push(botonSubir(a, registrar(a), canEdit, porOp.size > 1, tildadas));
+  }
+  const tildadas = grupos.filter((g) => g.subir?.incluida).length;
+  const meta = `<span class="ve-meta" data-cuenta>${tildadas} de ${grupos.length} para subir</span>${ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : ''}`;
   return `
-    <details class="ve-error ve-${claseDe(e)}" data-grupo="${e.gravedad}" ${e.gravedad === 'info' ? '' : 'open'}>
-      <summary>
-        <span class="ve-insignia">${etiquetaDe(e)}</span>
+    <details class="ve-error ve-subir ve-bloque ve-prioridad" data-bloque="subir" open>
+      <summary tabindex="-1">
+        <span class="ve-insignias"><span class="ve-insignia">Subir a Xubio</span></span>
         <span class="ve-cab">
-          <span class="ve-titulo">${esc(e.titulo)}</span>
-          ${orden ? `<span class="ve-que-hacer">→ ${esc(orden.orden)}</span>` : ''}
-          ${etiquetas ?`<span class="ve-etiquetas">${etiquetas}</span>` : ''}
+          <span class="ve-titulo">Partidas de ARCA no encontradas en el ${esc(libroDe(ops))}${cantidadTexto(n)}</span>
+          <span class="ve-que-hacer">→ Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).</span>
         </span>
-        <span class="ve-derecha">
-          <span class="ve-meta">${esc(meta)}</span>
-          ${botones}
-          <span class="ve-plegar" aria-hidden="true"></span>
+        <span class="ve-derecha">${meta}${botones.length ? `<span class="ve-acciones">${botones.join('')}</span>` : ''}</span>
+      </summary>
+      <div class="ve-cuerpo">${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
+    </details>`;
+}
+
+/** «A revisar»: partidas del Libro IVA no encontradas en ARCA, tal como están en el Excel. */
+function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: FaltantesDelExcel, marcado: Marcado): string {
+  const { ops, grupos, porOp, hoja } = sinCruce(items, cliente, hojas, 'xubio');
+  const n = [...porOp.values()].reduce((s, o) => s + o.n, 0);
+  if (!n) return '';
+  const explicadas = grupos.filter((g) => g.filas[0].nota).length;
+  const meta = ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : '';
+  const queHacer =
+    n > explicadas
+      ? '→ Consultalas con el cliente: pueden ser facturas manuales (CAI), tiques o errores de tipeo.'
+      : '→ Ya están explicadas: mirá la observación de cada una.';
+  return `
+    <details class="ve-error ve-aviso ve-bloque" data-bloque="revisar" open>
+      <summary>
+        <span class="ve-insignias"><span class="ve-insignia">A revisar</span></span>
+        <span class="ve-cab">
+          <span class="ve-titulo">Partidas del ${esc(libroDe(ops))} no encontradas en ARCA${cantidadTexto(n)}</span>
+          <span class="ve-que-hacer">${queHacer}</span>
         </span>
+        <span class="ve-derecha">${meta}${plegar(n)}</span>
+      </summary>
+      <div class="ve-cuerpo">${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
+    </details>`;
+}
+
+/** 2. «Error»: letra, tipo, importe, CUIT y repetidos en una sola tabla de pares. */
+function bloqueError(items: readonly Advertencia[], marcado: Marcado): string {
+  const errores = items.filter((e) => CLASE_ERROR[e.tipo]);
+  if (!errores.length) return '';
+  const grupos = errores
+    .flatMap((e) => gruposConCambio(e, marcado.ejecucionId))
+    .sort((a, b) => ORDEN_ERROR.indexOf(a.clase!) - ORDEN_ERROR.indexOf(b.clase!));
+  const n = contarBloques(errores).error;
+  const porClase = ORDEN_ERROR.map((c) => [c, contarBloques(errores.filter((e) => CLASE_ERROR[e.tipo] === c)).error] as const).filter(([, k]) => k > 0);
+  const pills =
+    porClase.length > 1
+      ? `<div class="ve-pills" role="group" aria-label="Filtrar errores">
+          <button type="button" class="ve-pill" data-pill="" aria-pressed="true">Todos (${n})</button>
+          ${porClase.map(([c, k]) => `<button type="button" class="ve-pill" data-pill="${c}" aria-pressed="false">${NOMBRE_ERROR[c]} (${k})</button>`).join('')}
+        </div>`
+      : '';
+  return `
+    <details class="ve-error ve-mal ve-bloque" data-bloque="error" open>
+      <summary>
+        <span class="ve-insignias"><span class="ve-insignia">Error</span></span>
+        <span class="ve-cab">
+          <span class="ve-titulo">Comprobantes con diferencias en Xubio${cantidadTexto(n)}</span>
+          <span class="ve-que-hacer">${
+            marcado.conAplicar && grupos.some((g) => g.aplicar)
+              ? '→ Tildá los que querés corregir con el dato de ARCA y tocá «Aplicar cambios»: se corrige el Libro IVA, se vuelve a cruzar y queda un Excel nuevo.'
+              : '→ Corregilos en Xubio con el dato de ARCA.'
+          }</span>
+        </span>
+        <span class="ve-derecha">${metaOperacion(errores)}${plegar(n)}</span>
       </summary>
       <div class="ve-cuerpo">
-        ${e.detalle ? `<p class="ve-detalle">${esc(e.detalle)}</p>` : ''}
-        ${letras ? `<div class="ve-instructivo"><p class="ve-instructivo-titulo">Qué corregir en Xubio</p><ul class="ve-ordenes">${letras}</ul></div>` : ''}
-        ${grilla(filasDe(e))}${mas}
+        ${pills}
+        ${grilla(grupos, marcado)}${notaMas(grupos.length, n, 'Libro Iva')}
+        ${
+          marcado.conAplicar && grupos.some((g) => g.aplicar)
+            ? `<div class="ve-aplicar"><span class="ve-aplicar-estado" data-aplicar-cuenta aria-live="polite"></span><button type="button" class="ve-boton-aplicar" data-aplicar-btn${marcado.canEdit ? '' : ` disabled title="${BLOQUEADO}"`}>Aplicar cambios</button></div>`
+            : ''
+        }
       </div>
     </details>`;
 }
 
+/** Lo que no es un comprobante (ARCA vacío, un paso que falló…): una tarjeta suelta, arriba. */
+function tarjeta(e: Advertencia, canEdit: boolean): string {
+  const clase = claseDe(e);
+  const n = e.total;
+  const { botones, etiquetas } = botonesYEtiquetas(e, canEdit);
+  const orden = ordenDe(e);
+  return `
+    <details class="ve-error ve-${clase}" open>
+      <summary>
+        <span class="ve-insignias"><span class="ve-insignia">${clase === 'grave' ? 'Grave' : 'Error'}</span></span>
+        <span class="ve-cab">
+          <span class="ve-titulo">${esc(e.titulo)}${n ? cantidadTexto(n) : ''}</span>
+          ${orden ? `<span class="ve-que-hacer">→ ${esc(orden.orden)}</span>` : ''}
+          ${etiquetas ? `<span class="ve-etiquetas">${etiquetas}</span>` : ''}
+        </span>
+        <span class="ve-derecha">${e.operacion && !e.titulo.includes(e.operacion) ? `<span class="ve-meta">${esc(e.operacion)}</span>` : ''}${botones}${plegar(n)}</span>
+      </summary>
+      <div class="ve-cuerpo">
+        ${e.detalle ? `<p class="ve-detalle">${esc(e.detalle)}</p>` : ''}
+        ${grilla([{ filas: filasDe(e) }])}
+      </div>
+    </details>`;
+}
+
+function esSuelta(e: Advertencia): boolean {
+  return !CLASE_ERROR[e.tipo] && !esFaltante(e) && e.gravedad !== 'info';
+}
+
 const ESTILOS = `
   <style>
-    /* Pie fijo: scrollea la lista y «Entendido» queda siempre a la vista. */
-    /* El popup es una grilla: ícono, título, lista y pie. La lista toma el alto que
-       queda (minmax(0, 1fr)) y scrollea; el pie nunca se va de la pantalla. */
-    .ve-popup { max-height: 94vh; grid-template-rows: auto auto minmax(0, 1fr) auto; }
-    .ve-popup .swal2-icon { margin: 16px auto 0; width: 3.4em; height: 3.4em; }
-    .ve-popup .swal2-icon .swal2-icon-content { font-size: 2.4em; }
-    .ve-popup .swal2-title { padding-top: 18px; font-size: 1.5em; }
-    .ve-popup .swal2-html-container { margin: 8px 0 0; padding: 0 18px; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
+    /* El popup es una grilla: título, contenido y pie. El contenido toma el alto que
+       queda (minmax(0, 1fr)) y scrollea; «Entendido» nunca se va de la pantalla. */
+    .ve-popup { max-height: 94vh; grid-template-rows: auto auto minmax(0, 1fr) auto; padding: 0 0 4px; }
+    .ve-popup .swal2-title { padding: 18px 24px 0; font-size: 1.35em; text-align: left; }
+    .ve-popup .swal2-html-container { margin: 12px 0 0; padding: 0 24px 16px; min-height: 0; max-height: none; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
     .ve-popup .swal2-actions { margin: 0; padding: 12px 0 14px; width: 100%; border-top: 1px solid #e2e8f0; background: #fff; }
     .ve { text-align: left; color: #1f2a37; font-size: 13.5px; }
-    .ve-intro { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; text-align: center; font-weight: 600; }
-    .ve-intro-grave { background: #fde2e2; color: #9b2c2c; }
-    .ve-intro-corregir { background: #fdf0d9; color: #7a4f0f; }
-    .ve-intro-ok { background: #e7f5ec; color: #14532d; }
-    .ve-resumen { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
-    .ve-chip { border-radius: 999px; padding: 3px 12px; font-family: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1.5px solid transparent; transition: box-shadow .15s, opacity .15s; }
-    .ve-chip:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
-    .ve-chip[aria-pressed="true"] { border-color: currentColor; box-shadow: 0 0 0 3px rgba(37, 99, 235, .12); }
-    .ve-resumen.filtrando .ve-chip[aria-pressed="false"] { opacity: .5; }
-    .ve-lista { padding: 10px; background: #f6f8fc; border-radius: 8px; }
-    .ve-res { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-    .ve-res li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 8px; font-size: 14px; }
-    .ve-res-ok { background: #e7f5ec; color: #14532d; }
-    .ve-res-mal { background: #fdf0d9; color: #7a4f0f; }
-    .ve-res-icono { flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; color: #fff; }
-    .ve-res-ok .ve-res-icono { background: #15803d; }
-    .ve-res-mal .ve-res-icono { background: #b7791f; }
-    .ve-res-cliente { font-weight: 700; }
-    .ve-grupo[hidden], .ve-error[hidden] { display: none; }
-    .ve-cliente { margin: 4px 0 8px; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
-    .ve-error { background: #fff; border: 1px solid #e1e7f2; border-radius: 8px; margin-bottom: 10px; overflow: hidden; }
-    .ve-error summary { cursor: pointer; display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px; list-style: none; }
+
+    /* Solo si hay errores graves: el resultado no es confiable. */
+    .ve-grave-aviso { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: #fde2e2; color: #9b2c2c; font-weight: 700; }
+
+    /* KPI strip: una tarjeta por operación, lado a lado. */
+    .ve-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; margin: 0 0 14px; padding: 0; list-style: none; }
+    .ve-kpi { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+    .ve-kpi-cab { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ve-kpi-op { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+    .ve-kpi-cliente { font-weight: 700; color: #334155; text-transform: none; letter-spacing: 0; }
+    .ve-kpi-num { font-size: 15px; color: #1f2a37; }
+    .ve-kpi-num b { font-size: 20px; font-variant-numeric: tabular-nums; }
+    .ve-kpi-estado { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .ve-kpi-ok .ve-kpi-estado { background: #e7f5ec; color: #166534; }
+    .ve-kpi-mal { border-color: #fcd9a0; background: #fffdf7; }
+    .ve-kpi-mal .ve-kpi-estado { background: #fdf0d9; color: #7a4f0f; }
+
+    /* Empresa + filtros globales (Todos | Error | Subir a Xubio | A revisar). */
+    .ve-barra { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 0 0 12px; }
+    .ve-empresa { margin: 0; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #334155; }
+    .ve-filtros, .ve-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ve-pills { margin: 0 0 10px; }
+    .ve-chip, .ve-pill { border: 1px solid #dbe3ee; background: #fff; color: #334155; font: inherit; font-size: 12.5px; font-weight: 700; padding: 4px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
+    .ve-chip:hover:not(:disabled), .ve-pill:hover { border-color: #93a8c9; }
+    .ve-chip[aria-pressed='true'], .ve-pill[aria-pressed='true'] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+    .ve-chip:disabled { opacity: .45; cursor: default; }
+    .ve-chip-num { font-weight: 600; opacity: .8; }
+
+    .ve-grupo + .ve-grupo { margin-top: 18px; }
+    .ve-grupo[hidden], .ve-bloque[hidden] { display: none; }
+    .ve-cliente { margin: 0 0 8px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+
+    /* Tarjetas / bloques */
+    .ve-error { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
+    .ve-error summary { cursor: pointer; display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; list-style: none; }
     .ve-error summary::-webkit-details-marker { display: none; }
-    .ve-insignia { flex: none; margin-top: 1px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; }
-    .ve-cab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-    .ve-titulo { font-weight: 700; font-size: 15px; }
+    .ve-insignias { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 1px; }
+    .ve-insignia { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
+    .ve-cab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+    .ve-titulo { font-weight: 700; font-size: 15px; line-height: 1.3; }
+    .ve-cantidad { font-weight: 600; color: #64748b; }
     .ve-que-hacer { font-size: 14px; font-weight: 700; color: #1d4ed8; }
     .ve-etiquetas { display: flex; flex-wrap: wrap; gap: 6px; }
-    .ve-etiqueta { display: inline-flex; align-items: center; font-size: 13px; font-weight: 600; padding: 3px 11px; border-radius: 999px; background: #eef2f7; color: #334155; border: 1px solid #dfe5ee; }
+    .ve-etiqueta { display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: #eef2f7; color: #334155; }
+    .ve-sin-accion { display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 700; padding: 2px 10px; border-radius: 999px; background: #e8eef9; color: #3b5b9a; }
     .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     .ve-meta { font-size: 12px; color: #64748b; white-space: nowrap; }
-    .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; font-size: 13.5px; font-weight: 700; padding: 7px 14px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; box-shadow: 0 1px 2px rgba(15, 23, 42, .15); white-space: nowrap; }
-    .ve-boton:hover { background: #1d4ed8; }
+    .ve-acciones { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+    .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; white-space: nowrap; }
+    .ve-boton:hover:not(:disabled) { background: #1d4ed8; }
     .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
-    .ve-plegar { font-size: 12px; font-weight: 700; color: #2563eb; white-space: nowrap; }
-    .ve-plegar::after { content: 'Ver detalle ▾'; }
-    details[open] > summary .ve-plegar::after { content: 'Ocultar ▴'; }
-    .ve-cuerpo { padding: 0 14px 12px; }
-    /* Instructivo: lo que hay que hacer, grande y separado de la grilla. */
-    .ve-instructivo { margin: 0 0 12px; padding: 10px 14px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px; }
-    .ve-instructivo-titulo { margin: 0 0 6px; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: #92400e; }
-    .ve-ordenes { margin: 0; padding: 0; list-style: none; }
-    .ve-ordenes li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 7px 0; font-size: 15px; color: #1f2a37; }
-    .ve-ordenes li + li { border-top: 1px dashed #fcd34d; }
-    .ve-orden-comp { margin-left: 6px; font-family: Consolas, 'Cascadia Mono', monospace; font-size: 14px; color: #475569; }
-    .ve-orden-cambio { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
-    .ve-ordenes .letra { min-width: 24px; padding: 2px 6px; font-size: 15px; border-radius: 4px; }
-    .ve-flecha { font-size: 17px; font-weight: 800; color: #475569; }
-    .ve-detalle { margin: 0 0 10px; color: #334155; font-size: 14.5px; line-height: 1.45; }
-    .ve-mas { margin: 6px 0 0; font-size: 12px; color: #64748b; }
-    .ve-grave .ve-insignia, .ve-chip-grave { background: #c53030; color: #fff; }
+    .ve-boton-chico { font-size: 12px; padding: 4px 10px; background: #15803d; }
+    .ve-boton-chico:hover:not(:disabled) { background: #166534; }
+    .ve-boton:disabled { background: #cbd5e1; color: #f8fafc !important; cursor: not-allowed; }
+    .ve-plegar { font-size: 12.5px; font-weight: 700; color: #2563eb; white-space: nowrap; }
+    .ve-plegar::after { content: attr(data-cerrado); }
+    details[open] > summary .ve-plegar::after { content: attr(data-abierto); }
+    .ve-cuerpo { padding: 0 16px 14px; }
+
+    /* Jerarquía: color solo en lo que pide acción; lo informativo, neutro. */
+    .ve-grave { border-left: 4px solid #c53030; }
+    .ve-mal { border-left: 4px solid #dc2626; }
+    .ve-aviso { border-left: 4px solid #d97706; }
+    .ve-subir { border-left: 4px solid #2563eb; }
+    .ve-subir .ve-insignia { background: #dbeafe; color: #1d4ed8; }
+    .ve-info { border-left: 4px solid #cbd5e1; background: #fbfcfe; }
+    .ve-info .ve-titulo { color: #334155; font-weight: 600; }
+    .ve-grave .ve-insignia { background: #c53030; color: #fff; }
     .ve-mal .ve-insignia { background: #fde2e2; color: #9b2c2c; }
-    .ve-aviso .ve-insignia, .ve-chip-corregir { background: #fdf0d9; color: #7a4f0f; }
-    .ve-info .ve-insignia, .ve-chip-info { background: #e8eef9; color: #1d4ed8; }
-    .ve-grave { border-left: 3px solid #c53030; }
-    .ve-mal { border-left: 3px solid #e05252; }
-    .ve-aviso { border-left: 3px solid #d69e2e; }
-    .ve-info { border-left: 3px solid #93a8d6; }
-    /* Sin alto máximo: un solo scroll (el de la lista), nunca dos anidados. */
-    .ve-grilla { border: 1px solid #d4d4d4; border-radius: 4px; overflow-x: auto; }
-    .ve-grilla table { border-collapse: collapse; width: 100%; font: 12px Calibri, 'Segoe UI', Arial, sans-serif; white-space: nowrap; }
-    .ve-grilla th { background: #f3f3f3; color: #444; font-weight: 600; text-align: left; padding: 4px 8px; border-bottom: 1px solid #d4d4d4; border-right: 1px solid #e4e4e4; }
+    .ve-aviso .ve-insignia { background: #fdf0d9; color: #7a4f0f; }
+    .ve-info .ve-insignia { background: #eef2f7; color: #475569; }
+    /* Partidas de ARCA que hay que cargar: arriba y siempre abierta (no se pliega). */
+    .ve-prioridad > summary { cursor: default; }
+
+    .ve-vacio { margin: 0; padding: 10px 12px; border-radius: 8px; background: #f8fafc; color: #475569; }
+    .ve-resumen-info { margin: 0 0 10px; color: #334155; font-weight: 600; }
+
+    .ve-detalle { margin: 0 0 10px; color: #475569; font-size: 14px; line-height: 1.5; }
+    .ve-mas { margin: 6px 0 0; font-size: 12px; color: #64748b; }
+
+    /* Grilla de ancho fijo: entra en la ventana, la razón social se corta con «…». */
+    .ve-grilla { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
+    .ve-grilla table { border-collapse: collapse; width: 100%; table-layout: fixed; font: 12.5px 'Segoe UI', Arial, sans-serif; }
+    .ve-grilla col.c-hecho { width: 34px; }
+    .ve-grilla th.h-hecho, .ve-grilla td.hecho { text-align: center; padding-left: 0; padding-right: 0; vertical-align: middle; }
+    .ve-grilla td.hecho input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: #15803d; }
+    .ve-grilla td.hecho input:disabled { cursor: not-allowed; }
+    /* Lo ya cargado / resuelto queda apagado (sigue a la vista). */
+    .ve-grilla tbody.ve-hecha td:not(.hecho) { opacity: .45; text-decoration: line-through; text-decoration-color: #94a3b8; }
+    /* Destildada: no va a Xubio (sigue a la vista, apagada). */
+    .ve-grilla tbody.ve-excluida td:not(.hecho) { opacity: .4; }
+    .ve-grilla th.h-hecho input { width: 15px; height: 15px; margin: 0; cursor: pointer; accent-color: #2563eb; vertical-align: middle; }
+    .ve-subir .ve-grilla td.hecho input { accent-color: #2563eb; }
+    /* «Usar dato ARCA» / «Mantener Xubio», debajo de la corrección. */
+    .ve-grilla tbody.ve-elegido td { background: #f0fdf4; }
+    .ve-mal .ve-grilla td.hecho input { accent-color: #15803d; }
+    .ve-aplicar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #fecaca; }
+    .ve-aplicar-estado { font-size: 13px; font-weight: 600; color: #475569; }
+    .ve-boton-aplicar { border: 0; border-radius: 8px; background: #15803d; color: #fff; font: inherit; font-size: 13.5px; font-weight: 700; padding: 7px 16px; cursor: pointer; }
+    .ve-boton-aplicar:hover:not(:disabled) { background: #166534; }
+    .ve-boton-aplicar:disabled { background: #94a3b8; cursor: not-allowed; }
+    .ve-grilla td.copiable { cursor: copy; }
+    .ve-grilla td.copiable:hover { text-decoration: underline dotted; }
+    .ve-grilla td.ve-copiado { background: #dcfce7 !important; }
+    .ve-grilla col.c-origen { width: 56px; }
+    .ve-grilla col.c-op { width: 68px; }
+    .ve-grilla col.c-fecha { width: 82px; }
+    .ve-grilla col.c-tipo { width: 70px; }
+    .ve-grilla col.c-comp { width: 140px; }
+    .ve-grilla col.c-cuit { width: 108px; }
+    .ve-grilla col.c-nota { width: 162px; }
+    .ve-grilla col.c-total { width: 104px; }
+    .ve-grilla col.c-corr { width: 200px; }
+    .ve-grilla col.c-corr-ancha { width: 312px; }
+    .ve-grilla th { background: #f8fafc; color: #64748b; font-size: 11.5px; font-weight: 700; text-align: left; padding: 6px 8px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ve-grilla th.num { text-align: right; }
-    .ve-grilla td { padding: 4px 8px; border-bottom: 1px solid #ececec; border-right: 1px solid #f0f0f0; }
+    .ve-grilla th.h-corr { color: #9b2c2c; border-left: 1px solid #e2e8f0; }
+    .ve-grilla td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ve-grilla tbody:last-child tr:last-child td { border-bottom: 0; }
+    /* Cada par ARCA/Xubio es un mini-bloque: línea fina punteada adentro y
+       borde marcado (con aire debajo de Xubio) entre un par y el siguiente. */
+    .ve-grilla tbody.ve-par td { border-bottom: 0; }
+    .ve-grilla tbody.ve-par tr + tr td { border-top: 1px dashed #e2e8f0; }
+    .ve-grilla tbody.ve-par tr:last-child td { padding-bottom: 9px; }
+    .ve-grilla tbody.ve-par tr:first-child td { padding-top: 7px; }
+    .ve-grilla tbody.ve-par + tbody.ve-par tr:first-child td { border-top: 2px solid #cbd5e1; }
+    .ve-grilla tbody[hidden] { display: none; }
     .ve-grilla td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ve-grilla td.cuit { font-family: Consolas, 'Cascadia Mono', monospace; font-variant-numeric: tabular-nums; }
-    .ve-grilla td.origen { font-weight: 700; font-size: 11px; color: #fff; text-align: center; width: 1%; }
-    .ve-grilla td.origen-arca { background: #1b2f57; }
-    .ve-grilla td.origen-xubio { background: #217346; }
-    .ve-grilla td.comp { font-family: Consolas, 'Cascadia Mono', monospace; }
+    .ve-grilla td.cuit, .ve-grilla td.comp { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .ve-grilla td.origen, .ve-grilla td.op { font-size: 11px; font-weight: 700; }
+    .ve-grilla td.op { color: #64748b; }
+    .ve-grilla td.origen-arca { color: #1b2f57; }
+    .ve-grilla td.origen-xubio { color: #217346; }
     .ve-grilla td.marca.error { background: #fdeaea; box-shadow: inset 0 0 0 1.5px #c53030; }
     .ve-grilla td.marca.ok { background: #e7f5ec; box-shadow: inset 0 0 0 1.5px #15803d; }
     .ve-grilla td.marca.aviso { background: #fff7e6; }
-    .ve-nota { margin-left: 6px; font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: #e8eef9; color: #1d4ed8; }
+    /* La corrección en una sola línea (el importe con su diferencia incluido). */
+    .ve-grilla td.corr { white-space: nowrap; text-overflow: clip; vertical-align: middle; background: #fffafa; border-left: 1px solid #e2e8f0; font-size: 12.5px; font-weight: 600; line-height: 1.9; }
+    .ve-corr-et { color: #475569; }
+    .ve-valor { display: inline-block; padding: 0 6px; border-radius: 4px; color: #fff; font-weight: 700; font-size: 12px; line-height: 1.6; white-space: nowrap; }
+    .ve-valor-error { background: #c53030; }
+    .ve-valor-ok { background: #15803d; }
+    .ve-flecha { font-weight: 800; color: #475569; }
+    .ve-diferencia { color: #64748b; font-weight: 600; white-space: nowrap; }
+    .ve-nota { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+    .ve-nota-neutro { background: #eef2f7; color: #475569; }
+    .ve-nota-azul { background: #e8eef9; color: #1d4ed8; }
     .letra { display: inline-block; min-width: 16px; text-align: center; border-radius: 3px; color: #fff; font-weight: 700; padding: 0 3px; }
     .letra-error { background: #c53030; }
     .letra-ok { background: #15803d; }
-    @media (max-width: 640px) {
+
+    /* Ventanas medianas: en la tabla de errores (con «Corrección en Xubio») la CUIT
+       cede su lugar a la razón social (está en el Excel). */
+    @media (max-width: 1100px) {
+      .ve-grilla table.con-corr col.c-cuit { width: 0; }
+      .ve-grilla table.con-corr td.cuit, .ve-grilla table.con-corr th.h-cuit { padding: 0; }
+    }
+
+    @media (max-width: 720px) {
+      .ve-popup .swal2-html-container { padding: 0 12px 12px; }
       .ve-error summary { flex-wrap: wrap; }
+      .ve-insignias { flex-direction: row; }
+      .ve-cab { flex-basis: 100%; }
       .ve-derecha { width: 100%; justify-content: flex-start; }
+      /* En pantallas angostas la CUIT cede su lugar (está en el Excel de la auditoría). */
+      .ve-grilla col.c-cuit { width: 0; }
+      .ve-grilla td.cuit, .ve-grilla th.h-cuit { padding: 0; }
+      /* En el celular no entra en una línea: ahí sí se parte. */
+      .ve-grilla col.c-corr, .ve-grilla col.c-corr-ancha { width: 150px; }
+      .ve-grilla td.corr { white-space: normal; }
     }
   </style>`;
 
@@ -349,94 +1167,282 @@ export function contarErrores(errores: readonly Advertencia[]): Record<Advertenc
   return n;
 }
 
-/** Las píldoras filtran las tarjetas: una activa muestra solo esas; otro click, todas. */
-function activarFiltros(raiz: HTMLElement): void {
-  const resumen = raiz.querySelector<HTMLElement>('.ve-resumen');
-  const chips = [...raiz.querySelectorAll<HTMLButtonElement>('.ve-chip[data-filtro]')];
-  let actual: string | null = null;
-
-  const aplicar = () => {
-    resumen?.classList.toggle('filtrando', !!actual);
-    for (const c of chips) c.setAttribute('aria-pressed', String(c.dataset['filtro'] === actual));
-    for (const grupo of raiz.querySelectorAll<HTMLElement>('.ve-grupo')) {
-      let visibles = 0;
-      for (const t of grupo.querySelectorAll<HTMLElement>('.ve-error')) {
-        const ver = !actual || t.dataset['grupo'] === actual;
-        t.hidden = !ver;
-        if (ver) visibles++;
-      }
-      grupo.hidden = visibles === 0;
-    }
-  };
-
-  for (const c of chips) {
-    c.addEventListener('click', () => {
-      actual = actual === c.dataset['filtro'] ? null : (c.dataset['filtro'] ?? null);
-      aplicar();
-    });
-  }
-  aplicar();
+/**
+ * Lo que hay que gestionar en una operación: Error + Subir a Xubio + A revisar, en
+ * comprobantes, sin las que el control ya explicó (tiques, extractos, exterior, o ya en «Error»).
+ */
+export function pendientesDe(errores: readonly Advertencia[], cliente: string, operacion: string, hojas?: HojasExcel): number {
+  const clave = claveExcel(cliente, operacion);
+  const solo = (h: FaltantesDelExcel | undefined) => (h?.get(clave) ? new Map([[clave, h.get(clave)!]]) : undefined);
+  const n = contarBloques(
+    errores.filter((e) => e.cliente === cliente && e.operacion === operacion),
+    solo(hojas?.sinLibro),
+    solo(hojas?.sinArca),
+  );
+  return n.error + n.soloArca + n.soloXubio - n.explicadas;
 }
 
-/** «Ventas · sin errores · 32 de 32 coinciden» por cliente, arriba de las tarjetas. */
-function bloqueResumen(resumenes: readonly ResumenOperacion[], varios: boolean): string {
+/** La tira de KPIs: una tarjeta por operación con cuántos coinciden y cuántos hay que gestionar. */
+function bloqueResumen(resumenes: readonly ResumenOperacion[], varios: boolean, errores: readonly Advertencia[], hojas?: HojasExcel): string {
   if (!resumenes.length) return '';
-  const filas = resumenes
+  const tarjetas = resumenes
     .map((r) => {
-      const ok = r.a_corregir === 0;
-      const estado = ok ? 'sin errores' : `${r.a_corregir} hallazgo${r.a_corregir === 1 ? '' : 's'} para corregir`;
-      const quien = varios ? `<span class="ve-res-cliente">${esc(r.cliente)}</span> · ` : '';
-      return `<li class="${ok ? 've-res-ok' : 've-res-mal'}"><span class="ve-res-icono" aria-hidden="true">${ok ? '✓' : '!'}</span>
-        <span>${quien}<b>${esc(r.operacion)}</b>: ${estado} · ${r.coinciden} de ${r.arca} comprobantes de ARCA coinciden con Xubio</span></li>`;
+      const pendientes = pendientesDe(errores, r.cliente, r.operacion, hojas);
+      const ok = pendientes === 0;
+      const estado = ok ? '✓ Sin pendientes' : `${pendientes} hallazgo${pendientes === 1 ? '' : 's'} a gestionar`;
+      const quien = varios ? `<span class="ve-kpi-cliente">${esc(r.cliente)} · </span>` : '';
+      return `<li class="ve-kpi ${ok ? 've-kpi-ok' : 've-kpi-mal'}">
+        <span class="ve-kpi-cab"><span class="ve-kpi-op">${quien}${esc(r.operacion)}</span><span class="ve-kpi-estado">${estado}</span></span>
+        <span class="ve-kpi-num"><b>${r.coinciden}</b> de ${r.arca} coinciden</span>
+      </li>`;
     })
     .join('');
-  return `<ul class="ve-res" aria-label="Resumen por operación">${filas}</ul>`;
+  return `<ul class="ve-kpis" aria-label="Resumen por operación">${tarjetas}</ul>`;
 }
 
-/** Abre la ventana de hallazgos. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla). */
-export function mostrarVentanaDeErrores(errores: readonly Advertencia[], resumenes: readonly ResumenOperacion[] = []) {
-  const n = contarErrores(errores);
-  const aCorregir = n.grave + n.corregir;
-  const total = errores.length;
-  const ordenados = [...errores].sort((a, b) => ORDEN_CLASE[claseDe(a)] - ORDEN_CLASE[claseDe(b)]);
+/** Filtros globales, por gravedad. Los que no tienen nada quedan deshabilitados. */
+function filtrosGlobales(n: ConteoBloques): string {
+  const chips: [string, string, number][] = [
+    ['', 'Todos', n.error + n.soloArca + n.soloXubio],
+    ['error', 'Error', n.error],
+    ['subir', 'Subir a Xubio', n.soloArca],
+    ['revisar', 'A revisar', n.soloXubio],
+  ];
+  return `<div class="ve-filtros" role="group" aria-label="Filtrar hallazgos">${chips
+    .map(
+      ([id, nombre, k]) =>
+        `<button type="button" class="ve-chip" data-ver="${id}" aria-pressed="${id === ''}"${id && !k ? ' disabled' : ''}>${nombre} <span class="ve-chip-num">(${k})</span></button>`,
+    )
+    .join('')}</div>`;
+}
+
+/** Botones que eligen uno de varios (pills, pestañas, filtros): marca el elegido y avisa. */
+function grupoDeBotones(botones: NodeListOf<HTMLButtonElement>, atributo: 'aria-pressed' | 'aria-selected', alElegir: (b: HTMLButtonElement) => void): void {
+  for (const b of botones) {
+    b.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      for (const otro of botones) otro.setAttribute(atributo, String(otro === b));
+      alElegir(b);
+    });
+  }
+}
+
+/**
+ * Abre la ventana de hallazgos. Devuelve la promesa de SweetAlert2 (se resuelve al cerrarla).
+ * `canEdit` false (vista Empleado): los botones de resolución quedan deshabilitados y
+ * «Volver a correr» pasa a ser una etiqueta (no hay Nuevo control).
+ */
+export function mostrarVentanaDeErrores(
+  errores: readonly Advertencia[],
+  resumenes: readonly ResumenOperacion[] = [],
+  canEdit = true,
+  /** Si viene, las partidas de ARCA no encontradas llevan «Subir a Xubio» (cierra la ventana y sube). */
+  alSubirAXubio?: (a: Advertencia) => void,
+  /** Para recordar (en este navegador) qué filas se marcaron como cargadas / resueltas. */
+  ejecucionId?: string,
+  /** Lo que no cruzó, tal como está en los AUX («Subir a Xubio» y «A revisar»). */
+  hojas?: HojasExcel,
+  /** «Aplicar cambios»: cuántos hay tildados en todo el control y qué hacer al tocarlo (cierra la ventana). */
+  aplicar?: { contar: () => number; alAplicar: () => void },
+) {
+  const hechas = leerHechas(ejecucionId);
+  const graves = contarErrores(errores).grave;
+  const conteo = contarBloques(errores, hojas?.sinLibro, hojas?.sinArca);
+  const ordenados = ordenarHallazgos(errores);
   const porCliente = new Map<string, Advertencia[]>();
   for (const e of ordenados) porCliente.set(e.cliente, [...(porCliente.get(e.cliente) ?? []), e]);
+  // Un cliente sin hallazgos pero con partidas en el Excel también aparece.
+  for (const [clave, filas] of [...(hojas?.sinLibro ?? []), ...(hojas?.sinArca ?? [])]) {
+    const cliente = clave.slice(0, clave.lastIndexOf('|'));
+    if (filas.length && !porCliente.has(cliente)) porCliente.set(cliente, []);
+  }
+  const unSoloCliente = porCliente.size === 1;
+  // «Subir a Xubio» puede venir de un hallazgo armado desde la hoja: se guardan acá.
+  const subibles: Advertencia[] = [];
+  const registrar = (a: Advertencia) => subibles.push(a) - 1;
 
-  const sub = n.grave
-    ? 'El control terminó con errores graves: el resultado no es confiable.'
-    : aCorregir
-      ? 'El control se hizo correctamente. Hay datos para corregir.'
-      : 'El control se hizo correctamente.';
-  // Una píldora por gravedad, con las mismas palabras que el aviso de la pantalla.
-  const chip = (g: Advertencia['gravedad'], texto: string) =>
-    n[g] ? `<button type="button" class="ve-chip ve-chip-${g}" data-filtro="${g}" aria-pressed="false" title="Mostrar solo estos">${texto}</button>` : '';
-  const chips = [
-    chip('grave', `${n.grave} grave${n.grave === 1 ? '' : 's'}`),
-    chip('corregir', `${n.corregir} a corregir`),
-    chip('info', `${n.info} informativo${n.info === 1 ? '' : 's'}`),
-  ].join('');
-  const tono = n.grave ? 'grave' : aCorregir ? 'corregir' : 'ok';
+  const hayAlgo = errores.length > 0 || porCliente.size > 0;
+  const filtros = hayAlgo ? filtrosGlobales(conteo) : '';
+  const barra = unSoloCliente
+    ? `<div class="ve-barra"><p class="ve-empresa">${esc([...porCliente.keys()][0])}</p>${filtros}</div>`
+    : filtros
+      ? `<div class="ve-barra">${filtros}</div>`
+      : '';
   const lista = [...porCliente.entries()]
-    .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map((e) => tarjeta(e)).join('')}</section>`)
+    .map(
+      ([cliente, items]) => {
+        const marcado: Marcado = { canEdit, hechas, ejecucionId, cliente, conAplicar: !!aplicar };
+        return `<section class="ve-grupo" data-cliente="${esc(cliente)}">
+        ${unSoloCliente ? '' : `<p class="ve-cliente">${esc(cliente)}</p>`}
+        ${items.filter(esSuelta).map((e) => tarjeta(e, canEdit)).join('')}
+        ${bloqueSubir(items, cliente, excelDelCliente(hojas?.sinLibro, cliente), canEdit, registrar, !!alSubirAXubio, marcado)}
+        ${bloqueError(items, marcado)}
+        ${bloqueRevisar(items, cliente, excelDelCliente(hojas?.sinArca, cliente), marcado)}
+      </section>`;
+      },
+    )
     .join('');
 
-  // Sin ícono grande: el tono lo da la franja de arriba y la ventana gana alto para la lista.
   return Swal.fire({
-    title: total ? `Hallazgos del control (${total})` : 'Control sin hallazgos',
+    title: hayAlgo ? 'Hallazgos del control' : 'Control sin hallazgos',
     html: `${ESTILOS}
       <div class="ve">
-        <p class="ve-intro ve-intro-${tono}">${sub}</p>
-        ${bloqueResumen(resumenes, new Set(resumenes.map((r) => r.cliente)).size > 1)}
-        ${chips ? `<div class="ve-resumen" role="group" aria-label="Filtrar hallazgos">${chips}</div>` : ''}
-        <div class="ve-lista">${lista}</div>
+        ${graves ? '<p class="ve-grave-aviso">El control terminó con errores graves: el resultado no es confiable.</p>' : ''}
+        ${bloqueResumen(resumenes, new Set(resumenes.map((r) => r.cliente)).size > 1, errores, hojas)}
+        ${barra}
+        ${lista}
       </div>`,
-    width: 'min(980px, 96vw)',
+    width: 'min(1080px, 96vw)',
     customClass: { popup: 've-popup' },
     confirmButtonText: 'Entendido',
     confirmButtonColor: '#2563eb',
     focusConfirm: true,
     didOpen: (popup) => {
-      activarFiltros(popup);
+      // «Subir a Xubio»: cierra la ventana y sube.
+      for (const b of popup.querySelectorAll<HTMLButtonElement>('button[data-subir]')) {
+        b.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const a = subibles[Number(b.dataset['subir'])];
+          Swal.close();
+          if (a && alSubirAXubio) alSubirAXubio(a);
+        });
+      }
+      // Filtros globales: muestran un solo bloque (lo grave queda siempre a la vista).
+      grupoDeBotones(popup.querySelectorAll<HTMLButtonElement>('button[data-ver]'), 'aria-pressed', (b) => {
+        const ver = b.dataset['ver'];
+        for (const bloque of popup.querySelectorAll<HTMLElement>('.ve-bloque')) bloque.hidden = !!ver && bloque.dataset['bloque'] !== ver;
+        for (const grupo of popup.querySelectorAll<HTMLElement>('.ve-grupo')) {
+          grupo.hidden = !!ver && !grupo.querySelector(`.ve-bloque[data-bloque="${ver}"], details:not(.ve-bloque)`);
+        }
+      });
+      // Pills del bloque «Error»: Letra / Tipo / Importe…
+      for (const pills of popup.querySelectorAll<HTMLElement>('.ve-pills')) {
+        const bloque = pills.closest('.ve-bloque');
+        grupoDeBotones(pills.querySelectorAll<HTMLButtonElement>('button[data-pill]'), 'aria-pressed', (b) => {
+          const clase = b.dataset['pill'];
+          for (const par of bloque?.querySelectorAll<HTMLElement>('tbody.ve-par') ?? []) par.hidden = !!clase && par.dataset['clase'] !== clase;
+        });
+      }
+      // Tilde «cargado / resuelto» (solo Acceso Total; el empleado lo ve deshabilitado).
+      const marcadas = new Set(hechas);
+      for (const caja of popup.querySelectorAll<HTMLInputElement>('input[data-hecho]')) {
+        caja.addEventListener('change', () => {
+          if (!canEdit) return;
+          const clave = caja.dataset['hecho']!;
+          if (caja.checked) marcadas.add(clave);
+          else marcadas.delete(clave);
+          caja.closest('tbody')?.classList.toggle('ve-hecha', caja.checked);
+          guardarHechas(ejecucionId, marcadas);
+        });
+      }
+      // Qué se sube: checkbox por fila en «Subir a Xubio» y «Usar dato ARCA / Mantener
+      // Xubio» en «Error» (si el par está en «Subir a Xubio», son la misma elección).
+      const grupoDe = (el: Element) => el.closest<HTMLElement>('.ve-grupo');
+      const sincronizar = (grupo: HTMLElement | null) => {
+        if (!grupo) return;
+        const cajas = [...grupo.querySelectorAll<HTMLInputElement>('input[data-incluir]')];
+        for (const c of cajas) c.closest('tbody')?.classList.toggle('ve-excluida', !c.checked);
+        const tildadas = cajas.filter((c) => c.checked).length;
+        const cuenta = grupo.querySelector('[data-cuenta]');
+        if (cuenta) cuenta.textContent = `${tildadas} de ${cajas.length} para subir`;
+        const todas = grupo.querySelector<HTMLInputElement>('input[data-incluir-todas]');
+        if (todas) {
+          todas.checked = tildadas === cajas.length;
+          todas.indeterminate = tildadas > 0 && tildadas < cajas.length;
+        }
+        if (canEdit) {
+          for (const b of grupo.querySelectorAll<HTMLButtonElement>('button[data-subir-op]')) {
+            b.disabled = !cajas.some((c) => c.checked && c.dataset['op'] === b.dataset['subirOp']);
+          }
+        }
+      };
+      const tildar = (caja: HTMLInputElement) => {
+        const cliente = grupoDe(caja)?.dataset['cliente'] ?? '';
+        incluir(ejecucionId, cliente, caja.dataset['op'] ?? '', caja.dataset['fila'] ?? '', caja.checked);
+      };
+      for (const caja of popup.querySelectorAll<HTMLInputElement>('input[data-incluir]')) {
+        caja.addEventListener('change', () => {
+          if (!canEdit) return;
+          tildar(caja);
+          sincronizar(grupoDe(caja));
+        });
+      }
+      for (const todas of popup.querySelectorAll<HTMLInputElement>('input[data-incluir-todas]')) {
+        todas.addEventListener('change', () => {
+          if (!canEdit) return;
+          for (const caja of todas.closest('table')?.querySelectorAll<HTMLInputElement>('input[data-incluir]') ?? []) {
+            caja.checked = todas.checked;
+            tildar(caja);
+          }
+          sincronizar(grupoDe(todas));
+        });
+      }
+      // «Aplicar cambios»: tildar solo elige; el cambio lo hace el servidor al tocar el botón.
+      const contarAplicar = () => {
+        const n = aplicar?.contar() ?? 0;
+        for (const cuenta of popup.querySelectorAll('[data-aplicar-cuenta]')) {
+          cuenta.textContent = n ? `${n} ${n === 1 ? 'cambio seleccionado listo' : 'cambios seleccionados listos'} para aplicar` : 'Tildá los pares que querés corregir con el dato de ARCA.';
+        }
+        for (const b of popup.querySelectorAll<HTMLButtonElement>('button[data-aplicar-btn]')) {
+          b.textContent = n ? `Aplicar cambios (${n})` : 'Aplicar cambios';
+          if (canEdit) b.disabled = !n;
+        }
+        for (const tabla of popup.querySelectorAll('table')) {
+          const cajas = [...tabla.querySelectorAll<HTMLInputElement>('input[data-aplicar]')];
+          const todos = tabla.querySelector<HTMLInputElement>('input[data-aplicar-todos]');
+          if (!todos || !cajas.length) continue;
+          const k = cajas.filter((c) => c.checked).length;
+          todos.checked = k === cajas.length;
+          todos.indeterminate = k > 0 && k < cajas.length;
+        }
+      };
+      const elegir = (cajas: HTMLInputElement[], si: boolean) => {
+        elegirParaAplicar(ejecucionId, cajas.map((c) => c.dataset['aplicar'] ?? ''), si);
+        for (const c of cajas) {
+          c.checked = si;
+          c.closest('tbody')?.classList.toggle('ve-elegido', si);
+        }
+        contarAplicar();
+      };
+      for (const caja of popup.querySelectorAll<HTMLInputElement>('input[data-aplicar]')) {
+        caja.addEventListener('change', () => {
+          if (canEdit) elegir([caja], caja.checked);
+        });
+      }
+      for (const todos of popup.querySelectorAll<HTMLInputElement>('input[data-aplicar-todos]')) {
+        todos.addEventListener('change', () => {
+          if (canEdit) elegir([...(todos.closest('table')?.querySelectorAll<HTMLInputElement>('input[data-aplicar]') ?? [])], todos.checked);
+        });
+      }
+      for (const b of popup.querySelectorAll<HTMLButtonElement>('button[data-aplicar-btn]')) {
+        b.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          if (!canEdit || !aplicar?.contar()) return;
+          Swal.close();
+          aplicar.alAplicar();
+        });
+      }
+      contarAplicar();
+      for (const grupo of popup.querySelectorAll<HTMLElement>('.ve-grupo')) sincronizar(grupo);
+      // Copia rápida: clic en el comprobante o la CUIT.
+      popup.addEventListener('click', (ev) => {
+        const celda = (ev.target as HTMLElement).closest<HTMLElement>('[data-copiar]');
+        if (!celda) return;
+        void navigator.clipboard
+          ?.writeText(celda.dataset['copiar'] ?? '')
+          .then(() => {
+            celda.classList.add('ve-copiado');
+            setTimeout(() => celda.classList.remove('ve-copiado'), 900);
+          })
+          .catch(() => undefined);
+      });
+      // La prioritaria no se pliega (los botones de adentro siguen andando).
+      for (const d of popup.querySelectorAll<HTMLDetailsElement>('details.ve-prioridad')) {
+        d.querySelector('summary')?.addEventListener('click', (ev) => {
+          if (!(ev.target as HTMLElement).closest('a, button')) ev.preventDefault();
+        });
+      }
     },
     // Sin animación: si la pestaña está atrás (mirando el Chrome del bot), el
     // navegador congela las animaciones y la ventana quedaba transparente.

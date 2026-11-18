@@ -97,6 +97,11 @@ export class EjecucionStore {
     }
   }
 
+  /** El control ya re-chequeado («Aplicar cambios»): reemplaza al que se ve. */
+  reemplazar(ej: DetalleEjecucion): void {
+    if (this.siguiendo === ej.id) this.mostrar(ej, true);
+  }
+
   private mostrar(ej: DetalleEjecucion, desdeCero: boolean): void {
     this.siguiendo = ej.id;
     this.actual.set(ej);

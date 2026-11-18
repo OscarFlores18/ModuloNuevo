@@ -255,3 +255,58 @@ def test_zip_de_operacion_un_solo_csv_en_la_raiz():
     datos = zip_de_operacion(pd.DataFrame([EMITIDO]), "Compras", "Acme", "03-25")
     with zipfile.ZipFile(io.BytesIO(datos)) as z:
         assert z.namelist() == [nombre_csv("Compras", "Acme", "03-25")]
+
+
+def test_filas_para_mostrar_tal_como_estan_en_el_excel():
+    """La pantalla muestra la hoja «Faltantes en Libro IVA» completa, con el comprobante armado."""
+    import io
+
+    from backend.app.auditor.csv_arca import filas_para_mostrar
+
+    filas = filas_para_mostrar(io.BytesIO(_aux("Compras", filas=3)))
+    assert list(filas) == ["Compras"] and len(filas["Compras"]) == 3
+    assert filas["Compras"][0] == {
+        "fecha": "03/03/2025", "tipo": "1 - Factura A", "comprobante": "A-00001-00000010",
+        "cuit": "30500000000", "razon": "PROVEEDOR", "total": 121.0,
+    }
+
+
+def test_libro_sin_arca_lee_el_bloque_al_pie_y_suma_el_total():
+    """«Partidas del Libro IVA … no encontradas en ARCA»: al pie de la primera hoja, con el total en =SUM(…)."""
+    import io
+
+    from openpyxl import Workbook
+
+    from backend.app.auditor.csv_arca import libro_sin_arca
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["Clave_Conciliacion", "Fecha", "Tipo", "Nro. Doc. Emisor", "Denominación Emisor", "Neto", "IVA", "Imp. Total"])
+    ws.append(["A-00001-00000001", "01/04/2026", "1 - Factura A", 30500000000, "CRUZADO", 100, 21, 121])
+    ws.append([])
+    ws.append(["Partidas del Libro IVA Compras no encontradas en ARCA"])
+    ws.append(["=A1", "=B1", "=C1", "=D1", "=E1", "=F1", "=G1", "=H1"])
+    ws.append(["A-00411-00306778", "01/04/2026", "Tique", "30-71580481-2", "CORREDORES VIALES", 1239.68, 260.32, "=SUM(F6:G6)"])
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    assert libro_sin_arca(buffer, "Compras") == [{
+        "fecha": "01/04/2026", "tipo": "Tique", "comprobante": "A-00411-00306778",
+        "cuit": "30715804812", "razon": "CORREDORES VIALES", "total": 1500.0,
+    }]
+
+
+def test_convertir_aux_sin_las_filas_destildadas():
+    """Lo que se destildó al revisar el control («CUIT|comprobante») no va al .zip."""
+    from backend.app.auditor.csv_arca import convertir_auxiliares
+
+    nombre = "AUX - Control de facturas Compras con AFIP - 03-25 - Acme - 1er control.xlsx"
+    todo = convertir_auxiliares([(nombre, _aux("Compras", filas=3))])
+    assert todo[0]["partidas"] == {"Compras": 3}
+    menos = convertir_auxiliares([(nombre, _aux("Compras", filas=3))], {nombre: {"30500000000|A-00001-00000011"}})
+    assert menos[0]["partidas"] == {"Compras": 2}
+    nada = convertir_auxiliares(
+        [(nombre, _aux("Compras", filas=1))], {nombre: {"30500000000|A-00001-00000010"}},
+    )
+    assert nada[0]["zips"] == {} and nada[0]["avisos"]

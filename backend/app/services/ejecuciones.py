@@ -33,6 +33,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..auditor import procesar_cruce
+from ..auditor.corregir_libro import LibroIlegible, corregir_libro
 from ..bots.arca import FiltroNoDisponible
 from ..bots.sesiones import GestorSesiones
 from ..core import config
@@ -108,6 +109,9 @@ class ClienteEnCurso:
     archivos: list[dict] = field(default_factory=list)
     # Link de Xubio ya parado en la empresa del cliente (Relogin?tenant=...).
     xubio_url: str | None = None
+    # «Aplicar cambios»: por operación, el Libro IVA corregido, el AUX re-chequeado
+    # y los cambios aplicados hasta ahora.
+    corregidos: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -207,6 +211,7 @@ class Ejecucion:
                     "carpeta": c.carpeta,
                     "archivos": c.archivos,
                     "xubio_url": c.xubio_url,
+                    "corregidos": c.corregidos,
                     "pasos": [p.__dict__ for p in c.pasos],
                 }
                 for c in self.clientes
@@ -235,6 +240,7 @@ class Ejecucion:
                     "carpeta": c.carpeta,
                     "archivos": c.archivos,
                     "xubio_url": c.xubio_url,
+                    "corregidos": c.corregidos,
                     "pasos": [p.__dict__ for p in c.pasos],
                 }
                 for c in self.clientes
@@ -256,6 +262,7 @@ class Ejecucion:
                     carpeta=c.get("carpeta") or "",
                     archivos=list(c.get("archivos") or []),
                     xubio_url=c.get("xubio_url"),
+                    corregidos=dict(c.get("corregidos") or {}),
                 )
                 for c in datos.get("clientes") or []
             ],
@@ -1054,3 +1061,139 @@ def exportar_archivos(
     carpeta_final = carpeta / plan[0][1].parent if plan else carpeta / SUBCARPETA_CONTROL
     return {"carpeta": str(carpeta_final), "elegida": destino is not None, "copiados": copiados, "fallas": fallas}
 
+
+
+# --- Aplicar cambios: corregir el Libro IVA y volver a cruzar -------------------
+
+SUFIJO_CORREGIDO = " - corregido"
+_lock_aplicar = threading.Lock()
+
+
+def _con_sufijo(nombre: str) -> str:
+    base = Path(nombre)
+    return f"{base.stem}{SUFIJO_CORREGIDO}{base.suffix}"
+
+
+def es_corregido(nombre: str) -> bool:
+    return Path(nombre).stem.endswith(SUFIJO_CORREGIDO)
+
+
+def _archivo_de(cli: ClienteEnCurso, patron: str) -> str | None:
+    """El archivo original (no el corregido) del cliente que empieza con ``patron``."""
+    for a in cli.archivos:
+        if a["nombre"].lower().startswith(patron.lower()) and not es_corregido(a["nombre"]):
+            return a["nombre"]
+    return None
+
+
+def aplicar_cambios(ej: Ejecucion, cambios: list[dict]) -> dict:
+    """Corrige en una copia del Libro IVA las celdas elegidas (letra, tipo, importe o
+    CUIT con el dato de ARCA) y vuelve a correr el cruce con esa copia.
+
+    Por cliente y operación queda «IVA … - corregido.xlsx» (cada vez se corrige sobre el
+    último corregido) y «AUX … - corregido.xlsx», que pasa a ser el activo para bajar y
+    para «Faltantes a Xubio». Los hallazgos y el resumen de esa operación se reemplazan
+    por los del cruce nuevo.
+    """
+    if ej.estado not in ESTADOS_FINALES:
+        raise ErrorEjecucion("El control todavía está corriendo.", 409)
+    if not cambios:
+        raise ErrorEjecucion("No hay cambios para aplicar.", 422)
+    por_operacion: dict[tuple[str, str], list[dict]] = {}
+    for c in cambios:
+        por_operacion.setdefault((c["cliente"], c["operacion"]), []).append(c)
+
+    if not _lock_aplicar.acquire(blocking=False):
+        raise ErrorEjecucion("Ya se están aplicando cambios. Esperá a que termine.", 409)
+    try:
+        resultados = []
+        for (nombre, operacion), lista in por_operacion.items():
+            indice = next((i for i, c in enumerate(ej.clientes) if c.nombre == nombre), None)
+            if indice is None:
+                raise ErrorEjecucion(f"«{nombre}» no es un cliente de este control.", 404)
+            resultados.append(_aplicar_en(ej, indice, operacion, lista))
+        _guardar(ej)
+        return {"resultados": resultados, "ejecucion": ej.detalle()}
+    finally:
+        _lock_aplicar.release()
+
+
+def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict]) -> dict:
+    cli = ej.clientes[indice]
+    if not cli.carpeta or not Path(cli.carpeta).is_dir():
+        raise ErrorEjecucion(f"No está la carpeta del control de {cli.nombre}.", 404)
+    carpeta = Path(cli.carpeta)
+    libro = _archivo_de(cli, f"IVA {operacion.upper()} - ")
+    tipo_arca = "Emitidos" if operacion == "Ventas" else "Recibidos"
+    arca = _archivo_de(cli, f"Mis comprobantes - {tipo_arca} - ")
+    aux = _archivo_de(cli, f"AUX - Control de facturas {operacion} ")
+    if not libro or not arca or not aux:
+        faltan = [n for n, v in (("Libro IVA", libro), ("ARCA", arca), ("AUX", aux)) if not v]
+        raise ErrorEjecucion(
+            f"{cli.nombre} · {operacion}: falta {', '.join(faltan)} en la carpeta del control.", 422
+        )
+    libro_corr = carpeta / _con_sufijo(libro)
+    aux_corr = carpeta / _con_sufijo(aux)
+    # Se corrige sobre lo ya corregido: los cambios anteriores no se pierden.
+    origen = libro_corr if libro_corr.is_file() else carpeta / libro
+    try:
+        hecho = corregir_libro(origen, libro_corr, [{k: v for k, v in c.items() if k not in ("cliente", "operacion")} for c in cambios])
+    except (LibroIlegible, OSError) as exc:
+        raise ErrorEjecucion(f"No se pudo corregir el Libro IVA de {cli.nombre}: {exc}", 422) from exc
+
+    errores: list[dict] = []
+    resumenes: list[dict] = []
+    log: list[str] = []
+    try:
+        procesar_cruce(
+            cli.nombre,
+            operacion,
+            ej.parametros["desde"],
+            ej.parametros["hasta"],
+            str(carpeta),
+            ruta_arca_manual=str(carpeta / arca),
+            ruta_xubio_manual=str(libro_corr),
+            ruta_salida_manual=str(aux_corr),
+            log=log.append,
+            avisar_errores=errores.extend,
+            avisar_resumen=resumenes.append,
+        )
+    except Exception as exc:
+        raise ErrorEjecucion(f"No se pudo volver a cruzar {cli.nombre} · {operacion}: {exc}", 500) from exc
+
+    # Los hallazgos de esa operación pasan a ser los del cruce nuevo (los pasos que
+    # fallaron, sin operación, quedan).
+    ej.advertencias = [
+        a for a in ej.advertencias
+        if not (a.get("cliente") == cli.nombre and a.get("operacion") == operacion and a.get("tipo") != "paso_error")
+    ] + [{**e, "cliente": cli.nombre} for e in errores]
+    ej.resumenes = [
+        r for r in ej.resumenes if not (r.get("cliente") == cli.nombre and r.get("operacion") == operacion)
+    ] + [{**r, "cliente": cli.nombre} for r in resumenes]
+
+    nombres = {a["nombre"] for a in cli.archivos} | {libro_corr.name, aux_corr.name}
+    cli.archivos = [a for a in listar_archivos(carpeta) if a["nombre"] in nombres]
+    previo = cli.corregidos.get(operacion) or {}
+    cli.corregidos[operacion] = {
+        "libro": libro_corr.name,
+        "aux": aux_corr.name,
+        "fecha": _ahora(),
+        "cambios": list(previo.get("cambios") or []) + [
+            {k: v for k, v in c.items() if k in ("campo", "cuit", "pv", "numero", "comprobante", "valor_arca", "antes", "despues")}
+            for c in hecho["aplicados"]
+        ],
+    }
+    ej.registrar(
+        f"[CAMBIOS] {cli.nombre} · {operacion}: {len(hecho['aplicados'])} aplicado(s) en "
+        f"«{libro_corr.name}»; nuevo control «{aux_corr.name}».",
+        "ok",
+    )
+    return {
+        "cliente": cli.nombre,
+        "indice": indice,
+        "operacion": operacion,
+        "aplicados": len(hecho["aplicados"]),
+        "no_aplicados": hecho["no_aplicados"],
+        "libro": libro_corr.name,
+        "aux": aux_corr.name,
+    }

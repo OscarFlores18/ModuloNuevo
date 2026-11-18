@@ -6,10 +6,11 @@ import { Advertencia } from '../../core/models';
  * tareas para tildar; la ventana de hallazgos repite la orden en cada tarjeta.
  */
 
-/** En qué orden conviene hacerlas: primero lo que deja el control sin valor. */
-export type GrupoTarea = 'primero' | 'xubio' | 'cliente';
+/** En qué orden conviene hacerlas: las partidas de ARCA que faltan en el Libro IVA, después lo que deja el control sin valor. */
+export type GrupoTarea = 'prioridad' | 'primero' | 'xubio' | 'cliente';
 
 export const GRUPOS: readonly { id: GrupoTarea; titulo: string; ayuda: string }[] = [
+  { id: 'prioridad', titulo: 'Faltantes en IVA', ayuda: 'Están en ARCA y no en el Libro IVA: cargalos en Xubio.' },
   { id: 'primero', titulo: 'Primero', ayuda: 'Sin esto el control no sirve: corregilo y volvé a correrlo.' },
   { id: 'xubio', titulo: 'En Xubio', ayuda: 'Para que el Libro IVA quede igual que ARCA.' },
   { id: 'cliente', titulo: 'Con el cliente', ayuda: 'Lo que solo el cliente puede aclarar.' },
@@ -39,10 +40,22 @@ function comprobantes(n: number): string {
 
 /**
  * Cuántos hay que tocar de verdad. Los controles viejos no traen `a_corregir`:
- * se cuentan los que no son «normales» (anuladas, tiques…) o, si la lista vino
+ * se cuentan los que no son «normales» (tiques, extractos…) o, si la lista vino
  * recortada, el número con el que empieza el detalle («2 no están en el libro…»).
  */
-function aCorregir(a: Advertencia): number {
+/** Errores que llegan de a pares de filas (ARCA, Xubio) por cada comprobante. */
+export function esDePares(a: Pick<Advertencia, 'tipo'>): boolean {
+  return a.tipo === 'tipo_distinto' || a.tipo === 'cuit_distinto' || a.tipo === 'importe_distinto';
+}
+
+/** Cuántos comprobantes abarca el hallazgo: en los de a pares, uno por par (no por fila). */
+export function cantidadComprobantes(a: Pick<Advertencia, 'tipo' | 'total'>): number {
+  return esDePares(a) ? Math.ceil(a.total / 2) : a.total;
+}
+
+export function aCorregir(a: Advertencia): number {
+  // «tipo_distinto» no trae a_corregir (o trae las filas): se cuentan los pares.
+  if (esDePares(a)) return cantidadComprobantes(a);
   if (a.a_corregir !== undefined) return a.a_corregir;
   if (a.tipo !== 'faltante_en_xubio' && a.tipo !== 'faltante_en_arca') return a.total;
   if (a.comprobantes.length >= a.total) return (a.comprobantes as { motivo?: string }[]).filter((c) => !c.motivo).length;
@@ -70,7 +83,7 @@ export function ordenDe(a: Advertencia): { grupo: GrupoTarea; orden: string; des
       return { grupo: 'xubio', orden: n === 1 ? 'Borrá la copia repetida en Xubio' : `Borrá las ${n} copias repetidas en Xubio` };
     case 'faltante_en_xubio':
       return {
-        grupo: 'xubio',
+        grupo: 'prioridad',
         orden: `Cargá en Xubio ${n === 1 ? 'el comprobante que falta' : `los ${n} comprobantes que faltan`}`,
         destino: { texto: 'Ir a Faltantes a Xubio', ruta: '/convertir-aux' },
       };
@@ -94,7 +107,7 @@ export function ordenDe(a: Advertencia): { grupo: GrupoTarea; orden: string; des
 }
 
 export function tareasDe(advertencias: readonly Advertencia[]): Tarea[] {
-  const orden: Record<GrupoTarea, number> = { primero: 0, xubio: 1, cliente: 2 };
+  const orden: Record<GrupoTarea, number> = { prioridad: 0, primero: 1, xubio: 2, cliente: 3 };
   const tareas: Tarea[] = [];
   for (const a of advertencias) {
     const o = ordenDe(a);
@@ -110,9 +123,8 @@ export function tareasDe(advertencias: readonly Advertencia[]): Tarea[] {
       advertencia: a,
     });
   }
-  // Dentro de Xubio: primero corregir lo mal cargado, después cargar lo que falta.
-  const ultimo = (t: Tarea) => (t.advertencia.tipo === 'faltante_en_xubio' ? 1 : 0);
-  return tareas.sort((x, y) => orden[x.grupo] - orden[y.grupo] || ultimo(x) - ultimo(y));
+  // Las partidas de ARCA no encontradas en el Libro IVA van siempre arriba (grupo «Prioridad»).
+  return tareas.sort((x, y) => orden[x.grupo] - orden[y.grupo]);
 }
 
 // --- Tildadas: quedan guardadas en este navegador, por control -----------------------

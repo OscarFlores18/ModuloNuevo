@@ -1,13 +1,16 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { descargarBlob } from '../../core/descargar';
 import { ResultadoConversion, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
+import { PerspectivaService } from '../../core/services/perspectiva.service';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
+import { Precarga, borrarPrecarga, leerPrecarga } from '../ejecucion/seleccion';
 
 /** Lo que dice el nombre del AUX de la app: operación, período y cliente. */
 const NOMBRE_AUX = /^AUX - Control de facturas (Ventas|Compras) con AFIP - (\d{2}-\d{2}) - (.+?)(?: - \d+\S* control)?\.xlsx?$/i;
@@ -23,10 +26,14 @@ interface ArchivoElegido {
  * y vuelve, por cliente y período, un .zip con las partidas de ARCA no
  * encontradas en el Libro IVA (Ventas y Compras) en el CSV de Mis Comprobantes.
  * No se guarda nada en las carpetas de los controles.
+ *
+ * Desde un control («⬆ Subir a Xubio» en Ejecuciones) llega precargado: el AUX de ese
+ * control sin los comprobantes destildados, más las correcciones elegidas en «Error».
+ * Elegir los AUX a mano sigue disponible.
  */
 @Component({
   selector: 'app-convertir',
-  imports: [Encabezado, Alerta, FormsModule],
+  imports: [Encabezado, Alerta, FormsModule, RouterLink],
   styles: `
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
@@ -41,6 +48,18 @@ interface ArchivoElegido {
     .op-ventas { background: #e0f2fe; color: #075985; }
     .op-compras { background: #fef3c7; color: #92400e; }
     .op-otro { background: #f1f5f9; color: #475569; }
+    .fx-desde { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid #bfdbfe; border-left: 4px solid #2563eb; border-radius: 10px; background: #f8fbff; }
+    .fx-desde-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+    .fx-manual { margin: 14px 0 8px; font-size: .85rem; font-weight: 700; color: var(--color-tenue); }
+    .fx-lista { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .82rem; }
+    .fx-lista th { text-align: left; font-size: .74rem; font-weight: 700; color: #64748b; padding: 4px 6px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
+    .fx-lista td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fx-lista .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .fx-lista .mono { font-family: Consolas, 'Cascadia Mono', monospace; }
+    .fx-detalle { margin-top: 8px; }
+    .fx-detalle > summary { cursor: pointer; font-size: .85rem; font-weight: 700; color: var(--color-acento); }
+    .fx-correcciones { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; font-size: .84rem; line-height: 1.4; }
+    .fx-correcciones p { margin: 0; padding: 4px 8px; border-left: 3px solid #fca5a5; background: #fffafa; border-radius: 4px; }
   `,
   template: `
     <app-encabezado
@@ -57,6 +76,22 @@ interface ArchivoElegido {
       </div>
 
       <div class="fx-cuerpo">
+      @if (precarga(); as p) {
+        <div class="fx-desde" aria-live="polite">
+          <div class="fx-desde-fila">
+            <span class="op" [class]="'op op-' + (p.operacion === 'Ventas' ? 'ventas' : 'compras')">{{ p.operacion }}</span>
+            <span class="min-w-0 flex-1">
+              <strong class="block truncate" [title]="p.cliente">Desde el control · {{ p.cliente }}</strong>
+              <span class="mf-tenue block text-sm">{{ p.partidas.length }} de {{ p.total }} {{ p.total === 1 ? 'comprobante tildado' : 'comprobantes tildados' }}@if (p.correcciones.length) { · {{ p.correcciones.length }} {{ p.correcciones.length === 1 ? 'corrección elegida' : 'correcciones elegidas' }} }</span>
+            </span>
+          </div>
+          <div class="fx-desde-fila">
+            <a class="mf-btn mf-btn-suave mf-btn-chico" [routerLink]="['/ejecuciones', p.ejecucionId]">← Volver al control para cambiar la selección</a>
+            <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="quitarPrecarga()" [disabled]="convirtiendo()">Quitar</button>
+          </div>
+        </div>
+        <p class="fx-manual">O elegí otros AUX a mano</p>
+      }
       <!-- Los elegidos quedan dentro del cuadro: se pueden soltar más encima -->
       <div
         class="zona"
@@ -163,7 +198,7 @@ interface ArchivoElegido {
                         @if (cargados()[clave]) {
                           <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: var(--color-ok-texto); background: #e7f6ec">✓ Cargado en Xubio</span>
                         } @else {
-                          <button type="button" class="mf-btn mf-btn-chico inline-flex items-center gap-2" (click)="cargarEnXubio(r, i, op)" [disabled]="!!cargandoXubio() || !empresaDe(r, i)" [attr.aria-busy]="cargandoXubio() === clave" [title]="empresaDe(r, i) ? '' : 'Elegí primero la empresa en Xubio'">
+                          <button type="button" class="mf-btn mf-btn-chico inline-flex items-center gap-2" (click)="cargarEnXubio(r, i, op)" [disabled]="!!cargandoXubio() || !empresaDe(r, i) || !perspectiva.canEdit()" [attr.aria-busy]="cargandoXubio() === clave" [title]="perspectiva.motivoBloqueo() ?? (empresaDe(r, i) ? '' : 'Elegí primero la empresa en Xubio')">
                             @if (cargandoXubio() === clave) {
                               <span class="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
                               Subiendo a Xubio…
@@ -177,6 +212,30 @@ interface ArchivoElegido {
                       @if (estadoXubio()[clave]; as est) {
                         <span class="mt-1 block text-sm" [style.color]="est.ok ? 'var(--color-ok-texto)' : 'var(--color-error)'">{{ est.texto }}</span>
                       }
+                    }
+                  }
+                  @if (precargaDe(r); as p) {
+                    <details class="fx-detalle" open>
+                      <summary>Comprobantes que se suben ({{ p.partidas.length }})</summary>
+                      <table class="fx-lista mt-1">
+                        <colgroup><col style="width: 86px" /><col style="width: 58px" /><col style="width: 140px" /><col /><col style="width: 104px" /></colgroup>
+                        <thead><tr><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th>Razón social</th><th class="num">Total</th></tr></thead>
+                        <tbody>
+                          @for (f of p.partidas; track $index) {
+                            <tr><td>{{ f.fecha }}</td><td>{{ f.tipo }}</td><td class="mono">{{ f.comprobante }}</td><td [title]="f.razon">{{ f.razon }}</td><td class="num">{{ f.total }}</td></tr>
+                          }
+                        </tbody>
+                      </table>
+                    </details>
+                    @if (p.correcciones.length) {
+                      <details class="fx-detalle" open>
+                        <summary>Correcciones a hacer a mano en Xubio ({{ p.correcciones.length }})</summary>
+                        <div class="fx-correcciones">
+                          @for (c of p.correcciones; track $index) {
+                            <p><strong class="mono">{{ c.comprobante }}</strong>@if (c.razon) { · {{ c.razon }} } — {{ c.texto }}</p>
+                          }
+                        </div>
+                      </details>
                     }
                   }
                 }
@@ -211,6 +270,8 @@ export class ConvertirPantalla {
   private readonly toast = inject(ToastService);
   private readonly alertas = inject(AlertasService);
   protected readonly clientes = inject(ClientesStore);
+  /** Empleado: convierte y descarga, pero «Cargar en Xubio» queda bloqueado. */
+  protected readonly perspectiva = inject(PerspectivaService);
 
   protected readonly elegidos = signal<ArchivoElegido[]>([]);
   protected readonly encima = signal(false);
@@ -223,9 +284,47 @@ export class ConvertirPantalla {
   protected readonly cargandoXubio = signal<string | null>(null);
   protected readonly cargados = signal<Record<string, true>>({});
   protected readonly estadoXubio = signal<Record<string, { ok: boolean; texto: string }>>({});
+  /** «⬆ Subir a Xubio» desde un control: lo tildado ahí, ya convertido en el paso 2. */
+  protected readonly precarga = signal<Precarga | null>(null);
 
   constructor() {
     void this.clientes.cargar();
+    const p = inject(ActivatedRoute).snapshot.queryParamMap.get('desde') === 'control' ? leerPrecarga() : null;
+    if (p) {
+      this.precarga.set(p);
+      void this.convertirDesdeControl(p);
+    }
+  }
+
+  /** El AUX del control (sin los destildados) directo al paso 2, sin arrastrar archivos. */
+  private async convertirDesdeControl(p: Precarga): Promise<void> {
+    this.convirtiendo.set(true);
+    this.error.set(null);
+    try {
+      const contenido = await base64De(await this.api.archivo(p.ejecucionId, p.indice, p.aux), p.aux);
+      const r = await this.api.convertirAux([{ nombre: p.aux, contenido, excluir: p.excluir }]);
+      if (this.precarga() !== p) return;
+      this.resultados.set(r.resultados);
+      this.cargados.set({});
+      this.estadoXubio.set({});
+    } catch (err) {
+      this.error.set(mensajeDeError(err, 'No se pudo leer el AUX del control. Elegilo a mano.'));
+    } finally {
+      this.convirtiendo.set(false);
+    }
+  }
+
+  /** Lo que vino del control, si este resultado es ese AUX. */
+  protected precargaDe(r: ResultadoConversion): Precarga | null {
+    const p = this.precarga();
+    return p && r.archivos.includes(p.aux) ? p : null;
+  }
+
+  protected quitarPrecarga(): void {
+    borrarPrecarga();
+    this.precarga.set(null);
+    this.resultados.set(null);
+    this.error.set(null);
   }
 
   protected empresaDe(r: ResultadoConversion, i: number): string {
@@ -248,6 +347,7 @@ export class ConvertirPantalla {
 
   /** Prueba: el bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y se detiene. */
   protected async cargarEnXubio(r: ResultadoConversion, i: number, op: 'Ventas' | 'Compras'): Promise<void> {
+    if (!this.perspectiva.canEdit()) return;
     const empresa = this.empresaDe(r, i);
     const zip = r.zips[op];
     const clave = `${i}-${op}`;
@@ -321,6 +421,7 @@ export class ConvertirPantalla {
       return { archivo, operacion: m ? capitalizar(m[1]) : operacionPorNombre(base), cliente: m ? m[3] : base };
     });
     this.elegidos.update((l) => [...l, ...nuevos]);
+    if (this.precarga()) this.quitarPrecarga();
     this.resultados.set(null);
     this.empresas.set({});
     this.estadoXubio.set({});
@@ -342,7 +443,7 @@ export class ConvertirPantalla {
     this.convirtiendo.set(true);
     this.error.set(null);
     try {
-      const archivos = await Promise.all(this.elegidos().map(async (e) => ({ nombre: e.archivo.name, contenido: await base64De(e.archivo) })));
+      const archivos = await Promise.all(this.elegidos().map(async (e) => ({ nombre: e.archivo.name, contenido: await base64De(e.archivo, e.archivo.name) })));
       const r = await this.api.convertirAux(archivos);
       this.resultados.set(r.resultados);
       this.cargados.set({});
@@ -391,11 +492,11 @@ function capitalizar(s: string): string {
 }
 
 /** El archivo en base64 (sin el prefijo «data:…;base64,»). */
-function base64De(archivo: File): Promise<string> {
+function base64De(archivo: Blob, nombre: string): Promise<string> {
   return new Promise((ok, mal) => {
     const lector = new FileReader();
     lector.onload = () => ok(String(lector.result).split(',', 2)[1] ?? '');
-    lector.onerror = () => mal(new Error(`No se pudo leer «${archivo.name}».`));
+    lector.onerror = () => mal(new Error(`No se pudo leer «${nombre}».`));
     lector.readAsDataURL(archivo);
   });
 }

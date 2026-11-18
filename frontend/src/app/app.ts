@@ -1,14 +1,16 @@
 import { Component, DestroyRef, inject, signal } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { Usuario } from './core/models';
 import { ClientesStore } from './core/services/clientes.store';
 import { EjecucionStore } from './core/services/ejecucion.store';
+import { PerspectivaService } from './core/services/perspectiva.service';
 import { SesionService } from './core/services/sesion.service';
 import { Toasts } from './core/ui/toast';
+import { ElegirPerfil } from './features/perfil/elegir-perfil';
 
 @Component({
   host: { '(window:scroll)': 'medirScroll()', '(window:resize)': 'medirScroll()' },
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, ElegirPerfil],
   selector: 'app-root',
   styleUrl: './app.css',
   templateUrl: './app.html',
@@ -17,6 +19,8 @@ export class App {
   protected readonly sesion = inject(SesionService);
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly clientes = inject(ClientesStore);
+  protected readonly perspectiva = inject(PerspectivaService);
+  private readonly router = inject(Router);
 
   /** Cuándo se trajeron por última vez los clientes y las ejecuciones del servidor. */
   protected readonly ultimaActualizacion = signal<Date | null>(null);
@@ -65,6 +69,16 @@ export class App {
     } finally {
       this.actualizando.set(false);
     }
+  }
+
+  /** Vuelve a «¿Cómo deseas ingresar?». */
+  protected cambiarPerfil(): void {
+    this.perspectiva.cambiar();
+  }
+
+  /** Recién elegido: a la pantalla de inicio de esa perspectiva (el empleado no ve Nuevo control). */
+  protected alElegirPerfil(): void {
+    void this.router.navigateByUrl('/');
   }
 
   protected formatearFecha(d: Date): string {
