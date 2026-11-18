@@ -1,50 +1,27 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { carpetaDelPeriodo, duracion, tamanoLegible } from '../../core/fechas';
-import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, estaActiva, mensajeDeError } from '../../core/models';
+import { carpetaDelPeriodo, duracion, periodoLegible, periodoLegibleDe, tamanoLegible } from '../../core/fechas';
+import { ArchivoGenerado, ClienteEjecucion, PasoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../../core/models';
 import { descargarBlob } from '../../core/descargar';
+import { reintentoDe } from '../../core/reintento';
 import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { ToastService } from '../../core/ui/toast';
 import { contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
+import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
 import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
-
-/**
- * Aviso de errores de sintaxis: se abre solo hasta que el usuario lo cierra.
- * Cuenta como visto recién al apretar «Entendido»: si la página se recarga con
- * el aviso abierto, vuelve a aparecer.
- */
-const CLAVE_VISTOS = 'cf-errores-sintaxis-vistos';
-/** Abiertos en esta carga de la página (para no abrirlo dos veces a la vez). */
-const abiertos = new Set<string>();
-
-function leerVistos(): string[] {
-  try {
-    return JSON.parse(sessionStorage.getItem(CLAVE_VISTOS) ?? '[]') as string[];
-  } catch {
-    return [];
-  }
-}
-
-function yaVisto(id: string): boolean {
-  return abiertos.has(id) || leerVistos().includes(id);
-}
-
-function marcarVisto(id: string): void {
-  try {
-    sessionStorage.setItem(CLAVE_VISTOS, JSON.stringify([...new Set([...leerVistos(), id])]));
-  } catch {
-    // Sin sessionStorage alcanza con el Set en memoria.
-  }
-}
 
 /** Un paso que terminó mal o con avisos: lo único que se muestra del detalle si algo falló. */
 interface Problema {
   nivel: 'error' | 'aviso';
+  /** El paso («ARCA · Compras»): para encontrar su tarea. */
+  etiqueta: string;
   titulo: string;
   mensaje: string;
+  /** Qué hacer y adónde ir (de la lista de tareas), cuando el control ya terminó. */
+  tarea?: Tarea;
 }
 
 /** Lo que pinta cada acordeón: el cliente ya resumido en etapas, avance y problemas. */
@@ -56,6 +33,8 @@ interface ClienteVista {
   avance: number;
   conError: boolean;
   problemas: Problema[];
+  /** Hallazgos de la auditoría y pasos fallidos de este cliente (grave + a corregir). */
+  hallazgos: number;
   carpeta: string;
   archivos: ArchivoGenerado[];
   origen: ClienteEjecucion;
@@ -66,7 +45,8 @@ function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
     .filter((p) => p.estado === 'error' || (p.estado === 'aviso' && !!p.mensaje))
     .map((p) => ({
       nivel: p.estado === 'error' ? ('error' as const) : ('aviso' as const),
-      titulo: `${p.etiqueta}: ${p.estado === 'error' ? 'error' : 'terminó con avisos'}.`,
+      etiqueta: p.etiqueta,
+      titulo: `${p.etiqueta} ${p.estado === 'error' ? 'falló' : 'terminó con avisos'}`,
       mensaje: p.mensaje || 'El bot no informó el motivo.',
     }));
 }
@@ -113,11 +93,102 @@ export class EjecucionPantalla {
   /** true: backend en esta PC, se guarda con ventanas de Windows. false (servidor): por el navegador. */
   protected readonly dialogosLocales = signal(false);
   protected readonly errorDescarga = signal<string | null>(null);
-  /** Clientes con la lista de archivos desplegada (por nombre). */
-  private readonly carpetasAbiertas = signal<ReadonlySet<string>>(new Set());
+  /** Clientes con la lista de archivos plegada (por nombre): de entrada se ven todos. */
+  private readonly carpetasPlegadas = signal<ReadonlySet<string>>(new Set());
 
   protected readonly ej = this.store.actual;
   protected readonly activa = computed(() => estaActiva(this.ej()?.estado));
+
+  // --- Encabezado ---------------------------------------------------------------------
+
+  /** «Control de octubre 2026». */
+  protected readonly titulo = computed(() => {
+    const p = this.ej()?.parametros;
+    return p ? `Control de ${periodoLegible(p.desde, p.hasta)}` : '';
+  });
+
+  /** «Iniciado el 17/11/2026 18:05 · Ana · Ventas y Compras». */
+  protected readonly bajada = computed(() => {
+    const e = this.ej();
+    if (!e) return '';
+    const ops = [e.parametros.ventas && 'Ventas', e.parametros.compras && 'Compras'].filter(Boolean).join(' y ');
+    return [`Iniciado el ${this.fechaCorta(e.creada)}`, e.usuario, ops].filter(Boolean).join(' · ');
+  });
+
+  protected readonly periodoLegibleDe = periodoLegibleDe;
+
+  // --- Qué hay que hacer: los hallazgos como tareas para tildar --------------------------
+
+  protected readonly tareas = computed(() => (this.activa() ? [] : tareasDe(this.ej()?.advertencias ?? [])));
+  /** Tildadas por el usuario (se guardan en este navegador, por control). */
+  protected readonly hechas = signal<ReadonlySet<string>>(new Set());
+  protected readonly pendientes = computed(() => this.tareas().filter((t) => !this.hechas().has(t.clave)).length);
+  protected readonly gruposTareas = computed(() =>
+    GRUPOS.map((g) => ({ ...g, tareas: this.tareas().filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length),
+  );
+
+  protected alternarHecha(t: Tarea): void {
+    const id = this.ej()?.id;
+    if (!id) return;
+    const nuevas = new Set(this.hechas());
+    if (nuevas.has(t.clave)) nuevas.delete(t.clave);
+    else nuevas.add(t.clave);
+    this.hechas.set(nuevas);
+    guardarHechas(id, nuevas);
+  }
+
+  /** El botón de la tarea: una pantalla de la app o un control nuevo solo con ese cliente. */
+  protected irA(t: Tarea): void {
+    const d = t.destino;
+    if (!d) return;
+    if ('ruta' in d) {
+      void this.router.navigate([d.ruta]);
+      return;
+    }
+    const e = this.ej();
+    if (!e) return;
+    const p = e.parametros;
+    const reintento = { clientes: [t.cliente], desde: p.desde, hasta: p.hasta, ventas: p.ventas, compras: p.compras, creada: e.creada };
+    void this.router.navigate(['/control'], { state: { reintento } });
+  }
+
+  /** La ventana de hallazgos solo con esa tarea: los comprobantes tal cual están en el Excel. */
+  protected verDetalle(t: Tarea): void {
+    void mostrarVentanaDeErrores([t.advertencia]);
+  }
+
+  protected irATareas(): void {
+    document.getElementById('t-tareas')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // --- Reintentar e historial ----------------------------------------------------------
+
+  /** Terminado y con clientes que fallaron o no llegaron a correr: se pueden reintentar. */
+  protected readonly reintento = computed(() => {
+    const e = this.ej();
+    return e && !this.activa() ? reintentoDe(e) : null;
+  });
+
+  /** Abre Nuevo control con esos clientes, el mismo período y las mismas operaciones. */
+  protected reintentar(): void {
+    const r = this.reintento();
+    if (r) void this.router.navigate(['/control'], { state: { reintento: r } });
+  }
+
+  private readonly formatoFecha = new Intl.DateTimeFormat('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+
+  /** «17/11/26 18:05». */
+  protected fechaCorta(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? iso : this.formatoFecha.format(d).replace(',', '');
+  }
+
+  /** Una línea por control para la tabla del historial. */
+  protected resultadoDe(h: ResumenEjecucion): string {
+    const t = h.totales;
+    const partes = [t.ok && `${t.ok} OK`, t.con_errores && `${t.con_errores} con errores`, t.pendientes && `${t.pendientes} sin hacer`].filter(Boolean);
+    return partes.join(' · ') || '—';
+  }
 
   // --- Cronómetro --------------------------------------------------------------------
 
@@ -150,7 +221,13 @@ export class EjecucionPantalla {
       etapas: etapasDe(c.pasos),
       avance: avanceDe(c.pasos),
       conError: c.estado === 'con_errores',
-      problemas: problemasDe(c.pasos),
+      problemas: problemasDe(c.pasos).map((p) => ({
+        ...p,
+        tarea: this.tareas().find(
+          (t) => t.cliente === c.nombre && t.advertencia.tipo === 'paso_error' && t.advertencia.titulo.startsWith(p.etiqueta + ':'),
+        ),
+      })),
+      hallazgos: (this.ej()?.advertencias ?? []).filter((a) => a.cliente === c.nombre && a.gravedad !== 'info').length,
       carpeta: c.carpeta,
       archivos: ordenarArchivos(c.archivos),
       origen: c,
@@ -196,17 +273,15 @@ export class EjecucionPantalla {
       untracked(() => void this.abrir(id));
     });
 
-    // Al terminar un control con errores de sintaxis, el aviso se abre solo.
+    // Las tildes de cada control se recuperan al abrirlo.
     effect(() => {
-      const e = this.ej();
-      if (!e || this.activa() || !e.advertencias?.length || yaVisto(e.id)) return;
-      abiertos.add(e.id);
-      untracked(() => void mostrarVentanaDeErrores(e.advertencias!, e.resumenes ?? []).then(() => marcarVisto(e.id)));
+      const id = this.ej()?.id;
+      untracked(() => this.hechas.set(id ? leerHechas(id) : new Set()));
     });
   }
 
   private async abrir(id: string | undefined): Promise<void> {
-    this.carpetasAbiertas.set(new Set());
+    this.carpetasPlegadas.set(new Set());
     this.errorDescarga.set(null);
     if (id) {
       this.store.seguir(id);
@@ -246,12 +321,12 @@ export class EjecucionPantalla {
   // --- Archivos ----------------------------------------------------------------------
 
   protected carpetaAbierta(nombre: string): boolean {
-    return this.carpetasAbiertas().has(nombre);
+    return !this.carpetasPlegadas().has(nombre);
   }
 
   protected alternarCarpeta(nombre: string): void {
-    this.carpetasAbiertas.update((abiertas) => {
-      const s = new Set(abiertas);
+    this.carpetasPlegadas.update((plegadas) => {
+      const s = new Set(plegadas);
       if (!s.delete(nombre)) s.add(nombre);
       return s;
     });
@@ -308,9 +383,9 @@ export class EjecucionPantalla {
   }
 }
 
-const ORDEN_ARCHIVO: Record<string, number> = { arca: 0, xubio: 1, auditoria: 2, otro: 3 };
+const ORDEN_ARCHIVO: Record<string, number> = { auditoria: 0, arca: 1, xubio: 2, otro: 3 };
 
-/** En el orden en que se generan: ARCA, Xubio y al final la auditoría. */
+/** Primero el AUX (el que se abre para revisar) y después lo que bajaron ARCA y Xubio. */
 function ordenarArchivos(archivos: ArchivoGenerado[]): ArchivoGenerado[] {
   return [...archivos].sort((a, b) => (ORDEN_ARCHIVO[a.tipo] ?? 9) - (ORDEN_ARCHIVO[b.tipo] ?? 9) || a.nombre.localeCompare(b.nombre, 'es'));
 }

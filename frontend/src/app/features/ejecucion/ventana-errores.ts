@@ -1,6 +1,7 @@
 import Swal from 'sweetalert2';
 import { formatearCuit } from '../../core/cuit.pipe';
 import { ResumenOperacion, Advertencia, CeldaVista, ComprobanteLetraDistinta, FilaConError } from '../../core/models';
+import { ordenDe } from './tareas';
 
 /**
  * Ventana de hallazgos al terminar un control: qué encontró la auditoría (y qué
@@ -14,13 +15,32 @@ import { ResumenOperacion, Advertencia, CeldaVista, ComprobanteLetraDistinta, Fi
  * - Un solo scroll (el de la lista) y «Entendido» siempre a la vista.
  */
 
-const ORDEN_GRAVEDAD: Record<Advertencia['gravedad'], number> = { grave: 0, corregir: 1, info: 2 };
+/** Primero lo grave, después lo mal cargado, después lo que falta y al final lo informativo. */
+const ORDEN_CLASE: Record<string, number> = { grave: 0, mal: 1, aviso: 2, info: 3 };
 
-const ETIQUETA_GRAVEDAD: Record<Advertencia['gravedad'], string> = {
-  grave: 'Grave',
-  corregir: 'Corregir',
-  info: 'Info',
-};
+/**
+ * Qué es cada hallazgo. Un comprobante que falta en un lado NO es un error de
+ * carga: es un aviso (ámbar) — falta subirlo, o hay que preguntar. Error (rojo)
+ * es lo que quedó mal cargado en Xubio: letra, tipo, CUIT, importe, repetido.
+ */
+type Clase = 'grave' | 'mal' | 'aviso' | 'info';
+
+const AVISOS: ReadonlySet<Advertencia['tipo']> = new Set(['faltante_en_xubio', 'faltante_en_arca']);
+
+function claseDe(e: Advertencia): Clase {
+  if (e.gravedad === 'grave') return 'grave';
+  if (e.gravedad === 'info') return 'info';
+  return AVISOS.has(e.tipo) ? 'aviso' : 'mal';
+}
+
+function etiquetaDe(e: Advertencia): string {
+  const clase = claseDe(e);
+  if (clase === 'grave') return 'Grave';
+  if (clase === 'info') return 'Info';
+  if (e.tipo === 'faltante_en_xubio') return 'Falta cargar';
+  if (e.tipo === 'faltante_en_arca') return 'A revisar';
+  return 'Error';
+}
 
 /** Columnas comunes a ARCA y Xubio (cada planilla las llama distinto). */
 const COLUMNAS = ['Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', 'Total'] as const;
@@ -53,6 +73,15 @@ function texto(v: CeldaVista['valor'] | undefined): string {
   return String(v);
 }
 
+/**
+ * Los importes con el mismo formato en ARCA y en Xubio (604.887,00). ARCA a veces
+ * los manda como texto sin separadores («604887» o «604887,5»).
+ */
+function importe(v: CeldaVista['valor'] | undefined): string {
+  if (typeof v === 'string' && /^-?\d+([.,]\d+)?$/.test(v.trim())) return texto(Number(v.trim().replace(',', '.')));
+  return texto(v);
+}
+
 /** La CUIT siempre como XX-XXXXXXXX-X (ARCA la manda sin guiones y Xubio con). */
 function cuit(v: CeldaVista['valor'] | undefined): string {
   if (v === null || v === undefined) return '';
@@ -73,7 +102,9 @@ interface FilaVista {
   datos: Partial<Record<Columna, CeldaVista['valor']>>;
   /** HTML ya armado para la celda Comprobante (con la letra marcada). */
   comprobante?: string;
-  marca?: 'error' | 'ok';
+  marca?: 'error' | 'ok' | 'aviso';
+  /** En qué columna está la diferencia (por defecto, el comprobante). */
+  marcaEn?: 'Comprobante' | 'CUIT' | 'Total';
   /** Etiqueta al lado del comprobante (ej. «Normal: extracto o tique»). */
   nota?: string;
 }
@@ -91,14 +122,16 @@ function grilla(filas: FilaVista[]): string {
   const cab = ['', ...COLUMNAS].map((c) => `<th${c === 'Total' ? ' class="num"' : ''}>${esc(c)}</th>`).join('');
   const cuerpo = filas
     .map((f) => {
+      const marcaEn = f.marcaEn ?? 'Comprobante';
+      const marca = (col: Columna) => (f.marca && col === marcaEn ? ` marca ${f.marca}` : '');
       const celdas = COLUMNAS.map((col) => {
         if (col === 'Comprobante') {
-          const clase = f.marca ? ` ${f.marca}` : '';
+          const clase = marca(col);
           const nota = f.nota ? ` <span class="ve-nota">${esc(f.nota)}</span>` : '';
           return `<td class="comp${clase}">${f.comprobante ?? esc(texto(f.datos[col]))}${nota}</td>`;
         }
-        if (col === 'CUIT') return `<td class="cuit">${esc(cuit(f.datos[col]))}</td>`;
-        if (col === 'Total') return `<td class="num">${esc(texto(f.datos[col]))}</td>`;
+        if (col === 'CUIT') return `<td class="cuit${marca(col)}">${esc(cuit(f.datos[col]))}</td>`;
+        if (col === 'Total') return `<td class="num${marca(col)}">${esc(importe(f.datos[col]))}</td>`;
         return `<td>${esc(texto(f.datos[col]))}</td>`;
       }).join('');
       return `<tr><td class="origen origen-${f.origen.toLowerCase()}">${f.origen}</td>${celdas}</tr>`;
@@ -119,10 +152,23 @@ function filasDe(e: Advertencia): FilaVista[] {
       { origen: 'Xubio', datos: normalizar(c.fila_xubio), comprobante: conLetra(c.comprobante_xubio, 'error'), marca: 'error' },
     ]);
   }
+  // CUIT o importe distinto: van de a pares (ARCA, Xubio); se marca la columna
+  // que difiere, en verde la de ARCA y en rojo la de Xubio.
+  if (e.tipo === 'cuit_distinto' || e.tipo === 'importe_distinto') {
+    const marcaEn = e.tipo === 'cuit_distinto' ? 'CUIT' : 'Total';
+    return (e.comprobantes as FilaConError[]).map((f) => ({
+      origen: f.origen === 'arca' ? 'ARCA' : 'Xubio',
+      datos: normalizar(f.fila),
+      marca: f.origen === 'arca' ? 'ok' : 'error',
+      marcaEn,
+    }));
+  }
+  const clase = claseDe(e);
   return (e.comprobantes as FilaConError[]).map((f) => ({
     origen: f.origen === 'arca' ? 'ARCA' : 'Xubio',
     datos: normalizar(f.fila),
-    marca: e.gravedad === 'info' || f.motivo ? undefined : 'error',
+    // Lo que falta en un lado se marca en ámbar (aviso); lo mal cargado, en rojo.
+    marca: clase === 'info' || f.motivo ? undefined : clase === 'aviso' ? 'aviso' : 'error',
     nota: f.motivo ? NOTA_MOTIVO[f.motivo] : undefined,
   }));
 }
@@ -144,6 +190,8 @@ function destinoDe(accion: string): { href: string; nuevaPestana: boolean } | nu
   const a = accion.toLowerCase();
   if (a.includes('clave de arca') || a.includes('cuit del cliente')) return { href: '/clientes', nuevaPestana: false };
   if (a.includes('volver a correr')) return { href: '/control', nuevaPestana: false };
+  // «Convertir AUX» es el nombre viejo (controles guardados antes del cambio).
+  if (a.includes('faltantes a xubio') || a.includes('convertir aux')) return { href: '/convertir-aux', nuevaPestana: false };
   return null;
 }
 
@@ -234,12 +282,6 @@ function botonesYEtiquetas(e: Advertencia, ctx: ContextoVentana): { botones: str
   return { botones: botones.join(''), etiquetas: etiquetas.join('') };
 }
 
-/** Los filtros del encabezado: «corregir» junta grave y corregir; «info» aparte. */
-type Grupo = 'corregir' | 'info';
-
-function grupoDe(g: Advertencia['gravedad']): Grupo {
-  return g === 'info' ? 'info' : 'corregir';
-}
 
 function tarjeta(e: Advertencia, ctx: ContextoVentana): string {
   const meta = [e.operacion, e.total ? `${e.total} comprobante${e.total === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · ');
@@ -249,14 +291,16 @@ function tarjeta(e: Advertencia, ctx: ContextoVentana): string {
       : '';
   const letras = ordenesLetra(e);
   const { botones, etiquetas } = botonesYEtiquetas(e, ctx);
+  const orden = ordenDe(e);
   // Las INFO arrancan plegadas: una fila compacta con «Ver detalle ▾».
   return `
-    <details class="ve-error ve-${e.gravedad}" data-grupo="${grupoDe(e.gravedad)}" ${e.gravedad === 'info' ? '' : 'open'}>
+    <details class="ve-error ve-${claseDe(e)}" data-grupo="${e.gravedad}" ${e.gravedad === 'info' ? '' : 'open'}>
       <summary>
-        <span class="ve-insignia">${ETIQUETA_GRAVEDAD[e.gravedad]}</span>
+        <span class="ve-insignia">${etiquetaDe(e)}</span>
         <span class="ve-cab">
           <span class="ve-titulo">${esc(e.titulo)}</span>
-          ${etiquetas ? `<span class="ve-etiquetas">${etiquetas}</span>` : ''}
+          ${orden ? `<span class="ve-que-hacer">→ ${esc(orden.orden)}</span>` : ''}
+          ${etiquetas ?`<span class="ve-etiquetas">${etiquetas}</span>` : ''}
         </span>
         <span class="ve-derecha">
           <span class="ve-meta">${esc(meta)}</span>
@@ -280,11 +324,14 @@ const ESTILOS = `
     .ve-popup { max-height: 94vh; grid-template-rows: auto auto minmax(0, 1fr) auto; }
     .ve-popup .swal2-icon { margin: 16px auto 0; width: 3.4em; height: 3.4em; }
     .ve-popup .swal2-icon .swal2-icon-content { font-size: 2.4em; }
-    .ve-popup .swal2-title { padding-top: 8px; }
+    .ve-popup .swal2-title { padding-top: 18px; font-size: 1.5em; }
     .ve-popup .swal2-html-container { margin: 8px 0 0; padding: 0 18px; min-height: 0; max-height: none; overflow-y: auto; overscroll-behavior: contain; }
     .ve-popup .swal2-actions { margin: 0; padding: 12px 0 14px; width: 100%; border-top: 1px solid #e2e8f0; background: #fff; }
     .ve { text-align: left; color: #1f2a37; font-size: 13.5px; }
-    .ve-intro { margin: 0 0 8px; text-align: center; color: #475569; }
+    .ve-intro { margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; text-align: center; font-weight: 600; }
+    .ve-intro-grave { background: #fde2e2; color: #9b2c2c; }
+    .ve-intro-corregir { background: #fdf0d9; color: #7a4f0f; }
+    .ve-intro-ok { background: #e7f5ec; color: #14532d; }
     .ve-resumen { display: flex; justify-content: center; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
     .ve-chip { border-radius: 999px; padding: 3px 12px; font-family: inherit; font-size: 12px; font-weight: 700; white-space: nowrap; cursor: pointer; border: 1.5px solid transparent; transition: box-shadow .15s, opacity .15s; }
     .ve-chip:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
@@ -307,6 +354,7 @@ const ESTILOS = `
     .ve-insignia { flex: none; margin-top: 1px; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; }
     .ve-cab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
     .ve-titulo { font-weight: 700; font-size: 15px; }
+    .ve-que-hacer { font-size: 14px; font-weight: 700; color: #1d4ed8; }
     .ve-etiquetas { display: flex; flex-wrap: wrap; gap: 6px; }
     .ve-etiqueta { display: inline-flex; align-items: center; font-size: 13px; font-weight: 600; padding: 3px 11px; border-radius: 999px; background: #eef2f7; color: #334155; border: 1px solid #dfe5ee; }
     .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
@@ -330,11 +378,13 @@ const ESTILOS = `
     .ve-flecha { font-size: 17px; font-weight: 800; color: #475569; }
     .ve-detalle { margin: 0 0 10px; color: #334155; font-size: 14.5px; line-height: 1.45; }
     .ve-mas { margin: 6px 0 0; font-size: 12px; color: #64748b; }
-    .ve-grave .ve-insignia, .ve-chip-grave { background: #fde2e2; color: #9b2c2c; }
-    .ve-corregir .ve-insignia, .ve-chip-corregir { background: #fdf0d9; color: #7a4f0f; }
+    .ve-grave .ve-insignia, .ve-chip-grave { background: #c53030; color: #fff; }
+    .ve-mal .ve-insignia { background: #fde2e2; color: #9b2c2c; }
+    .ve-aviso .ve-insignia, .ve-chip-corregir { background: #fdf0d9; color: #7a4f0f; }
     .ve-info .ve-insignia, .ve-chip-info { background: #e8eef9; color: #1d4ed8; }
     .ve-grave { border-left: 3px solid #c53030; }
-    .ve-corregir { border-left: 3px solid #b7791f; }
+    .ve-mal { border-left: 3px solid #e05252; }
+    .ve-aviso { border-left: 3px solid #d69e2e; }
     .ve-info { border-left: 3px solid #93a8d6; }
     /* Sin alto máximo: un solo scroll (el de la lista), nunca dos anidados. */
     .ve-grilla { border: 1px solid #d4d4d4; border-radius: 4px; overflow-x: auto; }
@@ -348,8 +398,9 @@ const ESTILOS = `
     .ve-grilla td.origen-arca { background: #1b2f57; }
     .ve-grilla td.origen-xubio { background: #217346; }
     .ve-grilla td.comp { font-family: Consolas, 'Cascadia Mono', monospace; }
-    .ve-grilla td.comp.error { background: #fdeaea; box-shadow: inset 0 0 0 1.5px #c53030; }
-    .ve-grilla td.comp.ok { background: #e7f5ec; box-shadow: inset 0 0 0 1.5px #15803d; }
+    .ve-grilla td.marca.error { background: #fdeaea; box-shadow: inset 0 0 0 1.5px #c53030; }
+    .ve-grilla td.marca.ok { background: #e7f5ec; box-shadow: inset 0 0 0 1.5px #15803d; }
+    .ve-grilla td.marca.aviso { background: #fff7e6; }
     .ve-nota { margin-left: 6px; font-family: 'Segoe UI', Arial, sans-serif; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: #e8eef9; color: #1d4ed8; }
     .letra { display: inline-block; min-width: 16px; text-align: center; border-radius: 3px; color: #fff; font-weight: 700; padding: 0 3px; }
     .letra-error { background: #c53030; }
@@ -420,7 +471,7 @@ export function mostrarVentanaDeErrores(
   const n = contarErrores(errores);
   const aCorregir = n.grave + n.corregir;
   const total = errores.length;
-  const ordenados = [...errores].sort((a, b) => ORDEN_GRAVEDAD[a.gravedad] - ORDEN_GRAVEDAD[b.gravedad]);
+  const ordenados = [...errores].sort((a, b) => ORDEN_CLASE[claseDe(a)] - ORDEN_CLASE[claseDe(b)]);
   const porCliente = new Map<string, Advertencia[]>();
   for (const e of ordenados) porCliente.set(e.cliente, [...(porCliente.get(e.cliente) ?? []), e]);
 
@@ -429,22 +480,25 @@ export function mostrarVentanaDeErrores(
     : aCorregir
       ? 'El control se hizo correctamente. Hay datos para corregir.'
       : 'El control se hizo correctamente.';
+  // Una píldora por gravedad, con las mismas palabras que el aviso de la pantalla.
+  const chip = (g: Advertencia['gravedad'], texto: string) =>
+    n[g] ? `<button type="button" class="ve-chip ve-chip-${g}" data-filtro="${g}" aria-pressed="false" title="Mostrar solo estos">${texto}</button>` : '';
   const chips = [
-    aCorregir
-      ? `<button type="button" class="ve-chip ve-chip-${n.grave ? 'grave' : 'corregir'}" data-filtro="corregir" aria-pressed="false">${aCorregir} corregir</button>`
-      : '',
-    n.info ? `<button type="button" class="ve-chip ve-chip-info" data-filtro="info" aria-pressed="false">${n.info} info</button>` : '',
+    chip('grave', `${n.grave} grave${n.grave === 1 ? '' : 's'}`),
+    chip('corregir', `${n.corregir} a corregir`),
+    chip('info', `${n.info} informativo${n.info === 1 ? '' : 's'}`),
   ].join('');
+  const tono = n.grave ? 'grave' : aCorregir ? 'corregir' : 'ok';
   const lista = [...porCliente.entries()]
     .map(([cliente, items]) => `<section class="ve-grupo"><p class="ve-cliente">${esc(cliente)}</p>${items.map((e) => tarjeta(e, ctx)).join('')}</section>`)
     .join('');
 
+  // Sin ícono grande: el tono lo da la franja de arriba y la ventana gana alto para la lista.
   return Swal.fire({
-    icon: n.grave ? 'error' : aCorregir ? 'warning' : 'info',
     title: total ? `Hallazgos del control (${total})` : 'Control sin hallazgos',
     html: `${ESTILOS}
       <div class="ve">
-        <p class="ve-intro">${sub}</p>
+        <p class="ve-intro ve-intro-${tono}">${sub}</p>
         ${bloqueResumen(resumenes, new Set(resumenes.map((r) => r.cliente)).size > 1)}
         ${chips ? `<div class="ve-resumen" role="group" aria-label="Filtrar hallazgos">${chips}</div>` : ''}
         <div class="ve-lista">${lista}</div>

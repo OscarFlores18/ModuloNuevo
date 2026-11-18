@@ -31,6 +31,8 @@
 }
 
 :root {
+  --ancho-max: 2200px;
+  --margen-lateral: clamp(20px, 4.5vw, 96px);
   color-scheme: light;
 }
 
@@ -255,15 +257,24 @@ input[type='checkbox'] {
 /* --- Layout --------------------------------------------------------------- */
 
 .mf-main {
-  max-width: 1280px;
-  min-height: calc(100vh - 120px);
+  flex: 1 0 auto;
+  width: 100%;
+  /* Usa todo el ancho de la pantalla: el tope solo evita renglones eternos en
+     monitores ultra anchos. El margen crece un poco con la pantalla. */
+  max-width: var(--ancho-max);
   margin: 0 auto;
-  padding: 18px 16px 40px;
+  padding: 18px var(--margen-lateral) 40px;
   display: flex;
   flex-direction: column;
   gap: 16px;
   background: #ffffff;
-  box-shadow: 0 0 0 1px #e3e8ef, 0 4px 18px rgba(15, 23, 42, 0.06);
+}
+
+/* La pantalla de cada ruta apila sus bloques (avisos, tarjetas, paneles) con aire entre sí. */
+.mf-main > router-outlet + * {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .mf-vacio {
@@ -398,6 +409,9 @@ input[type='checkbox'] {
 
 .mf-scroll {
   overflow-x: auto;
+  /* Lo que va posicionado adentro (los textos «sr-only» de los encabezados) queda
+     dentro del scroll: si no, se escapa al costado y estira la página en celular. */
+  position: relative;
 }
 
 .mf-tabla {
@@ -766,6 +780,7 @@ input[type='checkbox'] {
   border: 1px solid var(--color-borde);
   border-radius: 10px;
   background: var(--color-panel-alt);
+  max-width: 100%;
 }
 
 .mf-segmentado label {
@@ -799,6 +814,20 @@ input[type='checkbox'] {
   border-color: var(--color-error);
 }
 
+/* En pantallas angostas las opciones se reparten el ancho en vez de salirse. */
+@media (max-width: 480px) {
+  .mf-segmentado {
+    display: flex;
+  }
+  .mf-segmentado label {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 7px 8px;
+    text-align: center;
+    white-space: normal;
+  }
+}
+
 .mf-grupo-invalido {
   box-shadow: inset 0 -2px 0 var(--color-error);
 }
@@ -830,9 +859,30 @@ input[type='checkbox'] {
 }
 
 .cf-header-interior {
-  max-width: 1280px;
+  max-width: var(--ancho-max);
   margin: 0 auto;
-  padding: 18px 16px 18px;
+  padding: 14px var(--margen-lateral) 16px;
+}
+
+@media (max-width: 640px) {
+  .cf-header {
+    position: static;
+  }
+  .cf-header-interior {
+    padding: 12px 12px 14px;
+  }
+  /* Las cuatro pestañas en una grilla de 2x2 parejas. */
+  .cf-header nav {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+  }
+  .cf-tab {
+    min-width: 0;
+    height: 40px;
+    padding: 0 10px;
+    font-size: 0.95rem;
+  }
 }
 
 .cf-tab {
@@ -919,6 +969,13 @@ input[type='checkbox'] {
 }
 
 /* Botón flotante para ir al final / volver arriba. */
+/* Si la pantalla tiene la barra de ejecutar pegada abajo, el botón flotante va por encima y no la tapa. */
+@media (max-width: 1023px) {
+  body:has(.nc-ejecutar) .cf-flotante {
+    bottom: 96px;
+  }
+}
+
 .cf-flotante {
   position: fixed;
   right: 20px;
@@ -994,6 +1051,13 @@ input[type='checkbox'] {
   margin: 16px 0 0;
 }
 
+@media (max-width: 640px) {
+  .ej-kpis {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+}
+
 .ej-kpi {
   display: flex;
   flex-direction: column;
@@ -1031,6 +1095,42 @@ input[type='checkbox'] {
   border-color: rgba(197, 48, 48, 0.5);
   background: rgba(197, 48, 48, 0.07);
   color: var(--color-error-texto);
+}
+
+.ej-kpi-ok {
+  border-color: rgba(21, 128, 61, 0.35);
+  background: rgba(21, 128, 61, 0.06);
+}
+
+/* El número de «Para revisar» abre la ventana de hallazgos. */
+.ej-kpi-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+}
+
+.ej-kpi-link:hover {
+  opacity: 0.8;
+}
+
+/* Encabezado del bloque de archivos: plegar a la izquierda, descargar todo a la derecha. */
+.ej-carpeta-titulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-texto);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
 }
 
 /* Acordeones: clientes */
@@ -1289,4 +1389,773 @@ details[open] > summary .ej-chevron {
   .ej-chevron {
     transition: none;
   }
+}
+
+/* --- Pasos numerados de «Nuevo control» --------------------------------------- */
+
+.mf-paso-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--color-acento);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+
+/* Atajo de mes ya elegido. */
+.mf-btn-elegido {
+  border-color: var(--color-acento) !important;
+  color: var(--color-acento-texto) !important;
+  background: rgba(37, 99, 235, 0.08) !important;
+}
+
+/* Al saltar a una sección (#id), el encabezado fijo no la tapa. */
+[id] {
+  scroll-margin-top: 150px;
+}
+
+@media (max-width: 640px) {
+  [id] {
+    scroll-margin-top: 12px;
+  }
+}
+
+/* --- Nuevo control: dos columnas --------------------------------------------- */
+
+.nc-grilla {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.nc-lado {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.nc-lista-alta {
+  max-height: 16rem;
+}
+
+/* Segmentados a todo el ancho de la columna, opciones parejas. */
+.nc-ancho {
+  display: flex;
+  width: 100%;
+}
+
+.nc-ancho label {
+  flex: 1 1 0;
+  padding-left: 8px;
+  padding-right: 8px;
+  text-align: center;
+}
+
+.nc-xubio-lista {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  background: var(--color-panel-alt);
+}
+
+.nc-xubio-ok {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--color-ok);
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.nc-ejecutar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nc-boton {
+  width: 100%;
+}
+
+.nc-falta {
+  color: var(--color-aviso-texto);
+}
+
+@media (min-width: 1024px) {
+  .nc-grilla {
+    grid-template-columns: minmax(0, 1fr) clamp(380px, 27vw, 520px);
+    align-items: start;
+  }
+  /* La columna de la derecha acompaña al bajar: «Ejecutar» siempre a mano. */
+  .nc-lado {
+    position: sticky;
+    top: 124px;
+  }
+  /* Las listas usan el alto de la pantalla. */
+  .nc-lista-alta {
+    min-height: 14rem;
+    max-height: calc(100vh - 330px);
+  }
+}
+
+@media (max-width: 1023px) {
+  /* En pantallas chicas «Ejecutar» queda pegado abajo. */
+  .nc-ejecutar {
+    position: sticky;
+    bottom: 8px;
+    z-index: 10;
+    flex-direction: row;
+    align-items: center;
+    box-shadow: 0 -4px 18px rgba(15, 23, 42, 0.12);
+  }
+  .nc-boton {
+    width: auto;
+  }
+}
+
+/* --- Ejecuciones: historial como bandeja + detalle ---------------------------- */
+
+.ej-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.ej-detalle {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.ej-historial {
+  padding: 12px;
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  background: var(--color-panel);
+}
+
+.ej-historial-cab {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 4px 8px;
+}
+
+.ej-historial-cab h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.ej-historial-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ej-hist-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  transition: background-color 0.15s;
+}
+
+.ej-hist-item:hover {
+  background: var(--color-panel-alt);
+}
+
+.ej-hist-item.activo {
+  border-color: rgba(37, 99, 235, 0.35);
+  background: rgba(37, 99, 235, 0.08);
+}
+
+.ej-hist-fila {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ej-hist-periodo {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.ej-hist-meta {
+  color: var(--color-tenue);
+  font-size: 0.75rem;
+}
+
+.ej-hist-res {
+  color: var(--color-ok-texto);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.ej-hist-res-mal {
+  color: var(--color-aviso-texto);
+}
+
+.ej-hist-punto { width: 9px; height: 9px; }
+.ej-hist-finalizada { color: #15803d; }
+.ej-hist-en_curso { color: var(--color-acento); }
+.ej-hist-esperando { color: #b7791f; }
+.ej-hist-cancelada { color: #94a3b8; }
+.ej-hist-error { color: #c53030; }
+
+@media (min-width: 1024px) {
+  .ej-layout-con-historial {
+    grid-template-columns: clamp(270px, 18vw, 360px) minmax(0, 1fr);
+    align-items: start;
+  }
+  /* A la izquierda y fijo: se cambia de control sin bajar. */
+  .ej-layout-con-historial .ej-historial {
+    order: -1;
+    position: sticky;
+    top: 124px;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 140px);
+  }
+  .ej-layout-con-historial .ej-historial-lista {
+    overflow-y: auto;
+  }
+}
+
+/* Etapas del cliente en la misma fila: ARCA · Xubio · Auditoría. */
+.ej-etapas {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.ej-etapa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ej-etapa-chip svg {
+  width: 12px;
+  height: 12px;
+}
+
+.ej-etapa-chip .ej-spinner {
+  width: 10px;
+  height: 10px;
+  border-width: 2px;
+}
+
+.ej-etapa-chip[data-estado='ok'] { background: #e7f5ec; color: #15803d; }
+.ej-etapa-chip[data-estado='error'] { background: #fde2e2; color: #b91c1c; }
+.ej-etapa-chip[data-estado='procesando'] { background: #e0ebff; color: #1d4ed8; }
+.ej-etapa-chip[data-estado='aviso'] { background: #fdf0d9; color: #92400e; }
+
+@media (max-width: 640px) {
+  .ej-cliente summary {
+    flex-wrap: wrap;
+  }
+  .ej-cliente-nombre {
+    flex-basis: calc(100% - 40px);
+  }
+}
+
+.ej-kpi-grave {
+  margin-left: 4px;
+  color: #b91c1c;
+  font-weight: 800;
+}
+
+/* --- Clientes: lista + panel de edición ---------------------------------------- */
+
+.mf-dialogo .cl-form-cuerpo {
+  max-height: 70vh;
+}
+
+/* En el panel angosto, los datos de ARCA van uno debajo del otro. */
+.cl-form-panel .cl-form-arca {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cl-form-panel .cl-form-arca > * {
+  grid-column: auto;
+}
+
+.cl-form-panel {
+  padding: 0;
+  overflow: clip;
+}
+
+/* Guardar / Cancelar siempre a la vista aunque el formulario sea más alto que la pantalla. */
+.cl-form-panel footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  background: var(--color-panel);
+}
+
+/* En el panel angosto los botones se achican y, si no entran, saltan de renglón. */
+.cl-form-panel footer {
+  flex-wrap: wrap;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.cl-form-panel footer .mf-btn {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
+.cl-grilla {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+@media (min-width: 1024px) {
+  .cl-grilla-con-panel {
+    grid-template-columns: minmax(0, 1fr) clamp(360px, 27vw, 500px);
+    align-items: start;
+  }
+  /* El panel acompaña al bajar por la lista. */
+  .cl-lado {
+    position: sticky;
+    top: 124px;
+    /* Alto pensado para la posición inicial (debajo del título): así «Guardar»
+       se ve sin bajar; el formulario scrollea adentro. */
+    max-height: calc(100vh - 240px);
+    overflow-y: auto;
+  }
+}
+
+.cl-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+
+.cl-filtro {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--color-borde);
+  border-radius: 999px;
+  background: var(--color-panel-alt);
+  color: var(--color-texto);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.cl-filtro:hover {
+  border-color: var(--color-acento);
+}
+
+.cl-filtro.activo {
+  border-color: var(--color-acento);
+  background: var(--color-acento);
+  color: #fff;
+}
+
+.cl-filtro-num {
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.08);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.cl-filtro.activo .cl-filtro-num {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.cl-filtro-alerta:not(.activo) .cl-filtro-num {
+  background: #fde2e2;
+  color: #b91c1c;
+}
+
+.cl-resumen {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cl-resumen h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.cl-resumen dl {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.cl-resumen dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 2px;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.cl-resumen dt {
+  color: var(--color-tenue);
+  font-size: 0.9rem;
+}
+
+.cl-resumen dd {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.cl-resumen .cl-ok {
+  color: #15803d;
+}
+
+.cl-resumen .cl-mal {
+  color: #b91c1c;
+}
+
+/* --- Faltantes a Xubio: elegir a la izquierda, resultados a la derecha -------- */
+
+.fx-grilla {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+/* Cada cuadro: encabezado arriba y, debajo, el área que ocupa el resto. */
+.fx-cuerpo {
+  display: flex;
+  flex-direction: column;
+  margin-top: 12px;
+}
+
+@media (min-width: 1024px) {
+  /* Dos cuadros iguales: mismo ancho y mismo alto, y los encabezados comparten
+     fila (subgrid) para que las áreas punteadas también queden parejas. */
+  .fx-grilla {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    align-items: stretch;
+  }
+
+  .fx-grilla > .mf-panel {
+    display: grid;
+    grid-row: span 2;
+    grid-template-rows: subgrid;
+    /* Sin esto, un nombre de archivo largo ensancha el cuadro. */
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 0;
+  }
+
+  .fx-cuerpo > .zona,
+  .fx-cuerpo > .fx-vacio {
+    flex: 1;
+  }
+}
+
+.fx-vacio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 220px;
+  border: 2px dashed var(--color-borde);
+  border-radius: 10px;
+  color: var(--color-tenue);
+  text-align: center;
+  padding: 24px;
+}
+
+/* Atajos de mes: siempre en su propio renglón, debajo del selector. */
+.nc-meses-rapidos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-basis: 100%;
+}
+
+/* «Para revisar»: toda la tarjeta abre los hallazgos, no solo el número. */
+.ej-kpi {
+  position: relative;
+}
+
+.ej-kpi-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+}
+
+.ej-kpi:has(.ej-kpi-link) {
+  cursor: pointer;
+  transition: background-color 0.15s, box-shadow 0.15s;
+}
+
+.ej-kpi:has(.ej-kpi-link):hover {
+  background: rgba(197, 48, 48, 0.12);
+  box-shadow: 0 2px 8px rgba(197, 48, 48, 0.15);
+}
+
+.ej-kpi:has(.ej-kpi-link:focus-visible) {
+  outline: 2px solid var(--color-acento);
+  outline-offset: 2px;
+}
+
+.ej-kpi-link:focus-visible {
+  outline: none;
+}
+
+/* --- Qué hay que hacer (pantalla del control) ------------------------------------ */
+
+.tr-panel {
+  border-left: 4px solid var(--color-aviso);
+}
+
+.tr-panel-listo {
+  border-left-color: var(--color-ok);
+}
+
+.tr-cab {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+}
+
+.tr-avance {
+  width: 160px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--color-borde);
+  overflow: hidden;
+}
+
+.tr-avance > div {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-ok);
+  transition: width 0.25s;
+}
+
+.tr-grupo {
+  margin-top: 16px;
+}
+
+.mf-panel .tr-grupo-titulo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  font-weight: 800;  text-transform: none;
+  letter-spacing: 0;
+  color: var(--color-texto);
+}
+
+.tr-grupo-titulo small {
+  color: var(--color-tenue);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.tr-grupo-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--color-acento);
+  color: #fff;
+  font-size: 0.8rem;
+  align-self: center;
+}
+
+.tr-grupo[data-grupo='primero'] .tr-grupo-num {
+  background: var(--color-error);
+}
+
+.tr-lista {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.tr-tarea {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  background: var(--color-panel);
+  transition: background-color 0.15s, opacity 0.15s;
+}
+
+.tr-tarea:hover {
+  background: var(--color-panel-alt);
+}
+
+.tr-grupo[data-grupo='primero'] .tr-tarea {
+  border-color: rgba(197, 48, 48, 0.35);
+}
+
+.tr-check {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: var(--color-ok);
+  cursor: pointer;
+}
+
+.tr-texto {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  cursor: pointer;
+}
+
+.tr-orden {
+  font-weight: 700;
+  font-size: 0.98rem;
+}
+
+.tr-meta {
+  color: var(--color-tenue);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.tr-meta strong {
+  color: var(--color-texto);
+}
+
+.tr-acciones {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tr-hecha {
+  opacity: 0.55;
+}
+
+.tr-hecha .tr-orden {
+  text-decoration: line-through;
+}
+
+.tr-info {
+  margin: 14px 0 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--color-panel-alt);
+  color: var(--color-tenue);
+  font-size: 0.88rem;
+}
+
+@media (max-width: 640px) {
+  .tr-tarea {
+    flex-wrap: wrap;
+  }
+
+  .tr-acciones {
+    width: 100%;
+    justify-content: flex-start;
+    padding-left: 32px;
+  }
+
+  .tr-avance {
+    width: 100%;
+  }
+}
+
+/* «Qué hacer» dentro de un aviso. */
+.mf-aviso .mf-aviso-orden {
+  margin: 4px 0 0;
+  font-weight: 700;
+  color: var(--color-texto);
+}
+
+/* Nuevo control: lo que falta para ejecutar lleva a su sección. */
+.nc-falta-chip {
+  margin-left: 4px;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nc-falta-chip:hover {
+  background: rgba(197, 48, 48, 0.08);
+}
+
+.nc-falta-fuerte {
+  color: var(--color-error);
+  font-size: 0.85rem;
+}
+
+.nc-incompletos {
+  color: var(--color-aviso-texto);
+  font-weight: 600;
+}
+
+.nc-resaltar {
+  box-shadow: 0 0 0 3px var(--color-acento);
+  transition: box-shadow 0.2s;
 }

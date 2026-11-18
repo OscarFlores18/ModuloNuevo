@@ -25,7 +25,7 @@ from typing import Any
 
 from typing import Callable
 
-from .crypto import cifrar, es_formato_vigente, migrar_valor
+from .crypto import cifrar, migrar_valor
 from .errors import ConfigInvalida
 
 

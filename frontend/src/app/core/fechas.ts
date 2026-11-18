@@ -68,3 +68,31 @@ export function tamanoLegible(bytes: number): string {
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
 }
+
+/**
+ * El período como lo dice el estudio: «octubre 2026», «noviembre 2026 (al 17/11)»
+ * si el mes no terminó, «año 2025», o el rango tal cual si no es un mes ni un año.
+ * Recibe DD/MM/AAAA.
+ */
+export function periodoLegible(desde: string, hasta: string): string {
+  const d = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(desde);
+  const h = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(hasta);
+  if (!d || !h) return `${desde} al ${hasta}`;
+  const [, dd, dm, da] = d;
+  const [, hd, hm, ha] = h;
+  if (dd === '01' && dm === hm && da === ha) {
+    const ultimo = new Date(Number(da), Number(dm), 0).getDate();
+    const nombre = nombreDelMes(`${da}-${dm}`);
+    return Number(hd) === ultimo ? nombre : `${nombre} (al ${hd}/${hm})`;
+  }
+  if (dd === '01' && dm === '01' && da === ha) {
+    return hd === '31' && hm === '12' ? `año ${da}` : `año ${da} (al ${hd}/${hm})`;
+  }
+  return `${desde} al ${hasta}`;
+}
+
+/** Lo mismo desde el texto del resumen («01/10/2026 al 31/10/2026»). */
+export function periodoLegibleDe(periodo: string): string {
+  const [desde, hasta] = periodo.split(' al ');
+  return hasta ? periodoLegible(desde, hasta) : periodo;
+}

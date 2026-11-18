@@ -1,19 +1,33 @@
-import { Component, ElementRef, effect, inject, input, model, output, signal, viewChild } from '@angular/core';
-import { formatearCuit } from '../../core/cuit.pipe';
+import { Component, ElementRef, effect, inject, input, model, output, signal, untracked, viewChild } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { cuitValida, formatearCuit } from '../../core/cuit.pipe';
 import { Cliente, ClienteEntrada, mensajeDeError } from '../../core/models';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { Alerta } from '../../core/ui/alerta';
 import { ConfirmModal } from '../../core/ui/confirm-modal';
 
 /**
- * Alta y edición de un cliente en un <dialog>. La clave fiscal no viaja al
- * navegador: al editar, dejarla vacía mantiene la que ya estaba guardada.
+ * Alta y edición de un cliente. En pantallas anchas va en el panel de la derecha
+ * (`enPanel`), al lado de la lista; en las chicas, en un <dialog>. La clave
+ * fiscal no viaja al navegador: al editar, dejarla vacía mantiene la guardada.
  */
 @Component({
   selector: 'app-cliente-form',
-  imports: [Alerta, ConfirmModal],
+  imports: [Alerta, ConfirmModal, NgTemplateOutlet],
   template: `
-    <dialog #dialogo (close)="abierto.set(false)" aria-labelledby="t-cliente-form" class="mf-dialogo w-[min(40rem,calc(100vw-2rem))]">
+    @if (enPanel()) {
+      @if (abierto()) {
+        <section class="mf-panel cl-form-panel" aria-labelledby="t-cliente-form">
+          <ng-container *ngTemplateOutlet="contenido" />
+        </section>
+      }
+    } @else {
+      <dialog #dialogo (close)="abierto.set(false)" aria-labelledby="t-cliente-form" class="mf-dialogo w-[min(40rem,calc(100vw-2rem))]">
+        <ng-container *ngTemplateOutlet="contenido" />
+      </dialog>
+    }
+
+    <ng-template #contenido>
       <form (submit)="$event.preventDefault(); guardar()" novalidate>
         <header class="mf-panel-titulo !mb-0 border-b border-borde px-5 py-4">
           <div class="min-w-0 flex-1">
@@ -23,7 +37,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
           <button type="button" class="mf-icono-btn" (click)="abierto.set(false)" aria-label="Cerrar">✕</button>
         </header>
 
-        <div class="flex max-h-[70vh] flex-col gap-4 overflow-y-auto px-5 py-4">
+        <div class="cl-form-cuerpo flex flex-col gap-4 overflow-y-auto px-5 py-4">
           <label class="mf-campo">
             <span>Nombre del cliente</span>
             <input class="mf-input" name="nombre" [value]="nombre()" (input)="nombre.set($any($event.target).value)" required
@@ -34,7 +48,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
           <fieldset class="mf-panel mf-panel-acento m-0 !bg-panel-alt">
             <legend class="sr-only">ARCA</legend>
             <h3 class="!mt-0">ARCA</h3>
-            <div class="grid gap-3 sm:grid-cols-2">
+            <div class="cl-form-arca grid gap-3 sm:grid-cols-2">
               <label class="mf-campo">
                 <span>CUIT de ingreso</span>
                 <input class="mf-input mono" name="cuit_login" inputmode="numeric" [value]="cuitLogin()" (input)="cuitLogin.set($any($event.target).value)"
@@ -74,7 +88,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
           </button>
         </footer>
       </form>
-    </dialog>
+    </ng-template>
 
     <app-confirm-modal [(abierto)]="confirmarBorrado" [titulo]="'¿Borrar ' + (cliente()?.nombre ?? '') + '?'" textoConfirmar="Sí, borrar" [peligro]="true" (confirmado)="borrar()">
       Se saca de config.json con sus claves. <strong class="text-texto">No se puede deshacer</strong>; los Excel ya generados quedan en sus carpetas.
@@ -85,6 +99,8 @@ export class ClienteForm {
   private readonly store = inject(ClientesStore);
 
   readonly abierto = model(false);
+  /** true: se muestra en el panel de la derecha en vez de una ventana. */
+  readonly enPanel = input(false);
   /** null = alta. */
   readonly cliente = input<Cliente | null>(null);
   readonly guardado = output<string>();
@@ -101,16 +117,27 @@ export class ClienteForm {
   protected readonly error = signal<string | null>(null);
   protected readonly confirmarBorrado = signal(false);
 
-  private readonly dialogo = viewChild.required<ElementRef<HTMLDialogElement>>('dialogo');
+  private readonly dialogo = viewChild<ElementRef<HTMLDialogElement>>('dialogo');
 
   constructor() {
     effect(() => {
-      const d = this.dialogo().nativeElement;
-      if (this.abierto() && !d.open) {
-        this.cargar(this.cliente());
-        d.showModal();
-      }
-      if (!this.abierto() && d.open) d.close();
+      const abierto = this.abierto();
+      const cliente = this.cliente();
+      const enPanel = this.enPanel();
+      const d = this.dialogo()?.nativeElement;
+      untracked(() => {
+        if (enPanel) {
+          // En el panel, elegir otro cliente de la lista carga sus datos.
+          if (abierto) this.cargar(cliente);
+          return;
+        }
+        if (!d) return;
+        if (abierto && !d.open) {
+          this.cargar(cliente);
+          d.showModal();
+        }
+        if (!abierto && d.open) d.close();
+      });
     });
   }
 
@@ -125,8 +152,7 @@ export class ClienteForm {
   }
 
   protected cuitInvalido(valor: string): boolean {
-    const d = valor.replace(/\D/g, '');
-    return d.length > 0 && d.length !== 11;
+    return valor.replace(/\D/g, '').length > 0 && !cuitValida(valor);
   }
 
   protected async guardar(): Promise<void> {
@@ -136,7 +162,7 @@ export class ClienteForm {
       return;
     }
     if (this.cuitInvalido(this.cuitLogin()) || this.cuitInvalido(this.cuitRepres())) {
-      this.error.set('Las CUIT tienen que tener 11 dígitos.');
+      this.error.set('Revisá las CUIT: tienen que tener 11 dígitos y el último (verificador) tiene que coincidir.');
       return;
     }
     const datos: ClienteEntrada = {

@@ -24,9 +24,9 @@ export const routes: Routes = [
     loadComponent: () => import('./features/clientes/clientes').then((m) => m.ClientesPantalla),
   },
   {
-    path: 'ayuda',
-    title: 'Manual de uso · Control de Facturas',
-    loadComponent: () => import('./features/ayuda/ayuda').then((m) => m.AyudaPantalla),
+    path: 'convertir-aux',
+    title: 'Faltantes a Xubio · Control de Facturas',
+    loadComponent: () => import('./features/convertir/convertir').then((m) => m.ConvertirPantalla),
   },
   { path: '**', redirectTo: '' },
 ];

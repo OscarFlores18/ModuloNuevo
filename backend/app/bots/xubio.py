@@ -12,13 +12,13 @@ solo se cambia de empresa antes de bajar cada libro.
 """
 
 import os
+import re
 import time
 from typing import Callable
 from urllib.parse import urljoin
 
 from playwright.sync_api import Page, sync_playwright
 
-from ..core import config
 from ..core.errors import TimeoutDescarga
 from ..core.models import BotResult
 from .navegador import como_fuente, lanzar, nuevo_contexto
@@ -157,6 +157,79 @@ def procesar_informe_individual(
     )
 
 
+# --- Importación «Desde Mis Comprobantes (ARCA)» ----------------------------------
+#
+# Camino, igual que a mano: <Compras|Ventas> > Comprobantes de <Compra|Venta> >
+# Acciones > Importar > Desde Mis Comprobantes (ARCA). La pantalla trae un iframe
+# (app.xubio.com/.../importacion-csv-afip/...) con «Seleccionar archivo» (.zip).
+#
+# Por ahora el bot sube el .zip y se detiene: NO aprieta «Importar» (prueba).
+
+_IMPORTACION = {
+    "Compras": ("Compras", "Comprobantes de Compra", "/NXV/compras/importacion-mis-comprobantes"),
+    "Ventas": ("Ventas", "Comprobantes de Venta", "/NXV/ventas/importacion-mis-comprobantes"),
+}
+
+
+def preparar_importacion_arca(
+    page: Page,
+    operacion: str,
+    ruta_zip: str,
+    log: Callable[[str], None] = print,
+    captura: str | None = None,
+) -> dict:
+    """Abre la importación de Mis Comprobantes de la operación y carga el .zip,
+    sin confirmar. Devuelve {"archivo_cargado": bool, "boton_importar_habilitado": bool}."""
+    if operacion not in _IMPORTACION:
+        raise ValueError(f"Operación desconocida: {operacion}")
+    menu, listado, _ = _IMPORTACION[operacion]
+
+    log(f"   -> Xubio: {menu} > {listado} > Acciones > Importar > Desde Mis Comprobantes (ARCA)...")
+    try:
+        page.get_by_role("button", name="Rechazarlas todas").click(timeout=1500)
+    except Exception:
+        pass
+    page.locator("a:visible", has_text=re.compile(rf"^\s*{menu}\s*$")).first.click(timeout=10000)
+    page.locator("a:visible", has_text=re.compile(rf"^\s*{listado}\s*$", re.I)).first.click(timeout=10000)
+    page.mouse.move(0, 0)
+
+    acciones = page.locator("button:visible, a:visible", has_text=re.compile(r"^\s*Acciones\s*$"))
+    acciones.first.wait_for(timeout=30000)
+    acciones.first.click()
+    page.locator("a:visible", has_text=re.compile(r"^\s*Importar\s*$")).first.click(timeout=10000)
+    page.locator("li:visible", has_text=re.compile(r"Desde Mis Comprobantes", re.I)).first.click(timeout=10000)
+
+    # El formulario vive en un iframe de app.xubio.com.
+    page.wait_for_selector("iframe[src*='importacion-csv-afip']", timeout=30000)
+    marco = page.frame_locator("iframe[src*='importacion-csv-afip']")
+    entrada = marco.locator("input[type='file']")
+    entrada.wait_for(state="attached", timeout=30000)
+    entrada.set_input_files(ruta_zip)
+    log(f"      [OK]: Archivo cargado: {os.path.basename(ruta_zip)}")
+
+    nombre = os.path.basename(ruta_zip)
+    cargado = False
+    limite = time.monotonic() + 15
+    while time.monotonic() < limite:
+        if marco.get_by_text(nombre, exact=False).count():
+            cargado = True
+            break
+        page.wait_for_timeout(250)
+    boton = marco.locator("button", has_text=re.compile(r"^\s*Importar\s*$")).first
+    habilitado = bool(boton.count()) and boton.is_enabled()
+    if captura:
+        try:
+            page.screenshot(path=captura)
+        except Exception:
+            pass
+    log(
+        "      [INFO]: Listo para importar: el bot NO aprieta «Importar» (prueba)."
+        if habilitado
+        else "      [AVISO]: El botón «Importar» no se habilitó: revisá el archivo en la pantalla."
+    )
+    return {"archivo_cargado": cargado, "boton_importar_habilitado": habilitado}
+
+
 class SesionXubio:
     """Una sesión de Chrome ya logueada en Xubio.
 
@@ -240,6 +313,13 @@ class SesionXubio:
         except Exception:
             self.url_empresa = None
         return self.url_empresa
+
+    def preparar_importacion_arca(self, operacion: str, ruta_zip: str, captura: str | None = None) -> dict:
+        """En la empresa activa: abre «Importar desde Mis Comprobantes (ARCA)» y
+        carga el .zip, sin confirmar."""
+        if self._page is None:
+            raise RuntimeError("La sesión de Xubio no está abierta.")
+        return preparar_importacion_arca(self._page, operacion, ruta_zip, log=self.log, captura=captura)
 
     def descargar(
         self,

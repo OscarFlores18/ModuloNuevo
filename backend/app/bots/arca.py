@@ -32,7 +32,7 @@ import openpyxl
 from playwright.sync_api import Page, sync_playwright
 
 from ..core import config
-from ..core.errors import BotError, SesionVencida, TimeoutDescarga
+from ..core.errors import BotError, LoginError, SesionVencida, TimeoutDescarga
 from ..core.models import BotResult
 from .navegador import capturas_permitidas, como_fuente, inyectar, lanzar, nuevo_contexto
 
@@ -42,6 +42,47 @@ MARCAS_SESION_VENCIDA = ("MISSING_AUTHENTICATION_INFO", "HTTP Status 401", "F1:u
 URL_LOGIN = "https://auth.afip.gob.ar/contribuyente_/login.xhtml"
 URL_PORTAL = "https://portalcf.cloud.afip.gob.ar/portal/app/"
 SERVICIO = "Mis Comprobantes"
+
+# Login: cuánto se espera cada pantalla (CUIT -> clave -> portal). Si ARCA pide
+# algo a la persona (captcha, código, cambio de clave) se le da más tiempo para
+# completarlo en la ventana de Chrome del bot.
+ESPERA_LOGIN_S = 45
+ESPERA_PERSONA_S = 180
+
+# Textos con los que ARCA avisa en el login que algo está mal (en minúsculas).
+_PALABRAS_ERROR_LOGIN = (
+    "incorrect", "inválid", "invalid", "no existe", "no es válid", "bloquead",
+    "inhabilitad", "vencid", "no se pudo", "error", "intente nuevamente",
+    "intentá nuevamente", "demasiados intentos",
+)
+
+# Lo que la persona tiene que hacer en la ventana de Chrome (en minúsculas).
+_PALABRAS_PIDE_PERSONA = (
+    "no soy un robot", "captcha", "verificá que sos", "verifique que es",
+    "código de verificación", "codigo de verificacion", "segundo factor", "token",
+    "cambiar tu clave", "cambio de clave", "nueva clave", "modificar clave",
+    "términos y condiciones", "terminos y condiciones", "datos de contacto",
+)
+
+# Lee el texto visible del login sin tocar los campos: los mensajes de error y
+# el texto general de la pantalla. Nunca lee el valor de un input (la clave).
+_JS_PANTALLA_LOGIN = r"""() => {
+  const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const sel = '[role=alert], .alert, .alert-danger, .ui-messages-error, .ui-message-error, '
+    + '[class*=error], [class*=mensaje], [id*=msg], [id*=Msg], [id*=error], .text-danger';
+  const mensajes = [...document.querySelectorAll(sel)]
+    .filter(visible)
+    .map((el) => (el.innerText || '').replace(/\s+/g, ' ').trim())
+    .filter((s) => s && s.length < 300);
+  const captcha = [...document.querySelectorAll('iframe')].some(
+    (f) => visible(f) && /recaptcha|hcaptcha|challenges\.cloudflare/.test(f.src || ''));
+  return {
+    mensajes: [...new Set(mensajes)].slice(0, 3),
+    captcha,
+    texto: (document.body ? document.body.innerText : '').replace(/\s+/g, ' ').trim().slice(0, 600),
+    url: location.host + location.pathname,
+  };
+}"""
 
 
 class FiltroNoDisponible(TimeoutDescarga):
@@ -224,15 +265,80 @@ class SesionArca:
         page = self._portal
         self.log("   -> Iniciando sesión en ARCA...")
         self._ir(page, URL_LOGIN)
+        self._esperar_login(page, "id=F1:username", "la pantalla de ingreso")
         page.fill("id=F1:username", self.cuit_login)
         page.click("id=F1:btnSiguiente")
+        self._esperar_login(page, "id=F1:password", "el campo de la clave (después del CUIT)")
         inyectar(page, "id=F1:password", self._fuente_clave, self._clave_jit)
         page.click("id=F1:btnIngresar")
 
-        page.wait_for_selector("#buscadorInput", timeout=30000)
+        self._esperar_login(page, "#buscadorInput", "el portal (después de la clave)")
         self._login_ts = time.monotonic()
         self._ultimo_ping = self._login_ts
         self.log("      [OK]: Sesión de ARCA iniciada.")
+
+    def _pantalla_login(self, page: Page) -> dict:
+        try:
+            return page.evaluate(_JS_PANTALLA_LOGIN) or {}
+        except Exception:
+            return {}
+
+    def _esperar_login(self, page: Page, selector: str, que: str) -> None:
+        """Espera la próxima pantalla del login y, si no llega, dice por qué.
+
+        - Si ARCA muestra un mensaje de error (CUIT o clave mal, clave vencida o
+          bloqueada), corta enseguida con ese mensaje.
+        - Si pide algo a la persona (captcha, código, cambio de clave), lo avisa
+          en el registro y espera hasta ``ESPERA_PERSONA_S`` a que se complete en
+          la ventana de Chrome del bot.
+        - Si no pasa nada, corta a los ``ESPERA_LOGIN_S`` con lo que decía la
+          pantalla, en vez de un timeout de Playwright.
+        """
+        inicio = time.monotonic()
+        avisado = False
+        while True:
+            try:
+                page.wait_for_selector(selector, state="visible", timeout=2500)
+                if avisado:
+                    self.log("      [OK]: Listo, se sigue con el ingreso a ARCA.")
+                return
+            except Exception:
+                pass
+            pantalla = self._pantalla_login(page)
+            mensajes = [
+                m for m in pantalla.get("mensajes") or []
+                if any(p in m.lower() for p in _PALABRAS_ERROR_LOGIN)
+            ]
+            if mensajes:
+                raise LoginError(
+                    f"ARCA no dejó entrar: «{mensajes[0]}». "
+                    "Revisá el CUIT de ingreso y la clave fiscal del cliente.",
+                    detalle={"pantalla": pantalla.get("url"), "esperaba": que},
+                )
+            texto = (pantalla.get("texto") or "").lower()
+            pide = bool(pantalla.get("captcha")) or any(p in texto for p in _PALABRAS_PIDE_PERSONA)
+            if pide and not avisado:
+                avisado = True
+                que_pide = "un captcha" if pantalla.get("captcha") else "un paso extra"
+                self.log(
+                    f"      [AVISO]: ARCA pide {que_pide} antes de seguir. Completalo en la "
+                    f"ventana de Chrome del bot: se espera hasta {ESPERA_PERSONA_S // 60} minutos."
+                )
+            transcurrido = time.monotonic() - inicio
+            if transcurrido > (ESPERA_PERSONA_S if pide else ESPERA_LOGIN_S):
+                resumen = (pantalla.get("texto") or "").strip()
+                resumen = (resumen[:220] + "…") if len(resumen) > 220 else resumen
+                motivo = (
+                    "no se completó lo que pedía ARCA (captcha, código o cambio de clave)"
+                    if pide
+                    else "puede ser un CUIT o una clave fiscal incorrectos, o ARCA muy lenta"
+                )
+                raise LoginError(
+                    f"No se pudo iniciar sesión en ARCA: no apareció {que} en "
+                    f"{int(transcurrido)} s ({motivo})."
+                    + (f" La pantalla decía: «{resumen}»" if resumen else ""),
+                    detalle={"pantalla": pantalla.get("url"), "esperaba": que},
+                )
 
     def _ping(self) -> bool:
         """Consulta el portal con las cookies de la sesión.

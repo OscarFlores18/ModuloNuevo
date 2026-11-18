@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import calendar
 import io
+import json
 import re
 import shutil
 import threading
@@ -43,7 +44,10 @@ from ..core.saneo import sanear
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from .credenciales import ServicioCredenciales
 
-MAX_HISTORIAL = 20
+# Controles que se recuerdan (en memoria y en DATA_DIR/ejecuciones/<id>.json).
+MAX_HISTORIAL = 100
+# Del registro técnico se guarda en disco solo el final (alcanza para ver qué falló).
+MAX_LINEAS_LOG_GUARDADAS = 500
 MAX_LINEAS_LOG = 5000
 
 ESTADOS_FINALES = {"finalizada", "cancelada", "error"}
@@ -211,31 +215,144 @@ class Ejecucion:
             "log_total": self.log_base + len(self.log),
         }
 
+    def a_guardar(self) -> dict:
+        """Lo que queda en disco al terminar: todo menos el estado interno del hilo."""
+        return {
+            "version": 1,
+            "id": self.id,
+            "usuario": self.usuario,
+            "parametros": self.parametros,
+            "estado": self.estado,
+            "creada": self.creada,
+            "terminada": self.terminada,
+            "mensaje": self.mensaje,
+            "advertencias": self.advertencias,
+            "resumenes": self.resumenes,
+            "clientes": [
+                {
+                    "nombre": c.nombre,
+                    "estado": c.estado,
+                    "carpeta": c.carpeta,
+                    "archivos": c.archivos,
+                    "xubio_url": c.xubio_url,
+                    "pasos": [p.__dict__ for p in c.pasos],
+                }
+                for c in self.clientes
+            ],
+            "log": self.log[-MAX_LINEAS_LOG_GUARDADAS:],
+        }
+
+    @classmethod
+    def desde_guardado(cls, datos: dict) -> "Ejecucion":
+        ej = cls(
+            id=str(datos["id"]),
+            usuario=str(datos.get("usuario") or ""),
+            parametros=dict(datos["parametros"]),
+            clientes=[
+                ClienteEnCurso(
+                    nombre=c["nombre"],
+                    pasos=[Paso(**p) for p in c.get("pasos") or []],
+                    estado=c.get("estado") or "pendiente",
+                    carpeta=c.get("carpeta") or "",
+                    archivos=list(c.get("archivos") or []),
+                    xubio_url=c.get("xubio_url"),
+                )
+                for c in datos.get("clientes") or []
+            ],
+            estado=datos.get("estado") or "error",
+            creada=datos.get("creada") or _ahora(),
+            terminada=datos.get("terminada"),
+            preguntar=False,
+            mensaje=datos.get("mensaje") or "",
+            log=list(datos.get("log") or []),
+            advertencias=list(datos.get("advertencias") or []),
+            resumenes=list(datos.get("resumenes") or []),
+        )
+        if ej.estado not in ESTADOS_FINALES:
+            # Quedó a medias (se apagó el servidor): no puede seguir corriendo.
+            ej.estado = "error"
+            ej.mensaje = ej.mensaje or "Se cortó: el servidor se apagó durante el control."
+        return ej
+
 
 # --- Registro de ejecuciones -------------------------------------------------
 
 _ejecuciones: dict[str, Ejecucion] = {}
 _orden: list[str] = []
 _lock = threading.Lock()
+# La carpeta de la que ya se leyó el historial (cambia en los tests).
+_historial_de: Path | None = None
+
+
+def _carpeta_historial() -> Path:
+    return Path(config.DATA_DIR) / "ejecuciones"
+
+
+def _cargar_historial() -> None:
+    """Suma los controles guardados en disco. Se llama con `_lock` tomado."""
+    global _historial_de
+    carpeta = _carpeta_historial()
+    if _historial_de == carpeta:
+        return
+    _historial_de = carpeta
+    if not carpeta.is_dir():
+        return
+    for archivo in carpeta.glob("*.json"):
+        try:
+            ej = Ejecucion.desde_guardado(json.loads(archivo.read_text(encoding="utf-8")))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue  # un archivo roto no impide ver el resto
+        _ejecuciones.setdefault(ej.id, ej)
+    _orden[:] = sorted(_ejecuciones, key=lambda i: _ejecuciones[i].creada)
+    _recortar()
+
+
+def _recortar() -> None:
+    """Olvida los controles terminados más viejos (y su archivo). Con `_lock` tomado."""
+    while len(_orden) > MAX_HISTORIAL:
+        viejo = _orden[0]
+        if _ejecuciones[viejo].estado not in ESTADOS_FINALES:
+            break
+        _orden.pop(0)
+        del _ejecuciones[viejo]
+        try:
+            (_carpeta_historial() / f"{viejo}.json").unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _guardar(ej: Ejecucion) -> None:
+    """Escribe el control terminado en disco. Si falla, el historial sigue en memoria."""
+    carpeta = _carpeta_historial()
+    try:
+        carpeta.mkdir(parents=True, exist_ok=True)
+        temporal = carpeta / f"{ej.id}.json.tmp"
+        temporal.write_text(
+            json.dumps(ej.a_guardar(), ensure_ascii=False, default=str), encoding="utf-8"
+        )
+        temporal.replace(carpeta / f"{ej.id}.json")
+    except OSError:
+        pass
 
 
 def listar() -> list[dict]:
     with _lock:
+        _cargar_historial()
         return [_ejecuciones[i].resumen() for i in reversed(_orden)]
 
 
 def obtener(ejecucion_id: str) -> Ejecucion:
     with _lock:
+        _cargar_historial()
         e = _ejecuciones.get(ejecucion_id)
     if e is None:
-        raise ErrorEjecucion(
-            "No existe esa ejecución (se borran al reiniciar el servidor).", 404
-        )
+        raise ErrorEjecucion("No existe esa ejecución.", 404)
     return e
 
 
 def activa() -> Ejecucion | None:
     with _lock:
+        _cargar_historial()
         for i in reversed(_orden):
             if _ejecuciones[i].estado not in ESTADOS_FINALES:
                 return _ejecuciones[i]
@@ -376,15 +493,10 @@ def iniciar(
             "aviso",
         )
     with _lock:
+        _cargar_historial()
         _ejecuciones[ej.id] = ej
         _orden.append(ej.id)
-        while len(_orden) > MAX_HISTORIAL:
-            viejo = _orden.pop(0)
-            if _ejecuciones[viejo].estado in ESTADOS_FINALES:
-                del _ejecuciones[viejo]
-            else:
-                _orden.insert(0, viejo)
-                break
+        _recortar()
 
     hilo = threading.Thread(
         target=_correr,
@@ -505,6 +617,7 @@ def _error_de_paso(cliente: str, paso: Paso) -> dict:
         "detalle": _acciones_de_paso(paso)[0],
         "acciones": _acciones_de_paso(paso)[1],
         "total": 0,
+        "a_corregir": 0,
         "comprobantes": [],
         "hoja": None,
     }
@@ -811,6 +924,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
         ej.pausa = None
         ej.cliente_actual = -1
         ej.terminada = _ahora()
+        _guardar(ej)
 
 
 def ruta_archivo(ej: Ejecucion, indice: int, nombre: str) -> Path:

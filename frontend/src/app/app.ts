@@ -28,13 +28,11 @@ export class App {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: true,
+    hour12: false,
   });
 
-  /** El botón flotante solo aparece si la página es más alta que la ventana. */
+  /** El botón flotante «Volver arriba». */
   protected readonly hayScroll = signal(false);
-  /** true = ya se está al final: el botón lleva arriba. */
-  protected readonly abajo = signal(false);
 
   constructor() {
     // Para el contador de clientes en la pestaña.
@@ -47,16 +45,14 @@ export class App {
     }
   }
 
+  /** Aparece recién después de bajar más de una pantalla: no tapa nada mientras se trabaja arriba. */
   protected medirScroll(): void {
     const el = document.documentElement;
-    const sobra = el.scrollHeight - el.clientHeight;
-    this.hayScroll.set(sobra > 200);
-    this.abajo.set(sobra - el.scrollTop < 120);
+    this.hayScroll.set(el.scrollTop > el.clientHeight * 0.8);
   }
 
   protected saltar(): void {
-    const el = document.documentElement;
-    window.scrollTo({ top: this.abajo() ? 0 : el.scrollHeight, behavior: 'smooth' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   /** «Actualizar» del encabezado: vuelve a pedir clientes, la ejecución en curso y el historial. */
@@ -72,7 +68,7 @@ export class App {
   }
 
   protected formatearFecha(d: Date): string {
-    return this.formatoFecha.format(d);
+    return this.formatoFecha.format(d).replace(',', '');
   }
 
   protected rolesDe(u: Usuario): string {

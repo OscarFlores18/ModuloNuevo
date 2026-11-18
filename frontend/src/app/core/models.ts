@@ -90,6 +90,27 @@ export interface ArchivoGenerado {
   tipo: 'arca' | 'xubio' | 'auditoria' | 'otro';
 }
 
+/** «Convertir AUX»: por cliente y período, el .zip (base64) y las partidas de ARCA no encontradas por operación. */
+export interface ResultadoConversion {
+  cliente: string;
+  periodo: string;
+  archivos: string[];
+  partidas: Partial<Record<'Ventas' | 'Compras', number>>;
+  /** Un .zip por operación con partidas, cada uno con un solo CSV (lo que pide Xubio). */
+  zips: Partial<Record<'Ventas' | 'Compras', { nombre: string; contenido: string }>>;
+  /** Copia para mirar en Excel: CAE y CUIT como texto. */
+  excel: { nombre: string; contenido: string } | null;
+  /** Lo que no generó archivo, por ejemplo «Ventas: no hay partidas…». */
+  avisos: string[];
+  error: string | null;
+}
+
+/** Un AUX subido: nombre y contenido en base64. */
+export interface ArchivoSubido {
+  nombre: string;
+  contenido: string;
+}
+
 export interface ClienteEjecucion {
   nombre: string;
   estado: EstadoCliente;
@@ -179,6 +200,8 @@ export type TipoError =
   | 'anulada_con_nc'
   | 'exterior_sin_arca'
   | 'tipo_distinto'
+  | 'cuit_distinto'
+  | 'importe_distinto'
   | 'paso_error';
 
 /** Un error del control (ventana de errores), con cómo solucionarlo. */
@@ -194,6 +217,8 @@ export interface Advertencia {
   acciones: string[];
   /** Cuántos comprobantes hay en total (en `comprobantes` llegan hasta 10). */
   total: number;
+  /** Cuántos hay que tocar de verdad (sin los normales). No viene en controles viejos. */
+  a_corregir?: number;
   comprobantes: (ComprobanteLetraDistinta | FilaConError)[];
   /** La hoja del Excel de la auditoría donde se ven todos. */
   hoja: string | null;
@@ -212,7 +237,6 @@ export function estaActiva(estado: EstadoEjecucion | undefined | null): boolean 
   return estado === 'en_curso' || estado === 'esperando';
 }
 
-/** El mensaje de error que manda la API ({detail: {mensaje}} o {detail: "..."}). */
 /**
  * Un error de la API ya traducido: `message` es lo que se le muestra al contador
  * y `tecnico` el detalle (código HTTP, respuesta del backend) para reportarlo.

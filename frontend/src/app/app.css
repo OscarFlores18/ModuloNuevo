@@ -1,4 +1,6 @@
+/* Encabezado arriba y el contenido ocupa el resto: el alto no depende de cuánto mide el encabezado. */
 :host {
-  display: block;
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
 }
