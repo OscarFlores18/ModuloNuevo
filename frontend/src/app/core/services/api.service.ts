@@ -34,9 +34,9 @@ export class ApiService {
   }
 
   // Convertir AUX: la hoja «Faltantes en Libro IVA» al CSV de Mis Comprobantes, sin tocar los controles.
-  convertirAux(archivos: ArchivoSubido[]): Promise<{ resultados: ResultadoConversion[] }> {
+  convertirAux(archivos: ArchivoSubido[], incluirNormales = false): Promise<{ resultados: ResultadoConversion[] }> {
     return firstValueFrom(
-      this.http.post<{ resultados: ResultadoConversion[] }>(`${this.url}/convertir-aux`, { archivos }).pipe(errorLegible('No se pudieron convertir los AUX.')),
+      this.http.post<{ resultados: ResultadoConversion[] }>(`${this.url}/convertir-aux`, { archivos, incluir_normales: incluirNormales }).pipe(errorLegible('No se pudieron convertir los AUX.')),
     );
   }
 

@@ -27,6 +27,8 @@ export const routes: Routes = [
     path: 'convertir-aux',
     title: 'Faltantes a Xubio · Control de Facturas',
     loadComponent: () => import('./features/convertir/convertir').then((m) => m.ConvertirPantalla),
+    // Si quedó algo cargado en Xubio sin apretar «Importar», se recuerda antes de salir.
+    canDeactivate: [(pantalla: { puedeSalir?: () => Promise<boolean> }) => pantalla.puedeSalir?.() ?? true],
   },
   { path: '**', redirectTo: '' },
 ];

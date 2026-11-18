@@ -1,5 +1,7 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { RouterLink } from '@angular/router';
+import { formatearCuit } from '../../core/cuit.pipe';
 import { descargarBlob } from '../../core/descargar';
 import { ResultadoConversion, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
@@ -11,6 +13,42 @@ import { ToastService } from '../../core/ui/toast';
 
 /** Lo que dice el nombre del AUX de la app: operación, período y cliente. */
 const NOMBRE_AUX = /^AUX - Control de facturas (Ventas|Compras) con AFIP - (\d{2}-\d{2}) - (.+?)(?: - \d+\S* control)?\.xlsx?$/i;
+
+/** Lo que se cargó en Xubio desde acá: «pendiente» hasta que se aprieta «Importar». */
+interface RegistroImportacion {
+  estado: 'pendiente' | 'importado';
+  /** ISO: cuándo se cargó o se marcó importado. */
+  fecha: string;
+  partidas: number;
+  control: number | null;
+}
+
+const CLAVE_REGISTRO = 'cf-faltantes-xubio';
+
+/** Queda en este navegador. Si no hay acceso (modo privado), arranca vacío. */
+function leerRegistro(): Record<string, RegistroImportacion> {
+  try {
+    const crudo = localStorage.getItem(CLAVE_REGISTRO);
+    const datos = crudo ? JSON.parse(crudo) : {};
+    return datos && typeof datos === 'object' ? datos : {};
+  } catch {
+    return {};
+  }
+}
+
+function escribirRegistro(datos: Record<string, RegistroImportacion>): void {
+  try {
+    localStorage.setItem(CLAVE_REGISTRO, JSON.stringify(datos));
+  } catch {
+    /* sin almacenamiento: se pierde al recargar */
+  }
+}
+
+const ORDINALES: Record<number, string> = { 1: '1er', 2: '2do', 3: '3er', 4: '4to', 5: '5to', 6: '6to', 7: '7mo', 8: '8vo', 9: '9no', 10: '10mo' };
+
+function ordinal(n: number): string {
+  return ORDINALES[n] ?? `${n}°`;
+}
 
 interface ArchivoElegido {
   archivo: File;
@@ -26,7 +64,7 @@ interface ArchivoElegido {
  */
 @Component({
   selector: 'app-convertir',
-  imports: [Encabezado, Alerta, FormsModule],
+  imports: [Encabezado, Alerta, FormsModule, RouterLink],
   styles: `
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
@@ -120,9 +158,14 @@ interface ArchivoElegido {
             <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Cargalos en Xubio</h2>
             <p class="mf-sub m-0 mt-1">Un .zip por operación, listo para «Importar desde Mis Comprobantes (ARCA)» en Xubio. «Ver en Excel» trae los mismos datos para revisarlos antes.</p>
           </div>
-          @if (todosLosZips().length > 1) {
-            <button type="button" class="mf-btn mf-btn-suave" (click)="descargarTodos()">Descargar todos ({{ todosLosZips().length }})</button>
-          }
+          <span class="flex items-center gap-2">
+            @if (todosLosZips().length > 1) {
+              <button type="button" class="mf-btn mf-btn-suave" (click)="descargarTodos()">Descargar todos ({{ todosLosZips().length }})</button>
+            }
+            <button type="button" class="mf-icono-btn" (click)="quitarTodos()" aria-label="Quitar todos los resultados" title="Quitar todos">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+            </button>
+          </span>
         </div>
         <div class="fx-cuerpo">
         @if (sinPartidas().length) {
@@ -133,37 +176,62 @@ interface ArchivoElegido {
             [mensajes]="sinPartidas()"
           />
         }
+        @if (hayNormales() || incluirNormales()) {
+          <label class="mt-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" [checked]="incluirNormales()" (change)="cambiarIncluirNormales($any($event.target).checked)" [disabled]="convirtiendo() || !elegidos().length" />
+            <span>Subir igual las anuladas con nota de crédito y las liquidaciones bancarias</span>
+          </label>
+        }
         <ul class="ej-archivos mt-3">
-          @for (r of lista; track $index) {
-            @let i = $index;
+          @for (r of lista; track claveResultado(r)) {
+            @let id = claveResultado(r);
             <li class="!items-start">
               <span class="min-w-0 flex-1">
-                <strong class="block truncate" [title]="r.cliente">{{ r.cliente }}@if (r.periodo) { · {{ r.periodo }} }</strong>
+                <strong class="block truncate" [title]="r.cliente">{{ r.cliente }}@if (r.periodo) { · {{ r.periodo }} }@if (textoControl(r); as c) { <span class="mf-tenue font-normal"> · {{ c }}</span> }</strong>
                 @if (r.error) {
                   <span class="text-sm" style="color: var(--color-error)">{{ r.error }}</span>
                 } @else {
+                  @for (a of r.alertas ?? []; track a) {
+                    <span class="mt-1 block rounded-md px-2 py-1 text-sm font-semibold" style="color: var(--color-error); background: #fdecec">⚠ {{ a }}</span>
+                  }
                   @for (a of r.avisos; track a) {
                     <span class="block text-sm" style="color: var(--color-acento)">ⓘ {{ a }}</span>
                   }
+                  @for (op of operacionesConNormales(r); track op) {
+                    <details class="mt-1 text-sm">
+                      <summary class="mf-tenue cursor-pointer">Ver {{ r.normales![op]!.length === 1 ? 'la que no se sube' : 'las ' + r.normales![op]!.length + ' que no se suben' }} ({{ op }})</summary>
+                      <ul class="m-0 mt-1 list-none p-0">
+                        @for (n of r.normales![op]!; track $index) {
+                          <li class="mf-tenue !border-0 !p-0 text-xs">{{ n.fecha }} · {{ n.comprobante || n.tipo }} · {{ n.denominacion }} · {{ plata(n.total) }} — {{ n.motivo === 'anulada' ? 'anulada con nota de crédito' : 'está en el extracto del banco' }}</li>
+                        }
+                      </ul>
+                    </details>
+                  }
                   @if (operacionesConZip(r).length) {
                     <span class="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                      <label class="mf-tenue" [attr.for]="'empresa-' + i">Empresa en Xubio</label>
-                      <select class="mf-input !w-auto !py-1 text-sm" [id]="'empresa-' + i" [ngModel]="empresaDe(r, i)" (ngModelChange)="elegirEmpresa(i, $event)">
+                      <label class="mf-tenue" [attr.for]="'empresa-' + id">Empresa en Xubio</label>
+                      <select class="mf-input !w-auto !py-1 text-sm" [id]="'empresa-' + id" [ngModel]="empresaDe(r)" (ngModelChange)="elegirEmpresa(r, $event)">
                         <option value="">Elegí el cliente…</option>
                         @for (c of clientes.lista(); track c.nombre) { <option [value]="c.nombre">{{ c.nombre }}</option> }
                       </select>
                     </span>
                     @for (op of operacionesConZip(r); track op) {
-                      @let clave = i + '-' + op;
+                      @let clave = claveOperacion(r, op);
+                      @let reg = registro()[clave];
                       <span class="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-sm">
                         <span class="min-w-0 flex-1">
                           <strong>{{ op }}</strong>
                           <span class="mf-tenue"> · {{ r.partidas[op] }} {{ r.partidas[op] === 1 ? 'partida' : 'partidas' }}</span>
                         </span>
-                        @if (cargados()[clave]) {
-                          <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: var(--color-ok-texto); background: #e7f6ec">✓ Cargado en Xubio</span>
+                        @if (reg?.estado === 'importado') {
+                          <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: var(--color-ok-texto); background: #e7f6ec">✓ Importado en Xubio el {{ fechaCorta(reg!.fecha) }}</span>
+                          <button type="button" class="mf-btn-link text-xs" (click)="cargarEnXubio(r, op)" [disabled]="!!cargandoXubio() || !empresaDe(r)" title="Avisa antes: si ya se importó, se duplica">Cargar de nuevo</button>
+                        } @else if (reg?.estado === 'pendiente') {
+                          <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: #92400e; background: #fef3c7">⏳ Falta apretar «Importar» en Xubio</span>
+                          <button type="button" class="mf-btn mf-btn-chico" (click)="marcarImportado(r, op)">Ya lo importé</button>
+                          <button type="button" class="mf-btn-link text-xs" (click)="olvidar(r, op)" title="No llegaste a importarlo: se puede volver a cargar">No lo importé</button>
                         } @else {
-                          <button type="button" class="mf-btn mf-btn-chico inline-flex items-center gap-2" (click)="cargarEnXubio(r, i, op)" [disabled]="!!cargandoXubio() || !empresaDe(r, i)" [attr.aria-busy]="cargandoXubio() === clave" [title]="empresaDe(r, i) ? '' : 'Elegí primero la empresa en Xubio'">
+                          <button type="button" class="mf-btn mf-btn-chico inline-flex items-center gap-2" (click)="cargarEnXubio(r, op)" [disabled]="!!cargandoXubio() || !empresaDe(r)" [attr.aria-busy]="cargandoXubio() === clave" [title]="empresaDe(r) ? '' : 'Elegí primero la empresa en Xubio'">
                             @if (cargandoXubio() === clave) {
                               <span class="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
                               Subiendo a Xubio…
@@ -174,16 +242,23 @@ interface ArchivoElegido {
                         }
                         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="bajar(r.zips[op]!, 'application/zip')" [attr.aria-label]="'Descargar ' + r.zips[op]!.nombre">Descargar .zip</button>
                       </span>
-                      @if (estadoXubio()[clave]; as est) {
+                      @if (reg?.estado === 'importado') {
+                        <span class="mf-tenue mt-1 block text-sm">Para confirmar que quedó bien, <a routerLink="/control" class="mf-btn-link">corré un control nuevo de {{ r.periodo || 'ese período' }}</a>: estas partidas ya no tendrían que aparecer como faltantes.</span>
+                      } @else if (estadoXubio()[clave]; as est) {
                         <span class="mt-1 block text-sm" [style.color]="est.ok ? 'var(--color-ok-texto)' : 'var(--color-error)'">{{ est.texto }}</span>
                       }
                     }
                   }
                 }
               </span>
-              @if (r.excel) {
-                <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="bajar(r.excel, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')" [attr.aria-label]="'Ver en Excel ' + r.excel.nombre" title="Los mismos datos en Excel, con el CAE y el CUIT completos">Ver en Excel</button>
-              }
+              <span class="flex shrink-0 items-center gap-2">
+                @if (r.excel) {
+                  <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="bajar(r.excel, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')" [attr.aria-label]="'Ver en Excel ' + r.excel.nombre" title="Los mismos datos en Excel, con el CAE y el CUIT completos">Ver en Excel</button>
+                }
+                <button type="button" class="mf-icono-btn" (click)="quitarResultado(r)" [attr.aria-label]="'Quitar ' + r.cliente" title="Quitar">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                </button>
+              </span>
             </li>
           }
         </ul>
@@ -217,19 +292,63 @@ export class ConvertirPantalla {
   protected readonly convirtiendo = signal(false);
   protected readonly resultados = signal<ResultadoConversion[] | null>(null);
   protected readonly error = signal<string | null>(null);
-  /** Empresa de Xubio elegida a mano por fila (si no, la que coincide con el nombre). */
-  private readonly empresas = signal<Record<number, string>>({});
-  /** «fila-operación» que se está subiendo, las que ya se cargaron (no se reenvían) y su mensaje. */
+  /** Subir igual las anuladas con NC y las liquidaciones bancarias. */
+  protected readonly incluirNormales = signal(false);
+  /** Empresa de Xubio elegida a mano por resultado (si no, la que coincide con el nombre). */
+  private readonly empresas = signal<Record<string, string>>({});
+  /** «resultado|operación» que se está subiendo y su mensaje. */
   protected readonly cargandoXubio = signal<string | null>(null);
-  protected readonly cargados = signal<Record<string, true>>({});
   protected readonly estadoXubio = signal<Record<string, { ok: boolean; texto: string }>>({});
+  /** Qué se cargó en Xubio y si ya se apretó «Importar» (queda en este navegador). */
+  protected readonly registro = signal<Record<string, RegistroImportacion>>(leerRegistro());
 
   constructor() {
     void this.clientes.cargar();
   }
 
-  protected empresaDe(r: ResultadoConversion, i: number): string {
-    const elegida = this.empresas()[i];
+  /** Si cierra la pestaña con algo cargado sin importar, el navegador pregunta. */
+  @HostListener('window:beforeunload', ['$event'])
+  protected antesDeCerrar(ev: BeforeUnloadEvent): void {
+    if (this.pendientes().length) ev.preventDefault();
+  }
+
+  /** Para el guard de la ruta: si quedó algo sin importar, se lo recuerda antes de salir. */
+  async puedeSalir(): Promise<boolean> {
+    const pendientes = this.pendientes();
+    if (!pendientes.length) return true;
+    return this.alertas.confirmar(
+      'Te falta apretar «Importar» en Xubio',
+      'Cargaste archivos en Xubio que todavía no marcaste como importados. Si no apretás «Importar» en la ventana de Chrome, no quedan cargados.',
+      'Salir igual',
+      pendientes,
+    );
+  }
+
+  /** Lo que se cargó y falta confirmar, de los resultados que están en pantalla. */
+  private pendientes(): string[] {
+    const reg = this.registro();
+    return (this.resultados() ?? []).flatMap((r) =>
+      this.operacionesConZip(r)
+        .filter((op) => reg[this.claveOperacion(r, op)]?.estado === 'pendiente')
+        .map((op) => `${r.cliente}${r.periodo ? ' · ' + r.periodo : ''} · ${op}`),
+    );
+  }
+
+  protected claveResultado(r: ResultadoConversion): string {
+    return `${normalizar(r.cliente)}|${r.periodo}`;
+  }
+
+  protected claveOperacion(r: ResultadoConversion, op: 'Ventas' | 'Compras'): string {
+    return `${this.claveResultado(r)}|${op}`;
+  }
+
+  protected textoControl(r: ResultadoConversion): string {
+    const numeros = [...new Set(Object.values(r.control ?? {}).filter((n): n is number => !!n))];
+    return numeros.length === 1 ? `${ordinal(numeros[0])} control` : '';
+  }
+
+  protected empresaDe(r: ResultadoConversion): string {
+    const elegida = this.empresas()[this.claveResultado(r)];
     if (elegida !== undefined) return elegida;
     const buscado = normalizar(r.cliente);
     const lista = this.clientes.lista();
@@ -238,31 +357,63 @@ export class ConvertirPantalla {
     return (exacta ?? parecida)?.nombre ?? '';
   }
 
-  protected elegirEmpresa(i: number, nombre: string): void {
-    this.empresas.update((m) => ({ ...m, [i]: nombre }));
+  protected elegirEmpresa(r: ResultadoConversion, nombre: string): void {
+    this.empresas.update((m) => ({ ...m, [this.claveResultado(r)]: nombre }));
   }
 
   protected operacionesConZip(r: ResultadoConversion): ('Ventas' | 'Compras')[] {
     return (['Compras', 'Ventas'] as const).filter((op) => r.zips[op]);
   }
 
-  /** Prueba: el bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y se detiene. */
-  protected async cargarEnXubio(r: ResultadoConversion, i: number, op: 'Ventas' | 'Compras'): Promise<void> {
-    const empresa = this.empresaDe(r, i);
+  protected operacionesConNormales(r: ResultadoConversion): ('Ventas' | 'Compras')[] {
+    return this.incluirNormales() ? [] : (['Compras', 'Ventas'] as const).filter((op) => r.normales?.[op]?.length);
+  }
+
+  protected readonly hayNormales = computed(() => (this.resultados() ?? []).some((r) => Object.values(r.normales ?? {}).some((l) => l?.length)));
+
+  protected plata(n: number | null): string {
+    return n === null || n === undefined ? '' : `$ ${n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+
+  protected fechaCorta(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+  }
+
+  /**
+   * El bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y se
+   * detiene. Antes: si ya se importó, avisa que se duplicaría; después, muestra
+   * las partidas y pide tildar que se revisaron.
+   */
+  protected async cargarEnXubio(r: ResultadoConversion, op: 'Ventas' | 'Compras'): Promise<void> {
+    const empresa = this.empresaDe(r);
     const zip = r.zips[op];
-    const clave = `${i}-${op}`;
-    if (!zip || !empresa || this.cargandoXubio() || this.cargados()[clave]) return;
-    const seguir = await this.alertas.confirmar(
-      `Cargar ${op} en Xubio`,
-      `Se abre Xubio en esta PC, en la empresa «${empresa}», y se carga el archivo en Importar desde Mis Comprobantes (ARCA).`,
-      'Abrir Xubio',
-      [
-        `${r.partidas[op]} ${r.partidas[op] === 1 ? 'partida' : 'partidas'} de ${op}.`,
-        'El bot NO aprieta «Importar»: queda la ventana abierta para que lo revises.',
-        'Cerrá esa ventana de Chrome cuando termines.',
-      ],
-    );
+    const clave = this.claveOperacion(r, op);
+    if (!zip || !empresa || this.cargandoXubio()) return;
+
+    const previo = this.registro()[clave];
+    if (previo?.estado === 'importado') {
+      const igual = await this.alertas.confirmarAccionPeligrosa(
+        'Esto ya lo importaste',
+        `Las partidas de ${op} de ${r.cliente}${r.periodo ? ' · ' + r.periodo : ''} ya las marcaste como importadas el ${this.fechaCorta(previo.fecha)}. Si las cargás de nuevo se duplican en Xubio. Si siguen apareciendo como faltantes, revisá primero en Xubio si la importación quedó hecha.`,
+        'Cargar igual',
+      );
+      if (!igual) return;
+    }
+
+    const filas = r.filas?.[op] ?? [];
+    const n = r.partidas[op] ?? filas.length;
+    const seguir = await this.alertas.revisarAntesDeSeguir({
+      titulo: `Revisá las partidas de ${op}`,
+      mensaje: `Se van a cargar ${n} ${n === 1 ? 'partida' : 'partidas'} en Xubio, en la empresa «${empresa}». El bot no aprieta «Importar»: te deja la ventana de Chrome abierta para que lo confirmes vos.`,
+      alertas: (r.alertas ?? []).filter((a) => a.startsWith(op)),
+      columnas: ['Fecha', 'Comprobante', 'Razón social', 'CUIT', 'Total'],
+      filas: filas.map((f) => [f.fecha, f.comprobante || f.tipo, f.denominacion, formatearCuit(f.cuit), f.total ?? '']),
+      tilde: `Revisé ${n === 1 ? 'la partida' : `las ${n} partidas`} y van a Xubio`,
+      textoConfirmar: 'Abrir Xubio',
+    });
     if (!seguir) return;
+
     this.cargandoXubio.set(clave);
     this.estadoXubio.update((m) => {
       const { [clave]: _, ...resto } = m;
@@ -272,12 +423,16 @@ export class ConvertirPantalla {
       // Solo el .zip de esta operación (un único CSV en la raíz).
       const res = await this.api.cargarEnXubio(empresa, op, zip.contenido);
       if (res.boton_importar_habilitado) {
-        this.cargados.update((m) => ({ ...m, [clave]: true }));
+        this.guardarRegistro(clave, { estado: 'pendiente', fecha: new Date().toISOString(), partidas: n, control: r.control?.[op] ?? null });
         this.estadoXubio.update((m) => ({
           ...m,
-          [clave]: { ok: true, texto: `Archivo de ${op} cargado en Xubio (${empresa}). Falta apretar «Importar» en la ventana de Chrome.` },
+          [clave]: { ok: true, texto: `Archivo de ${op} cargado en Xubio (${empresa}). Apretá «Importar» en la ventana de Chrome y después «Ya lo importé».` },
         }));
-        this.toast.ok('Listo', `${op} cargado en Xubio (${empresa}).`);
+        void this.alertas.mostrarAviso(
+          'Falta apretar «Importar»',
+          `El archivo de ${op} quedó cargado en Xubio, pero no está importado. En la ventana de Chrome revisalo y apretá «Importar».`,
+          ['Después volvé acá y apretá «Ya lo importé».', 'Si no lo importás, esas partidas siguen faltando en el Libro IVA.'],
+        );
       } else {
         this.estadoXubio.update((m) => ({
           ...m,
@@ -289,6 +444,69 @@ export class ConvertirPantalla {
     } finally {
       this.cargandoXubio.set(null);
     }
+  }
+
+  protected marcarImportado(r: ResultadoConversion, op: 'Ventas' | 'Compras'): void {
+    const clave = this.claveOperacion(r, op);
+    const previo = this.registro()[clave];
+    this.guardarRegistro(clave, { ...(previo ?? { partidas: r.partidas[op] ?? 0, control: r.control?.[op] ?? null }), estado: 'importado', fecha: new Date().toISOString() });
+    this.toast.ok('Importado', `${op} de ${r.cliente} marcado como importado. Corré un control nuevo para confirmarlo.`);
+  }
+
+  protected olvidar(r: ResultadoConversion, op: 'Ventas' | 'Compras'): void {
+    const clave = this.claveOperacion(r, op);
+    this.registro.update((m) => {
+      const { [clave]: _, ...resto } = m;
+      escribirRegistro(resto);
+      return resto;
+    });
+    this.estadoXubio.update((m) => {
+      const { [clave]: _, ...resto } = m;
+      return resto;
+    });
+  }
+
+  private guardarRegistro(clave: string, valor: RegistroImportacion): void {
+    this.registro.update((m) => {
+      const nuevo = { ...m, [clave]: valor };
+      escribirRegistro(nuevo);
+      return nuevo;
+    });
+  }
+
+  protected async quitarResultado(r: ResultadoConversion): Promise<void> {
+    if (!(await this.confirmarQuitar([r]))) return;
+    const clave = this.claveResultado(r);
+    const quedan = (this.resultados() ?? []).filter((x) => this.claveResultado(x) !== clave);
+    this.resultados.set(quedan.length ? quedan : null);
+  }
+
+  protected async quitarTodos(): Promise<void> {
+    if (!(await this.confirmarQuitar(this.resultados() ?? []))) return;
+    this.resultados.set(null);
+    this.estadoXubio.set({});
+  }
+
+  /** Sacar de la pantalla algo cargado sin importar: se recuerda antes. */
+  private async confirmarQuitar(lista: ResultadoConversion[]): Promise<boolean> {
+    const reg = this.registro();
+    const pendientes = lista.flatMap((r) =>
+      this.operacionesConZip(r)
+        .filter((op) => reg[this.claveOperacion(r, op)]?.estado === 'pendiente')
+        .map((op) => `${r.cliente} · ${op}`),
+    );
+    if (!pendientes.length) return true;
+    return this.alertas.confirmar(
+      'Te falta apretar «Importar» en Xubio',
+      'Esto está cargado en Xubio pero no lo marcaste como importado. Si lo sacás de la pantalla, acordate de apretar «Importar» en la ventana de Chrome.',
+      'Quitar igual',
+      pendientes,
+    );
+  }
+
+  protected cambiarIncluirNormales(valor: boolean): void {
+    this.incluirNormales.set(valor);
+    void this.convertir();
   }
 
   protected readonly todosLosZips = computed(() => (this.resultados() ?? []).flatMap((r) => Object.values(r.zips).filter((z) => !!z)));
@@ -324,7 +542,6 @@ export class ConvertirPantalla {
     this.resultados.set(null);
     this.empresas.set({});
     this.estadoXubio.set({});
-    this.cargados.set({});
   }
 
   protected quitar(i: number): void {
@@ -343,10 +560,12 @@ export class ConvertirPantalla {
     this.error.set(null);
     try {
       const archivos = await Promise.all(this.elegidos().map(async (e) => ({ nombre: e.archivo.name, contenido: await base64De(e.archivo) })));
-      const r = await this.api.convertirAux(archivos);
+      const r = await this.api.convertirAux(archivos, this.incluirNormales());
       this.resultados.set(r.resultados);
-      this.cargados.set({});
       this.estadoXubio.set({});
+      // Lo que hay que mirar antes de cargar (AUX viejo, ARCA trajo otro período).
+      const alertas = r.resultados.flatMap((x) => (x.alertas ?? []).map((a) => `${x.cliente}${x.periodo ? ' · ' + x.periodo : ''}: ${a}`));
+      if (alertas.length) void this.alertas.mostrarAviso('Revisá antes de cargar en Xubio', 'Estos AUX pueden traer partidas que no corresponden:', alertas);
       const ok = r.resultados.reduce((n, x) => n + Object.keys(x.zips).length, 0);
       if (ok) this.toast.ok('Listo', `${ok} ${ok === 1 ? 'archivo .zip listo' : 'archivos .zip listos'} para Xubio.`);
       const vacios = r.resultados.filter((x) => !x.error && !Object.keys(x.zips).length).length;

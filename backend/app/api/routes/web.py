@@ -15,6 +15,7 @@ import binascii
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -23,7 +24,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ...auditor.csv_arca import convertir_auxiliares
 from ...core import acceso_clientes, config, dialogos
-from ...core.controles import resumen_controles
+from ...core.controles import controles_del_periodo, ordinal, resumen_controles
+from ...core.paths import SUBCARPETA_CONTROL, nombre_carpeta
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...services import ejecuciones as ejecuciones_srv
@@ -321,6 +323,35 @@ class ArchivoSubido(BaseModel):
 
 class ConvertirAuxRequest(BaseModel):
     archivos: list[ArchivoSubido] = Field(min_length=1, max_length=MAX_AUX)
+    # Subir igual las anuladas con NC y las liquidaciones bancarias.
+    incluir_normales: bool = False
+
+
+def _ultimo_control(cliente: str, periodo: str) -> int | None:
+    """El último control hecho de ese cliente y período («MM-AA»), si está en esta PC."""
+    if not re.fullmatch(r"\d{2}-\d{2}", periodo or ""):
+        return None
+    carpeta = Path(config.OUTPUT_DIR) / nombre_carpeta(cliente) / f"{periodo[:2]}20{periodo[3:]}" / SUBCARPETA_CONTROL
+    try:
+        previos = controles_del_periodo(carpeta)
+    except OSError:
+        return None
+    return max((c.numero for c in previos), default=None)
+
+
+def _avisar_aux_viejo(r: dict) -> None:
+    """Si el AUX no es del último control del período, puede traer partidas que
+    ya se cargaron (o que el control nuevo ya no marca)."""
+    ultimo = _ultimo_control(r["cliente"], r["periodo"])
+    r["ultimo_control"] = ultimo
+    if not ultimo:
+        return
+    for op, numero in (r.get("control") or {}).items():
+        if numero and numero < ultimo:
+            r.setdefault("alertas", []).append(
+                f"{op}: este AUX es del {ordinal(numero)} control y ya hay un {ordinal(ultimo)} control de "
+                f"{r['periodo']}. Puede traer partidas que ya se cargaron: usá el AUX del último control."
+            )
 
 
 @router.post("/convertir-aux")
@@ -335,11 +366,13 @@ def convertir_aux(body: ConvertirAuxRequest) -> dict:
         if len(datos) > MAX_BYTES_AUX:
             raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
         archivos.append((a.nombre, datos))
-    resultados = convertir_auxiliares(archivos)
+    resultados = convertir_auxiliares(archivos, incluir_normales=body.incluir_normales)
     def b64(archivo: dict) -> dict:
         return {"nombre": archivo["nombre"], "contenido": base64.b64encode(archivo["contenido"]).decode("ascii")}
 
     for r in resultados:
+        if not r.get("error"):
+            _avisar_aux_viejo(r)
         r["zips"] = {op: b64(z) for op, z in r["zips"].items()}
         if r.get("excel"):
             r["excel"] = b64(r["excel"])

@@ -141,6 +141,53 @@ export class AlertasService {
     return r.isConfirmed ? 'recomendada' : r.isDenied ? 'otra' : null;
   }
 
+  /**
+   * Revisar antes de seguir: muestra la tabla de lo que se va a hacer y solo deja
+   * confirmar si se tilda «Las revisé». Las `alertas` van arriba, en rojo.
+   */
+  async revisarAntesDeSeguir(opciones: {
+    titulo: string;
+    mensaje: string;
+    alertas?: string[];
+    columnas: string[];
+    /** Una fila por renglón; las columnas numéricas van alineadas a la derecha. */
+    filas: (string | number)[][];
+    tilde: string;
+    textoConfirmar: string;
+  }): Promise<boolean> {
+    const alertas = (opciones.alertas ?? []).length
+      ? `<div class="mb-3 rounded-lg border border-red-200 bg-red-50 p-2.5 text-left text-red-800">${opciones.alertas!
+          .map((a) => `<p class="m-0">⚠ ${esc(a)}</p>`)
+          .join('')}</div>`
+      : '';
+    const numero = (v: string | number) => typeof v === 'number';
+    const plata = (v: string | number) =>
+      typeof v === 'number' ? v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : esc(v);
+    const cab = opciones.columnas.map((c) => `<th class="border-b border-slate-200 px-2 py-1 text-left font-bold">${esc(c)}</th>`).join('');
+    const cuerpo = opciones.filas
+      .map((f) => `<tr>${f.map((v) => `<td class="border-b border-slate-100 px-2 py-1 ${numero(v) ? 'text-right tabular-nums' : ''}">${plata(v)}</td>`).join('')}</tr>`)
+      .join('');
+    const tabla = `<div class="mt-3 max-h-72 overflow-auto rounded-lg border border-slate-200 text-left text-xs"><table class="w-full border-collapse"><thead class="sticky top-0 bg-slate-50">${cab}</thead><tbody>${cuerpo}</tbody></table></div>`;
+    const r = await Swal.fire({
+      icon: 'warning',
+      iconColor: '#b7791f',
+      title: opciones.titulo,
+      width: 'min(52rem, calc(100vw - 2rem))',
+      html: `${alertas}<p class="m-0">${esc(opciones.mensaje)}</p>${tabla}`,
+      input: 'checkbox',
+      inputValue: 0,
+      inputPlaceholder: opciones.tilde,
+      inputValidator: (v) => (v ? null : 'Tildá que las revisaste para seguir.'),
+      showCancelButton: true,
+      confirmButtonText: opciones.textoConfirmar,
+      cancelButtonText: 'Volver',
+      reverseButtons: true,
+      buttonsStyling: false,
+      customClass: CLASES,
+    });
+    return r.isConfirmed;
+  }
+
   /** Pregunta antes de seguir con algo que no es peligroso pero conviene revisar. */
   async confirmar(titulo: string, mensaje: string, textoConfirmar = 'Seguir igual', items: string[] = []): Promise<boolean> {
     const lista = items.length

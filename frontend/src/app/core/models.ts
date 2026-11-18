@@ -105,7 +105,26 @@ export interface ResultadoConversion {
   excel: { nombre: string; contenido: string } | null;
   /** Lo que no generó archivo, por ejemplo «Ventas: no hay partidas…». */
   avisos: string[];
+  /** Lo que hay que mirar antes de cargar: AUX viejo, ARCA trajo otro período. */
+  alertas?: string[];
+  /** Número de control de cada AUX («3er control» -> 3) y el último hecho en esta PC. */
+  control?: Partial<Record<'Ventas' | 'Compras', number | null>>;
+  ultimo_control?: number | null;
+  /** Las partidas que van al .zip, para revisarlas antes de cargar. */
+  filas?: Partial<Record<'Ventas' | 'Compras', PartidaRevision[]>>;
+  /** Las que no se suben porque son normales (anuladas con NC, liquidaciones bancarias). */
+  normales?: Partial<Record<'Ventas' | 'Compras', PartidaRevision[]>>;
   error: string | null;
+}
+
+export interface PartidaRevision {
+  fecha: string;
+  tipo: string;
+  comprobante: string;
+  cuit: string;
+  denominacion: string;
+  total: number | null;
+  motivo?: 'anulada' | 'liquidacion';
 }
 
 /** Un AUX subido: nombre y contenido en base64. */
