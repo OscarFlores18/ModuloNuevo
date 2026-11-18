@@ -9,8 +9,9 @@ import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { ToastService } from '../../core/ui/toast';
-import { contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
+import { ContextoVentana, contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
 import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
+import { ClientesStore } from '../../core/services/clientes.store';
 import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
 
 /** Un paso que terminó mal o con avisos: lo único que se muestra del detalle si algo falló. */
@@ -71,6 +72,7 @@ export class EjecucionPantalla {
   private readonly toast = inject(ToastService);
   private readonly alertas = inject(AlertasService);
   protected readonly store = inject(EjecucionStore);
+  private readonly clientesStore = inject(ClientesStore);
 
   /** De la ruta /ejecuciones/:id. */
   readonly id = input<string>();
@@ -154,7 +156,7 @@ export class EjecucionPantalla {
 
   /** La ventana de hallazgos solo con esa tarea: los comprobantes tal cual están en el Excel. */
   protected verDetalle(t: Tarea): void {
-    void mostrarVentanaDeErrores([t.advertencia]);
+    void mostrarVentanaDeErrores([t.advertencia], [], this.contextoVentana());
   }
 
   protected irATareas(): void {
@@ -244,9 +246,16 @@ export class EjecucionPantalla {
 
   protected readonly conteoErrores = computed(() => contarErrores(this.ej()?.advertencias ?? []));
 
+  /** Mails de los clientes y período, para «Consultar al cliente». */
+  private contextoVentana(): ContextoVentana {
+    const emails: Record<string, string> = {};
+    for (const c of this.clientesStore.lista()) if (c.email) emails[c.nombre] = c.email;
+    return { emails, periodo: this.ej()?.periodo ?? '' };
+  }
+
   protected verErrores(): void {
     const a = this.ej()?.advertencias;
-    if (a?.length) void mostrarVentanaDeErrores(a, this.ej()?.resumenes ?? []);
+    if (a?.length) void mostrarVentanaDeErrores(a, this.ej()?.resumenes ?? [], this.contextoVentana());
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -259,6 +268,7 @@ export class EjecucionPantalla {
   constructor() {
     this.api.ajustes().then((a) => this.dialogosLocales.set(a.dialogos_locales), () => this.dialogosLocales.set(false));
     void this.store.cargarHistorial();
+    void this.clientesStore.cargar();
 
     // El reloj corre solo con el control activo: al finalizar, el cronómetro queda quieto.
     effect((alLimpiar) => {

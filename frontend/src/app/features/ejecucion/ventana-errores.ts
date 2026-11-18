@@ -25,7 +25,7 @@ const ORDEN_CLASE: Record<string, number> = { grave: 0, mal: 1, aviso: 2, info: 
  */
 type Clase = 'grave' | 'mal' | 'aviso' | 'info';
 
-const AVISOS: ReadonlySet<Advertencia['tipo']> = new Set(['faltante_en_xubio', 'faltante_en_arca']);
+const AVISOS: ReadonlySet<Advertencia['tipo']> = new Set(['faltante_en_xubio', 'faltante_en_arca', 'total_no_cierra']);
 
 function claseDe(e: Advertencia): Clase {
   if (e.gravedad === 'grave') return 'grave';
@@ -38,7 +38,7 @@ function etiquetaDe(e: Advertencia): string {
   if (clase === 'grave') return 'Grave';
   if (clase === 'info') return 'Info';
   if (e.tipo === 'faltante_en_xubio') return 'Falta cargar';
-  if (e.tipo === 'faltante_en_arca') return 'A revisar';
+  if (e.tipo === 'faltante_en_arca' || e.tipo === 'total_no_cierra') return 'A revisar';
   return 'Error';
 }
 
@@ -140,6 +140,31 @@ function grilla(filas: FilaVista[]): string {
   return `<div class="ve-grilla"><table><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
 }
 
+/**
+ * «Las columnas no suman el total»: cada factura de ARCA con la suma de sus
+ * columnas, el Imp. Total, la diferencia (lo que ARCA no discrimina) y cómo
+ * quedó en Xubio.
+ */
+function grillaSuma(e: Advertencia): string {
+  const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f);
+  if (!filas.length) return '';
+  const cab = ['Fecha', 'Comprobante', 'Razón social', 'Suma de columnas', 'Imp. Total', 'Diferencia', 'En Xubio']
+    .map((c, i) => `<th${i >= 3 ? ' class="num"' : ''}>${esc(c)}</th>`)
+    .join('');
+  const cuerpo = filas
+    .map((f) => {
+      const d = normalizar(f.fila);
+      const v: Record<string, CeldaVista['valor']> = {};
+      for (const c of f.fila) v[c.columna] = c.valor;
+      const enXubio = v['Total Xubio'];
+      const bienEnXubio = typeof enXubio === 'number' && typeof d.Total === 'number' && Math.abs(Math.abs(enXubio) - Math.abs(d.Total)) <= 1;
+      const xubio = enXubio === null || enXubio === undefined ? '<td class="num">No está</td>' : `<td class="num${bienEnXubio ? ' marca ok' : ' marca error'}">${esc(importe(enXubio))}</td>`;
+      return `<tr><td>${esc(texto(d.Fecha))}</td><td class="comp">${esc(texto(d.Comprobante))}</td><td title="${esc(texto(d.Tipo))} · CUIT ${esc(cuit(d.CUIT))}">${esc(texto(d['Razón social']))}</td><td class="num">${esc(importe(v['Suma columnas']))}</td><td class="num">${esc(importe(d.Total))}</td><td class="num marca aviso">${esc(importe(v['Diferencia']))}</td>${xubio}</tr>`;
+    })
+    .join('');
+  return `<div class="ve-grilla"><table><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
+}
+
 function conLetra(comprobante: string, clase: 'error' | 'ok'): string {
   const [letra, ...resto] = comprobante.split('-');
   return `<span class="letra letra-${clase}">${esc(letra)}</span>-${esc(resto.join('-'))}`;
@@ -221,23 +246,34 @@ function mailConsulta(e: Advertencia, ctx: ContextoVentana): string {
   const lineas = filas.slice(0, MAX_LINEAS_MAIL).map((f) => {
     const d = normalizar(f.fila);
     const total = typeof d.Total === 'number' ? ` · $ ${texto(d.Total)}` : '';
+    if (e.tipo === 'total_no_cierra') {
+      const v: Record<string, CeldaVista['valor']> = {};
+      for (const c of f.fila) v[c.columna] = c.valor;
+      return `- ${texto(d.Fecha)} · ${texto(d.Tipo)} ${texto(d.Comprobante)} · ${texto(d['Razón social'])} (CUIT ${cuit(d.CUIT)}) · total $ ${importe(d.Total)}, columnas $ ${importe(v['Suma columnas'])}, diferencia $ ${importe(v['Diferencia'])}`;
+    }
     return `- ${texto(d.Fecha)} · ${texto(d.Tipo)} ${texto(d.Comprobante)} · ${texto(d['Razón social'])} (CUIT ${cuit(d.CUIT)})${total}`;
   });
   const resto = filas.length > MAX_LINEAS_MAIL ? `\n…y ${filas.length - MAX_LINEAS_MAIL} más.` : '';
   const operacion = (e.operacion ?? '').toLowerCase();
   const que =
-    e.tipo === 'faltante_en_xubio'
-      ? 'figuran en ARCA y no los tenemos registrados'
-      : 'los tenemos registrados y no figuran en ARCA';
+    e.tipo === 'total_no_cierra'
+      ? 'en ARCA el neto, el IVA y los demás conceptos no suman el total (hay una diferencia sin discriminar)'
+      : e.tipo === 'faltante_en_xubio'
+        ? 'figuran en ARCA y no los tenemos registrados'
+        : 'los tenemos registrados y no figuran en ARCA';
+  const pregunta =
+    e.tipo === 'total_no_cierra'
+      ? '¿Nos podés decir a qué corresponde la diferencia (impuestos internos, combustibles, otro concepto)? Si podés, envianos la factura.'
+      : '¿Nos podés confirmar si corresponden? Si es así, por favor envianos el comprobante.';
   const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
   const cuerpo = [
     'Hola,',
     '',
-    `Al controlar ${operacion} del período ${ctx.periodo} encontramos ${filas.length === 1 ? 'este comprobante que' : 'estos comprobantes que'} ${que}:`,
+    `Al controlar ${operacion} del período ${ctx.periodo} encontramos ${filas.length === 1 ? 'este comprobante' : 'estos comprobantes'} ${e.tipo === 'total_no_cierra' ? (filas.length === 1 ? 'en el que' : 'en los que') : 'que'} ${que}:`,
     '',
     lineas.join('\n') + resto,
     '',
-    '¿Nos podés confirmar si corresponden? Si es así, por favor envianos el comprobante.',
+    pregunta,
     '',
     'Saludos.',
   ].join('\n');
@@ -311,7 +347,7 @@ function tarjeta(e: Advertencia, ctx: ContextoVentana): string {
       <div class="ve-cuerpo">
         ${e.detalle ? `<p class="ve-detalle">${esc(e.detalle)}</p>` : ''}
         ${letras ? `<div class="ve-instructivo"><p class="ve-instructivo-titulo">Qué corregir en Xubio</p><ul class="ve-ordenes">${letras}</ul></div>` : ''}
-        ${grilla(filasDe(e))}${mas}
+        ${e.tipo === 'total_no_cierra' ? grillaSuma(e) : grilla(filasDe(e))}${mas}
       </div>
     </details>`;
 }

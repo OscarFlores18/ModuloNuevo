@@ -62,6 +62,8 @@ export function ordenDe(a: Advertencia): { grupo: GrupoTarea; orden: string; des
       return { grupo: 'xubio', orden: `Corregí el CUIT (proveedor) de ${comprobantes(n)} en Xubio` };
     case 'importe_distinto':
       return { grupo: 'xubio', orden: `Corregí el importe de ${comprobantes(n)} en Xubio` };
+    case 'total_no_cierra':
+      return { grupo: 'cliente', orden: `Consultale al cliente la diferencia de ${comprobantes(n)} cuyas columnas en ARCA no suman el total` };
     case 'letra_distinta':
       return { grupo: 'xubio', orden: `Cambiá la letra de ${comprobantes(n)} en Xubio` };
     case 'tipo_distinto':

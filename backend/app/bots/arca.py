@@ -85,6 +85,14 @@ _JS_PANTALLA_LOGIN = r"""() => {
 }"""
 
 
+class PeriodoEquivocado(TimeoutDescarga):
+    """ARCA devolvió comprobantes de otro período que el pedido (varias veces)."""
+
+
+# Cuántas veces se vuelve a buscar si ARCA trae otro período.
+REINTENTOS_PERIODO = 3
+
+
 class FiltroNoDisponible(TimeoutDescarga):
     """ARCA no mostró el filtro de fechas tras elegir Emitidos/Recibidos.
 
@@ -129,6 +137,38 @@ def contar_comprobantes(ruta) -> int:
         )
     finally:
         wb.close()
+
+
+def fechas_fuera_de_rango(ruta, fecha_desde: str, fecha_hasta: str) -> list[str]:
+    """Las fechas del Excel de ARCA (columna Fecha) que no caen en el rango pedido.
+
+    A veces el filtro muestra el período bien escrito pero ARCA busca con su
+    rango por defecto (el mes en curso) y el Excel trae otro período.
+    """
+    desde = datetime.strptime(fecha_desde, "%d/%m/%Y").date()
+    hasta = datetime.strptime(fecha_hasta, "%d/%m/%Y").date()
+    fuera: list[str] = []
+    wb = openpyxl.load_workbook(ruta, read_only=True)
+    try:
+        for fila in wb.active.iter_rows(min_row=3, max_col=1, values_only=True):
+            valor = fila[0] if fila else None
+            if valor in (None, ""):
+                continue
+            if isinstance(valor, datetime):
+                fecha = valor.date()
+            else:
+                try:
+                    fecha = datetime.strptime(str(valor).strip()[:10], "%d/%m/%Y").date()
+                except ValueError:
+                    try:
+                        fecha = datetime.strptime(str(valor).strip()[:10], "%Y-%m-%d").date()
+                    except ValueError:
+                        continue  # no es una fecha: no se puede juzgar
+            if not desde <= fecha <= hasta:
+                fuera.append(fecha.strftime("%d/%m/%Y"))
+    finally:
+        wb.close()
+    return fuera
 
 
 def unificar_excels(archivos_parciales, ruta_final):
@@ -654,6 +694,7 @@ class SesionArca:
         excels_parciales: list[str] = []
         csv_parciales: list[str] = []
         primer_vuelta = True
+        reintentos_periodo = 0
 
         while datetime.strptime(fecha_desde_actual, "%d/%m/%Y") <= datetime.strptime(
             fecha_hasta, "%d/%m/%Y"
@@ -726,6 +767,34 @@ class SesionArca:
                 nombre_temp_excel = f"ParcialExcel_{len(excels_parciales)+1}_{download.suggested_filename}"
                 ruta_parcial_excel = os.path.join(directorio_guardado, nombre_temp_excel)
                 download.save_as(ruta_parcial_excel)
+
+                # ¿ARCA buscó el período pedido? Si el filtro no se aplicó, trae
+                # su rango por defecto (el mes en curso): se descarta y se busca
+                # de nuevo, sin avanzar.
+                fuera = fechas_fuera_de_rango(ruta_parcial_excel, fecha_desde_actual, fecha_hasta_actual)
+                if fuera:
+                    try:
+                        os.remove(ruta_parcial_excel)
+                    except OSError:
+                        pass
+                    reintentos_periodo += 1
+                    ejemplo = ", ".join(sorted(set(fuera))[:3])
+                    if reintentos_periodo >= REINTENTOS_PERIODO:
+                        raise PeriodoEquivocado(
+                            f"ARCA devolvió comprobantes de otro período ({ejemplo}) aunque se pidió "
+                            f"{rango_fechas}, {REINTENTOS_PERIODO} veces seguidas. Volvé a correr el control "
+                            "en unos minutos.",
+                            detalle={"tipo": tipo_comprobante, "rango": rango_fechas, "fechas": sorted(set(fuera))[:10]},
+                        )
+                    self.log(
+                        f"      [AVISO]: ARCA trajo comprobantes de otro período ({ejemplo}) en vez de "
+                        f"{rango_fechas}. Se descarta y se vuelve a buscar "
+                        f"({reintentos_periodo + 1}/{REINTENTOS_PERIODO})..."
+                    )
+                    servicio.click('a[href="#tabConsulta"]')
+                    servicio.wait_for_timeout(1500)
+                    continue
+                reintentos_periodo = 0
                 excels_parciales.append(ruta_parcial_excel)
 
                 if bajar_csv:
@@ -752,6 +821,8 @@ class SesionArca:
                 servicio.click('a[href="#tabConsulta"]')
                 servicio.wait_for_timeout(1000)
 
+            except PeriodoEquivocado:
+                raise
             except Exception as exc:
                 if self._es_sesion_vencida(servicio):
                     raise SesionVencida(

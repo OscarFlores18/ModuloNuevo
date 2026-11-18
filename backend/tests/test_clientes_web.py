@@ -36,3 +36,12 @@ def test_editar_conserva_la_direccion_vieja_de_xubio(entorno):
     assert guardado["xubio"] == {"url": "https://xubio.com/NXV/viejo"}
     # La clave fiscal sigue siendo la misma (cifrada o no en disco, según la migración).
     assert descifrar(guardado["arca"]["clave"]) == "x"
+
+
+def test_email_del_cliente_se_guarda_y_se_devuelve(entorno):
+    """El mail del cliente (para «Consultar al cliente») se guarda con el resto."""
+    client, _ = entorno
+    r = client.post("/api/clientes", json={"nombre": "Con Mail SA", "arca": ARCA, "email": "contable@conmail.com"})
+    assert r.status_code == 201, r.text
+    datos = client.get("/api/clientes/Con Mail SA").json()
+    assert datos["email"] == "contable@conmail.com"

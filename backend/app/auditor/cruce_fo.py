@@ -287,6 +287,54 @@ def _importes_distintos(operacion, df_arca, df_xubio, columnas_arca, columnas_xu
     return salida
 
 
+# Las columnas de «Mis Comprobantes» que forman el Imp. Total (en minúsculas).
+COLUMNAS_QUE_SUMAN = ("neto gravado total", "neto no gravado", "op. exentas", "otros tributos", "total iva")
+
+
+def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cuit_arca, col_total_arca):
+    """Comprobantes de ARCA cuyas columnas (neto gravado, no gravado, exento,
+    otros tributos e IVA) no suman el Imp. Total: ARCA no discrimina una parte
+    (típico de combustibles). Los que no traen ningún desglose (facturas B/C) no
+    se miran. Devuelve ``(filas, cuantos_bien_en_xubio)``: cuántos ya están en
+    Xubio con el total completo."""
+    if col_total_arca is None or "Clave_Py" not in df_arca.columns:
+        return [], 0
+    por_nombre = {str(c).strip().lower(): c for c in df_arca.columns}
+    partes = [por_nombre[n] for n in COLUMNAS_QUE_SUMAN if n in por_nombre]
+    if not partes:
+        return [], 0
+    usa_cuit = operacion == "Compras" and col_cuit_arca is not None and "CUIT" in df_xubio.columns
+    totales_x: dict[tuple, float] = {}
+    if "Total" in df_xubio.columns and "Comprobante" in df_xubio.columns:
+        for _, fx in df_xubio.iterrows():
+            total_x = _numero(fx.get("Total"))
+            if total_x is not None:
+                clave = (_solo_digitos(fx.get("CUIT")) if usa_cuit else "", str(fx["Comprobante"]), _clase_comprobante(fx.get("Tipo")))
+                totales_x[clave] = total_x
+
+    salida, bien_en_xubio = [], 0
+    for _, fa in df_arca.iterrows():
+        total = _numero(fa.get(col_total_arca))
+        valores = [_numero(fa.get(c)) or 0.0 for c in partes]
+        if total is None or not any(valores):
+            continue
+        suma = round(sum(valores), 2)
+        diferencia = round(total - suma, 2)
+        if abs(diferencia) <= TOLERANCIA_IMPORTE:
+            continue
+        clave = (_solo_digitos(fa.get(col_cuit_arca)) if usa_cuit else "", str(fa["Clave_Py"]), _clase_comprobante(fa.get("Tipo")))
+        total_x = totales_x.get(clave)
+        if total_x is not None and abs(abs(total_x) - abs(total)) <= TOLERANCIA_IMPORTE:
+            bien_en_xubio += 1
+        fila = _fila_vista(fa, columnas_arca) + [
+            {"columna": "Suma columnas", "valor": suma},
+            {"columna": "Diferencia", "valor": diferencia},
+            {"columna": "Total Xubio", "valor": None if total_x is None else round(total_x, 2)},
+        ]
+        salida.append({"origen": "arca", "fila": fila})
+    return salida, bien_en_xubio
+
+
 def _clave_cuit(cuit, comprobante) -> tuple[str, str]:
     return (_solo_digitos(cuit), str(comprobante))
 
@@ -485,6 +533,37 @@ def diagnosticar(
             a_corregir=len(importe_distinto) // 2,
         ))
 
+    # Facturas de ARCA cuyas columnas no suman el Imp. Total. No frena nada: el
+    # cruce se hace con el Imp. Total igual; se avisa para que en Xubio la
+    # diferencia quede cargada (no gravado o impuestos internos).
+    no_cierran, bien_en_xubio = _totales_que_no_cierran(
+        operacion, df_arca, df_xubio, columnas_arca, col_cuit_arca, col_total_arca,
+    )
+    if no_cierran:
+        n = len(no_cierran)
+        uno = n == 1
+        detalle = (
+            f"{'En 1 comprobante' if uno else f'En {n} comprobantes'} de ARCA el neto, el IVA, el no gravado, "
+            f"el exento y los otros tributos no suman el Imp. Total. Suele ser un impuesto que ARCA no "
+            f"discrimina (por ejemplo, en combustibles). El control se hizo con el Imp. Total."
+        )
+        detalle += " Consultá al cliente qué es la diferencia y revisá que en Xubio esté cargada (no gravado o impuestos internos)."
+        if bien_en_xubio:
+            detalle += (
+                f" {'1 ya está' if bien_en_xubio == 1 else f'{bien_en_xubio} ya están'} en Xubio con el total completo."
+            )
+        # Siempre «A revisar»: aunque Xubio cierre, la parte sin discriminar hay
+        # que consultarla (no se sabe a qué concepto corresponde).
+        errores.append(error(
+            "total_no_cierra", "corregir",
+            "En ARCA las columnas no suman el total",
+            detalle,
+            ["Revisar la factura", "Consultar al cliente"],
+            no_cierran,
+            hoja="Mis Comprobantes",
+            a_corregir=n,
+        ))
+
     # Proveedores del exterior (CUIT genérico 50-/51-/55-): no están en ARCA.
     exterior = [f for f in falta_a if _solo_digitos(_valor(f, "CUIT"))[:2] in ("50", "51", "55")]
     falta_a = [f for f in falta_a if f not in exterior]
@@ -588,6 +667,7 @@ ERRORES_EN_NEGRITA = {
     "tipo_distinto": "Tipo distinto",
     "cuit_distinto": "CUIT distinto",
     "importe_distinto": "Importe distinto",
+    "total_no_cierra": "Columnas no suman el total",
     "faltante_en_xubio": "No está subido a Xubio",
     "faltante_en_arca": "Faltante en ARCA",
 }
@@ -621,7 +701,7 @@ def _columnas(ws) -> dict[str, int]:
 
 def marcar_errores(wb, errores: list[dict], operacion: str) -> None:
     """Pone en negrita, en «Mis Comprobantes» y «Libro Iva», las filas con error."""
-    a_marcar = [e for e in errores if e["tipo"] in ERRORES_EN_NEGRITA]
+    a_marcar = [e for e in errores if e["tipo"] in ERRORES_EN_NEGRITA and e.get("gravedad") != "info"]
     if not a_marcar:
         return
     claves = {
@@ -748,6 +828,7 @@ def _etiqueta_xubio(item: dict) -> str:
 
 ETIQUETA_ARCA = {
     "faltante_en_xubio": "No está subido a Xubio",
+    "total_no_cierra": "Las columnas no suman el Imp. Total: revisar la factura",
     "anulada_con_nc": "Anulada con nota de crédito (no hace falta cargarla)",
     "liquidacion_bancaria": "Liquidación bancaria: en Xubio está como extracto",
     "letra_distinta": "Letra distinta: corregir en Xubio",

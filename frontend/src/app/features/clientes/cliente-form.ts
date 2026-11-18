@@ -45,6 +45,13 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
             <small class="mf-ayuda">En Xubio se busca la empresa por este nombre. También es el nombre de la carpeta del cliente.</small>
           </label>
 
+          <label class="mf-campo">
+            <span>Email del cliente <span class="mf-tenue">(opcional)</span></span>
+            <input class="mf-input" type="email" name="email" autocomplete="email" [value]="email()" (input)="email.set($any($event.target).value)"
+              placeholder="contacto@empresa.com" [attr.aria-invalid]="emailInvalido()" />
+            <small class="mf-ayuda">Para «Consultar al cliente»: arma el mail con los comprobantes a revisar. Varios, separados por coma.</small>
+          </label>
+
           <fieldset class="mf-panel mf-panel-acento m-0 !bg-panel-alt">
             <legend class="sr-only">ARCA</legend>
             <h3 class="!mt-0">ARCA</h3>
@@ -111,6 +118,7 @@ export class ClienteForm {
   protected readonly cuitLogin = signal('');
   protected readonly clave = signal('');
   protected readonly cuitRepres = signal('');
+  protected readonly email = signal('');
   protected readonly verClave = signal(false);
   protected readonly guardando = signal(false);
   protected readonly intentado = signal(false);
@@ -146,9 +154,15 @@ export class ClienteForm {
     this.cuitLogin.set(formatearCuit(c?.arca.cuit_login));
     this.clave.set('');
     this.cuitRepres.set(formatearCuit(c?.arca.cuit_representado));
+    this.email.set(c?.email ?? '');
     this.verClave.set(false);
     this.intentado.set(false);
     this.error.set(null);
+  }
+
+  protected emailInvalido(): boolean {
+    const v = this.email().trim();
+    return !!v && !v.split(',').every((m) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(m.trim()));
   }
 
   protected cuitInvalido(valor: string): boolean {
@@ -165,9 +179,14 @@ export class ClienteForm {
       this.error.set('Revisá las CUIT: tienen que tener 11 dígitos y el último (verificador) tiene que coincidir.');
       return;
     }
+    if (this.emailInvalido()) {
+      this.error.set('El email no tiene un formato válido (ej. contacto@empresa.com).');
+      return;
+    }
     const datos: ClienteEntrada = {
       nombre: this.nombre().trim(),
       arca: { cuit_login: this.cuitLogin(), clave: this.clave(), cuit_representado: this.cuitRepres() },
+      email: this.email().split(',').map((m) => m.trim()).filter(Boolean).join(', '),
     };
     this.guardando.set(true);
     this.error.set(null);

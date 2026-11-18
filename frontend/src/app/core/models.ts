@@ -17,11 +17,14 @@ export interface Cliente {
   arca: { cuit_login: string; cuit_representado: string; tiene_clave: boolean };
   /** Datos que le faltan para correr todos los pasos («Clave fiscal», «CUIT representado»…). */
   faltantes: string[];
+  /** Mail del cliente, para «Consultar al cliente» desde la ventana de errores. */
+  email?: string;
 }
 
 export interface ClienteEntrada {
   nombre: string;
   arca: { cuit_login: string; clave: string; cuit_representado: string };
+  email?: string;
 }
 
 export interface Ajustes {
@@ -202,6 +205,7 @@ export type TipoError =
   | 'tipo_distinto'
   | 'cuit_distinto'
   | 'importe_distinto'
+  | 'total_no_cierra'
   | 'paso_error';
 
 /** Un error del control (ventana de errores), con cómo solucionarlo. */

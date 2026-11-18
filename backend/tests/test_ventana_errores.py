@@ -195,3 +195,46 @@ def test_resumen_por_operacion(tmp_path: Path):
         log=lambda _: None, avisar_resumen=resumenes.append,
     )
     assert resumenes == [{"operacion": "Compras", "arca": 1, "xubio": 1, "coinciden": 1, "a_corregir": 0}]
+
+
+def test_columnas_de_arca_que_no_suman_el_total():
+    """Caso real (estación de servicio, octubre): neto + IVA no llegan al Imp.
+    Total porque ARCA no discrimina el impuesto al combustible."""
+    from backend.app.auditor.cruce_fo import diagnosticar
+
+    arca = pd.DataFrame({
+        "Fecha": ["08/10/2026", "09/10/2026", "10/10/2026"],
+        "Tipo": ["81 - Tique Factura A", "81 - Tique Factura A", "11 - Factura C"],
+        "Clave_Py": ["A-00019-00099717", "A-00021-00076517", "C-00002-00000006"],
+        "Nro. Doc. Emisor": ["30537781323", "30537781323", "23473905639"],
+        "Denominación Emisor": ["ESTACION", "ESTACION", "SOTO"],
+        "Neto Gravado Total": [74406.81, 100.0, 0.0],
+        "Neto No Gravado": [0.0, 0.0, 0.0],
+        "Op. Exentas": [0.0, 0.0, 0.0],
+        "Otros Tributos": [0.0, 0.0, 0.0],
+        "Total IVA": [15625.43, 21.0, 0.0],
+        "Imp. Total": [108011.99, 121.0, 612027.0],  # el 2.º cierra; el 3.º (C) no trae desglose
+    })
+    xubio = pd.DataFrame({
+        "Fecha": ["08/10/2026"], "Tipo": ["Factura"], "Comprobante": ["A-00019-00099717"],
+        "CUIT": ["30-53778132-3"], "Proveedor": ["ESTACION"], "Total": [90032.24],
+    })
+    vacio = pd.DataFrame()
+    errores = {e["tipo"]: e for e in diagnosticar(
+        "Compras", arca, xubio, vacio, vacio, [], "Nro. Doc. Emisor", "Denominación Emisor", "Fecha", "Imp. Total",
+    )}
+    e = errores["total_no_cierra"]
+    assert e["total"] == 1 and e["gravedad"] == "corregir" and e["a_corregir"] == 1
+    fila = {c["columna"]: c["valor"] for c in e["comprobantes"][0]["fila"]}
+    assert fila["Suma columnas"] == 90032.24 and fila["Diferencia"] == 17979.75
+    assert fila["Total Xubio"] == 90032.24  # en Xubio quedó sin la diferencia
+
+    # Aunque en Xubio esté con el total completo, sigue «A revisar»: la
+    # diferencia sin discriminar hay que consultarla.
+    xubio.loc[0, "Total"] = 108011.99
+    e = {x["tipo"]: x for x in diagnosticar(
+        "Compras", arca, xubio, vacio, vacio, [], "Nro. Doc. Emisor", "Denominación Emisor", "Fecha", "Imp. Total",
+    )}["total_no_cierra"]
+    assert e["gravedad"] == "corregir" and e["a_corregir"] == 1
+    assert e["acciones"] == ["Revisar la factura", "Consultar al cliente"]
+    assert "1 ya está en Xubio con el total completo" in e["detalle"]
