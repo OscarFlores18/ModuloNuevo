@@ -8,6 +8,7 @@ import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { Alerta } from '../../core/ui/alerta';
+import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 
@@ -64,7 +65,7 @@ interface ArchivoElegido {
  */
 @Component({
   selector: 'app-convertir',
-  imports: [Encabezado, Alerta, FormsModule, RouterLink],
+  imports: [Encabezado, Alerta, FormsModule, RouterLink, Ayuda],
   styles: `
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
@@ -88,7 +89,7 @@ interface ArchivoElegido {
 
     <!-- Dos columnas: elegir los AUX a la izquierda, los .zip para Xubio a la derecha -->
     <div class="fx-grilla">
-    <section class="mf-panel" aria-labelledby="t-elegir">
+    <section class="mf-panel" aria-labelledby="t-elegir" data-tour="elegir">
       <div class="fx-cab">
         <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los AUX</h2>
         <p class="mf-sub m-0 mt-1">Los Excel AUX que armó el control, de uno o varios clientes. El cliente, el período y la operación se reconocen solos.</p>
@@ -152,7 +153,7 @@ interface ArchivoElegido {
     </section>
 
     @if (resultados(); as lista) {
-      <section class="mf-panel" aria-labelledby="t-resultado">
+      <section class="mf-panel" aria-labelledby="t-resultado" data-tour="resultado">
         <div class="fx-cab flex flex-wrap items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
             <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Cargalos en Xubio</h2>
@@ -179,7 +180,7 @@ interface ArchivoElegido {
         @if (hayNormales() || incluirNormales()) {
           <label class="mt-3 flex items-center gap-2 text-sm">
             <input type="checkbox" [checked]="incluirNormales()" (change)="cambiarIncluirNormales($any($event.target).checked)" [disabled]="convirtiendo() || !elegidos().length" />
-            <span>Subir igual las anuladas con nota de crédito y las liquidaciones bancarias</span>
+            <span>Subir igual las anuladas con nota de crédito y las liquidaciones bancarias<app-ayuda texto="Normalmente no van: una factura anulada con su nota de crédito suma cero, y las liquidaciones del banco ya están en Xubio dentro del extracto. Tildalo solo si en este cliente se cargan aparte." /></span>
           </label>
         }
         <ul class="ej-archivos mt-3">
@@ -209,7 +210,7 @@ interface ArchivoElegido {
                   }
                   @if (operacionesConZip(r).length) {
                     <span class="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                      <label class="mf-tenue" [attr.for]="'empresa-' + id">Empresa en Xubio</label>
+                      <label class="mf-tenue" [attr.for]="'empresa-' + id">Empresa en Xubio<app-ayuda texto="En qué empresa de Xubio se importa. Se elige sola si el nombre coincide con el cliente; revisala antes de cargar." /></label>
                       <select class="mf-input !w-auto !py-1 text-sm" [id]="'empresa-' + id" [ngModel]="empresaDe(r)" (ngModelChange)="elegirEmpresa(r, $event)">
                         <option value="">Elegí el cliente…</option>
                         @for (c of clientes.lista(); track c.nombre) { <option [value]="c.nombre">{{ c.nombre }}</option> }
@@ -227,7 +228,7 @@ interface ArchivoElegido {
                           <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: var(--color-ok-texto); background: #e7f6ec">✓ Importado en Xubio el {{ fechaCorta(reg!.fecha) }}</span>
                           <button type="button" class="mf-btn-link text-xs" (click)="cargarEnXubio(r, op)" [disabled]="!!cargandoXubio() || !empresaDe(r)" title="Avisa antes: si ya se importó, se duplica">Cargar de nuevo</button>
                         } @else if (reg?.estado === 'pendiente') {
-                          <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: #92400e; background: #fef3c7">⏳ Falta apretar «Importar» en Xubio</span>
+                          <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: #92400e; background: #fef3c7">⏳ Falta apretar «Importar» en Xubio<app-ayuda texto="El bot deja el archivo cargado pero no lo importa: lo confirmás vos en la ventana de Chrome. Cuando lo hagas, tocá «Ya lo importé»." lado="izquierda" /></span>
                           <button type="button" class="mf-btn mf-btn-chico" (click)="marcarImportado(r, op)">Ya lo importé</button>
                           <button type="button" class="mf-btn-link text-xs" (click)="olvidar(r, op)" title="No llegaste a importarlo: se puede volver a cargar">No lo importé</button>
                         } @else {
@@ -265,7 +266,7 @@ interface ArchivoElegido {
         </div>
       </section>
     } @else {
-      <section class="mf-panel" aria-labelledby="t-resultado-vacio">
+      <section class="mf-panel" aria-labelledby="t-resultado-vacio" data-tour="resultado">
         <div class="fx-cab">
           <h2 id="t-resultado-vacio" class="m-0 text-lg font-bold">2. Cargalos en Xubio</h2>
           <p class="mf-sub m-0 mt-1">Un .zip por operación, listo para importar en Xubio, o el bot lo carga por vos.</p>
@@ -274,6 +275,7 @@ interface ArchivoElegido {
           <div class="fx-vacio">
             <strong>Acá aparecen los .zip listos para Xubio</strong>
             <span class="text-sm">Elegí los AUX en el paso 1 y apretá «Convertir».</span>
+            <span class="mf-tenue text-xs">¿De dónde salen? Cada control deja el AUX en la carpeta del cliente: <em>período › Control de facturas › Nº control</em>. Usá el del último control. Si todavía no corriste uno, <a routerLink="/control" class="mf-btn-link">empezá por Nuevo control</a>.</span>
           </div>
         </div>
       </section>

@@ -1,14 +1,19 @@
 import { Component, DestroyRef, inject, signal } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { filter } from 'rxjs';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { Usuario } from './core/models';
 import { ClientesStore } from './core/services/clientes.store';
 import { EjecucionStore } from './core/services/ejecucion.store';
 import { SesionService } from './core/services/sesion.service';
+import { Circuito } from './core/ui/circuito';
+import { Recorrido } from './core/ui/recorrido';
+import { RecorridoService } from './core/ui/recorrido.service';
 import { Toasts } from './core/ui/toast';
 
 @Component({
   host: { '(window:scroll)': 'medirScroll()', '(window:resize)': 'medirScroll()' },
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, Circuito, Recorrido],
   selector: 'app-root',
   styleUrl: './app.css',
   templateUrl: './app.html',
@@ -17,6 +22,8 @@ export class App {
   protected readonly sesion = inject(SesionService);
   protected readonly ejecucion = inject(EjecucionStore);
   protected readonly clientes = inject(ClientesStore);
+  private readonly recorrido = inject(RecorridoService);
+  private readonly router = inject(Router);
 
   /** Cuándo se trajeron por última vez los clientes y las ejecuciones del servidor. */
   protected readonly ultimaActualizacion = signal<Date | null>(null);
@@ -37,6 +44,10 @@ export class App {
   constructor() {
     // Para el contador de clientes en la pestaña.
     void this.actualizar();
+    // La primera vez que se entra a cada pantalla, el recorrido arranca solo.
+    this.router.events
+      .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd), takeUntilDestroyed())
+      .subscribe((e) => this.recorrido.alEntrar(e.urlAfterRedirects));
     // El alto de la página cambia al navegar o cuando crece el contenido (registro, tablas).
     if (typeof ResizeObserver !== 'undefined') {
       const observador = new ResizeObserver(() => this.medirScroll());
@@ -49,6 +60,11 @@ export class App {
   protected medirScroll(): void {
     const el = document.documentElement;
     this.hayScroll.set(el.scrollTop > el.clientHeight * 0.8);
+  }
+
+  /** El «?» del encabezado: el recorrido de la pantalla en la que se está. */
+  protected verRecorrido(): void {
+    this.recorrido.iniciar(this.recorrido.pantallaDe(this.router.url));
   }
 
   protected saltar(): void {

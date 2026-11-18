@@ -504,6 +504,16 @@ def ver_ejecucion(ejecucion_id: str, log_desde: int = 0) -> dict:
         raise _http_error(exc) from exc
 
 
+@router.delete("/ejecuciones/{ejecucion_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_ejecucion(ejecucion_id: str) -> Response:
+    """Solo del historial: los archivos que generó quedan en sus carpetas."""
+    try:
+        ejecuciones_srv.eliminar(ejecucion_id)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/ejecuciones/{ejecucion_id}/respuesta")
 def responder_ejecucion(ejecucion_id: str, respuesta: Respuesta) -> dict:
     try:

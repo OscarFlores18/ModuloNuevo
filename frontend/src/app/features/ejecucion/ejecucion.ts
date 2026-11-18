@@ -8,6 +8,7 @@ import { ApiService } from '../../core/services/api.service';
 import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
+import { Ayuda } from '../../core/ui/ayuda';
 import { ToastService } from '../../core/ui/toast';
 import { ContextoVentana, contarErrores, mostrarVentanaDeErrores } from './ventana-errores';
 import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
@@ -63,7 +64,7 @@ function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
  */
 @Component({
   selector: 'app-ejecucion',
-  imports: [RouterLink, Alerta],
+  imports: [RouterLink, Alerta, Ayuda],
   templateUrl: './ejecucion.html',
 })
 export class EjecucionPantalla {
@@ -180,6 +181,25 @@ export class EjecucionPantalla {
   private readonly formatoFecha = new Intl.DateTimeFormat('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
 
   /** «17/11/26 18:05». */
+  /** Saca un control del historial. Los Excel y las carpetas del cliente quedan. */
+  protected async borrarDelHistorial(h: ResumenEjecucion): Promise<void> {
+    const periodo = this.periodoLegibleDe(h.periodo);
+    const ok = await this.alertas.confirmarAccionPeligrosa(
+      '¿Borrar este control del historial?',
+      `${periodo.charAt(0).toUpperCase() + periodo.slice(1)} ·${this.fechaCorta(h.creada)} · ${h.clientes} ${h.clientes === 1 ? 'cliente' : 'clientes'}. Solo se saca de esta lista: los Excel que generó quedan en las carpetas del cliente.`,
+      'Sí, borrar',
+    );
+    if (!ok) return;
+    const mirando = this.ej()?.id === h.id;
+    try {
+      await this.store.eliminar(h.id);
+      this.toast.ok('Borrado', 'El control se sacó del historial.');
+      if (mirando) void this.router.navigate(['/ejecuciones'], { replaceUrl: true });
+    } catch (e) {
+      void this.alertas.mostrarErrorHumano('No se pudo borrar', '', mensajeDeError(e));
+    }
+  }
+
   protected fechaCorta(iso: string): string {
     const d = new Date(iso);
     return isNaN(d.getTime()) ? iso : this.formatoFecha.format(d).replace(',', '');

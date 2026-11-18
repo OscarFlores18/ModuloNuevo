@@ -350,6 +350,25 @@ def obtener(ejecucion_id: str) -> Ejecucion:
     return e
 
 
+def eliminar(ejecucion_id: str) -> None:
+    """Saca un control del historial (memoria y su .json). No toca los Excel ni
+    las carpetas del cliente. Uno que está corriendo no se puede borrar."""
+    with _lock:
+        _cargar_historial()
+        ej = _ejecuciones.get(ejecucion_id)
+        if ej is None:
+            raise ErrorEjecucion("No existe esa ejecución.", 404)
+        if ej.estado not in ESTADOS_FINALES:
+            raise ErrorEjecucion("Ese control está corriendo: cancelalo o esperá a que termine para borrarlo.", 409)
+        del _ejecuciones[ejecucion_id]
+        if ejecucion_id in _orden:
+            _orden.remove(ejecucion_id)
+        try:
+            (_carpeta_historial() / f"{ejecucion_id}.json").unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def activa() -> Ejecucion | None:
     with _lock:
         _cargar_historial()

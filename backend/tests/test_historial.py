@@ -99,3 +99,28 @@ def test_lo_guardado_no_incluye_claves():
     datos = json.loads(texto)
     assert "_respuesta" not in datos and "_evento" not in datos
     assert "clave" not in datos["parametros"]
+
+
+def test_eliminar_un_control_del_historial():
+    """Se borra del historial y de disco; no vuelve después de reiniciar."""
+    srv._guardar(_terminada("uno", "2026-11-01T10:00:00"))
+    srv._guardar(_terminada("dos", "2026-11-02T10:00:00"))
+    srv.eliminar("uno")
+    assert [e["id"] for e in srv.listar()] == ["dos"]
+    assert not (config.DATA_DIR / "ejecuciones" / "uno.json").exists()
+    _olvidar()
+    assert [e["id"] for e in srv.listar()] == ["dos"]
+    with pytest.raises(srv.ErrorEjecucion) as e:
+        srv.eliminar("uno")
+    assert e.value.estado == 404
+
+
+def test_no_se_borra_un_control_que_esta_corriendo():
+    ej = _terminada("corre", "2026-11-03T10:00:00", estado="en_curso")
+    with srv._lock:
+        srv._ejecuciones[ej.id] = ej
+        srv._orden.append(ej.id)
+        srv._historial_de = srv._carpeta_historial()
+    with pytest.raises(srv.ErrorEjecucion) as e:
+        srv.eliminar("corre")
+    assert e.value.estado == 409

@@ -5,6 +5,15 @@
     }
   </app-encabezado>
 
+  @if (avisoUltimo(); as aviso) {
+    <div class="nc-recordado" role="status">
+      <span aria-hidden="true">↺</span>
+      <span class="min-w-0 flex-1">{{ aviso }}</span>
+      <button type="button" class="mf-btn mf-btn-suave mf-btn-mini" (click)="empezarDeCero()">Empezar de cero</button>
+      <button type="button" class="mf-icono-btn" (click)="avisoUltimo.set(null)" aria-label="Cerrar aviso">✕</button>
+    </div>
+  }
+
   @if (avisoReintento(); as aviso) {
     <app-alerta nivel="info" [mensajes]="[aviso]" [descartable]="true" (cerrado)="avisoReintento.set(null)" />
   }
@@ -13,7 +22,7 @@
        período, operaciones, Xubio y «Ejecutar», siempre a la vista. -->
   <div class="nc-grilla">
     <!-- 1. Clientes -->
-    <section class="mf-panel !py-3" aria-labelledby="t-clientes">
+    <section class="mf-panel !py-3" aria-labelledby="t-clientes" data-tour="clientes">
       <div class="mf-panel-titulo !mb-2">
         <h2 id="t-clientes" class="!text-base"><span class="mf-paso-num" aria-hidden="true">1</span>Clientes</h2>
         @if (sesion.esSupervisor()) {
@@ -48,7 +57,13 @@
               </li>
             } @empty {
               <li class="mf-tenue px-2 py-3 text-center text-sm">
-                {{ clientes.cargando() && !clientes.cargado() ? 'Cargando…' : busqueda.value ? 'Sin resultados.' : clientes.lista().length ? 'Todos sumados.' : 'No hay clientes.' }}
+                @if (clientes.cargado() && !clientes.lista().length) {
+                  <strong class="block text-texto">Todavía no cargaste clientes</strong>
+                  Para controlar una empresa, primero cargá su CUIT y su clave fiscal.
+                  <a routerLink="/clientes" class="mf-btn mf-btn-chico mt-2">Cargar el primero →</a>
+                } @else {
+                  {{ clientes.cargando() && !clientes.cargado() ? 'Cargando…' : busqueda.value ? 'Sin resultados.' : 'Todos sumados.' }}
+                }
               </li>
             }
           </ul>
@@ -57,14 +72,14 @@
         <!-- A procesar -->
         <div class="mf-lista" [style.border-color]="invalido('clientes') ? 'var(--color-error)' : null">
           <div class="mf-lista-cab">
-            <span class="text-texto">A procesar ({{ elegidos().length }})</span>
+            <span class="text-texto">A procesar ({{ elegidos().length }})<app-ayuda texto="Se controlan en este orden. Al lado de cada uno dice qué control le toca en el período (1er, 2do…): cada control nuevo guarda sus Excel en otra carpeta y no pisa los anteriores." /></span>
             <button type="button" class="mf-btn mf-btn-peligro mf-btn-mini" (click)="limpiar()" [disabled]="!elegidos().length">Vaciar</button>
           </div>
           <ol class="nc-lista-alta nc-lista-elegidos m-0 list-none space-y-0.5 overflow-y-auto p-1.5" aria-label="Clientes a procesar, en orden">
             @for (c of elegidos(); track c.nombre; let i = $index, primero = $first, ultimo = $last) {
-              <li class="mf-item mf-item-elegido !py-1">
+              <li class="mf-item mf-item-elegido !py-1 flex-wrap">
                 <span class="mono w-5 shrink-0 text-center text-xs font-bold text-acento">{{ i + 1 }}</span>
-                <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
+                <span class="min-w-[4.5rem] flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
                 @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span> }
                 @for (e of etiquetasControl(c.nombre); track e.texto) {
                   <span class="mf-badge shrink-0" [class.mf-badge-aviso]="e.repetido" [class.mf-badge-ok]="!e.repetido" [title]="e.titulo">{{ e.texto }}</span>
@@ -84,13 +99,13 @@
     <!-- Columna derecha -->
     <div class="nc-lado">
       <!-- 2. Período y operaciones -->
-      <section class="mf-panel !py-3" aria-labelledby="t-parametros">
+      <section class="mf-panel !py-3" aria-labelledby="t-parametros" data-tour="periodo">
         <div class="mf-panel-titulo !mb-2">
           <h2 id="t-parametros" class="!text-base"><span class="mf-paso-num" aria-hidden="true">2</span>Período y operaciones</h2>
         </div>
 
         <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
-          <legend class="mf-campo-etiqueta">Período</legend>
+          <legend class="mf-campo-etiqueta">Período<app-ayuda texto="Mes completo es lo normal. Si el mes no terminó, se baja hasta hoy. Un mes que todavía no empezó no se puede elegir." /></legend>
           <div class="mf-segmentado nc-ancho" role="radiogroup" aria-label="Tipo de período">
             @for (t of tiposPeriodo; track t.id) {
               <label [class.activo]="modo() === t.id"><input type="radio" formControlName="modo" [value]="t.id" class="sr-only" />{{ t.texto }}</label>
@@ -132,7 +147,7 @@
         </fieldset>
 
         <fieldset class="m-0 mt-3 border-0 p-0">
-          <legend class="mf-campo-etiqueta">Operaciones</legend>
+          <legend class="mf-campo-etiqueta">Operaciones<app-ayuda texto="Ventas: Mis Comprobantes Emitidos contra el Libro IVA Ventas. Compras: Recibidos contra el Libro IVA Compras." /></legend>
           <div class="mf-segmentado nc-ancho" [class.mf-segmentado-invalido]="invalido('operaciones')" role="radiogroup" aria-label="Operaciones a controlar">
             @for (o of opcionesOperaciones; track o.id) {
               <label [class.activo]="operacion() === o.id">
@@ -144,9 +159,9 @@
       </section>
 
       <!-- 3. Xubio: una línea si la contraseña ya está guardada -->
-      <section class="mf-panel !py-3" aria-labelledby="t-xubio" formGroupName="xubio">
+      <section class="mf-panel !py-3" aria-labelledby="t-xubio" formGroupName="xubio" data-tour="xubio">
         <div class="mf-panel-titulo !mb-2">
-          <h2 id="t-xubio" class="!text-base"><span class="mf-paso-num" aria-hidden="true">3</span>Cuenta de Xubio</h2>
+          <h2 id="t-xubio" class="!text-base"><span class="mf-paso-num" aria-hidden="true">3</span>Cuenta de Xubio<app-ayuda texto="El usuario del estudio en Xubio. El bot entra con esa cuenta y elige la empresa por el nombre del cliente." /></h2>
         </div>
         @if (guardadaXubio() && !cambiandoClave()) {
           <div class="nc-xubio-lista" role="status">
@@ -179,7 +194,7 @@
       </section>
 
       <!-- Ejecutar: resumen de lo que se va a hacer y lo que falta -->
-      <div class="mf-panel nc-ejecutar">
+      <div class="mf-panel nc-ejecutar" data-tour="ejecutar">
         <div class="min-w-0 flex-1">
           <p class="m-0 text-sm">
             <strong class="text-texto">{{ elegidos().length || 'Ningún' }} {{ elegidos().length === 1 || !elegidos().length ? 'cliente' : 'clientes' }}</strong>
@@ -206,6 +221,7 @@
           }
           {{ ejecucion.enviando() ? 'Iniciando…' : ejecucion.hayActiva() ? 'Control en curso…' : 'Ejecutar control' }}
         </button>
+        <span class="nc-atajo mf-tenue" aria-hidden="true"><kbd>Ctrl</kbd> + <kbd>Enter</kbd></span>
       </div>
     </div>
   </div>

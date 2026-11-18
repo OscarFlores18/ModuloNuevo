@@ -4,6 +4,7 @@ import { cuitValida, formatearCuit } from '../../core/cuit.pipe';
 import { Cliente, ClienteEntrada, mensajeDeError } from '../../core/models';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { Alerta } from '../../core/ui/alerta';
+import { Ayuda } from '../../core/ui/ayuda';
 import { ConfirmModal } from '../../core/ui/confirm-modal';
 
 /**
@@ -13,7 +14,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
  */
 @Component({
   selector: 'app-cliente-form',
-  imports: [Alerta, ConfirmModal, NgTemplateOutlet],
+  imports: [Alerta, ConfirmModal, NgTemplateOutlet, Ayuda],
   template: `
     @if (enPanel()) {
       @if (abierto()) {
@@ -46,7 +47,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
           </label>
 
           <label class="mf-campo">
-            <span>Email del cliente <span class="mf-tenue">(opcional)</span></span>
+            <span>Email del cliente <span class="mf-tenue">(opcional)</span><app-ayuda texto="Para «Consultar al cliente»: el mail con los comprobantes a revisar se arma con esta dirección. Podés poner varias separadas por coma." /></span>
             <input class="mf-input" type="email" name="email" autocomplete="email" [value]="email()" (input)="email.set($any($event.target).value)"
               placeholder="contacto@empresa.com" [attr.aria-invalid]="emailInvalido()" />
             <small class="mf-ayuda">Para «Consultar al cliente»: arma el mail con los comprobantes a revisar. Varios, separados por coma.</small>
@@ -57,13 +58,13 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
             <h3 class="!mt-0">ARCA</h3>
             <div class="cl-form-arca grid gap-3 sm:grid-cols-2">
               <label class="mf-campo">
-                <span>CUIT de ingreso</span>
+                <span>CUIT de ingreso<app-ayuda texto="La CUIT con la que se entra a ARCA con clave fiscal. Si el estudio entra con la CUIT del contador, va la del contador." /></span>
                 <input class="mf-input mono" name="cuit_login" inputmode="numeric" [value]="cuitLogin()" (input)="cuitLogin.set($any($event.target).value)"
                   (blur)="cuitLogin.set(formatear(cuitLogin()))" placeholder="20-12345678-9" [attr.aria-invalid]="cuitInvalido(cuitLogin())" />
                 <small class="mf-ayuda">Con la que se entra a la clave fiscal.</small>
               </label>
               <label class="mf-campo">
-                <span>Clave fiscal</span>
+                <span>Clave fiscal<app-ayuda texto="La clave fiscal de esa CUIT de ingreso. Queda cifrada en el servidor y nunca se muestra en el navegador." /></span>
                 <span class="relative block">
                   <input class="mf-input pr-16" name="clave" [type]="verClave() ? 'text' : 'password'" autocomplete="new-password" [value]="clave()" (input)="clave.set($any($event.target).value)"
                     [placeholder]="cliente()?.arca?.tiene_clave ? 'Guardada · escribila solo para cambiarla' : ''" />
@@ -74,7 +75,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
                 @if (cliente()?.arca?.tiene_clave) { <small class="mf-ayuda" style="color: var(--color-ok-texto)">Hay una clave guardada.</small> }
               </label>
               <label class="mf-campo sm:col-span-2">
-                <span>CUIT representado</span>
+                <span>CUIT representado<app-ayuda texto="La CUIT de la empresa cuyos comprobantes se controlan. Si está mal, ARCA devuelve vacío o los comprobantes de otro." /></span>
                 <input class="mf-input mono" name="cuit_representado" inputmode="numeric" [value]="cuitRepres()" (input)="cuitRepres.set($any($event.target).value)"
                   (blur)="cuitRepres.set(formatear(cuitRepres()))" placeholder="30-12345678-9" [attr.aria-invalid]="cuitInvalido(cuitRepres())" />
                 <small class="mf-ayuda">La empresa cuyos comprobantes se consultan (si el contador la representa con su clave).</small>

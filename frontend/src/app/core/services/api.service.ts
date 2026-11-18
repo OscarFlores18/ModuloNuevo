@@ -59,6 +59,10 @@ export class ApiService {
   ejecuciones(): Promise<ResumenEjecucion[]> {
     return firstValueFrom(this.http.get<ResumenEjecucion[]>(`${this.url}/ejecuciones`));
   }
+  /** Solo del historial: los archivos del control quedan en sus carpetas. */
+  eliminarEjecucion(id: string): Promise<void> {
+    return firstValueFrom(this.http.delete<void>(`${this.url}/ejecuciones/${id}`).pipe(errorLegible('No se pudo borrar el control del historial.')));
+  }
   activa(): Promise<ResumenEjecucion | null> {
     return firstValueFrom(this.http.get<ResumenEjecucion | null>(`${this.url}/ejecuciones/activa`));
   }

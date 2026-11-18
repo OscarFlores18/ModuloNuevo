@@ -10,6 +10,7 @@
         <button type="button" class="ml-1.5 inline-flex h-6 w-6 items-center justify-center rounded-md border border-white/30 align-middle text-white transition-colors hover:bg-white/15 disabled:opacity-60" (click)="actualizar()" [disabled]="actualizando()" [attr.aria-label]="actualizando() ? 'Actualizando' : 'Actualizar'" title="Actualizar: vuelve a traer clientes y ejecuciones del servidor">
           <svg class="h-3.5 w-3.5" [class.animate-spin]="actualizando()" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 11-2.64-6.36M21 3v6h-6" /></svg>
         </button>
+        <button type="button" class="cf-ayuda-recorrido ml-1.5" data-tour="ayuda-recorrido" (click)="verRecorrido()" aria-label="Ver el recorrido de esta pantalla" title="¿Cómo se usa esta pantalla? Ver el recorrido">?</button>
       </div>
     </div>
 
@@ -49,6 +50,7 @@
       <p>{{ motivo }}</p>
     </div>
   } @else {
+    <app-circuito />
     <router-outlet />
   }
 
@@ -73,3 +75,4 @@
 }
 
 <app-toasts />
+<app-recorrido />

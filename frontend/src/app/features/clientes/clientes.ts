@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CuitPipe, formatearCuit } from '../../core/cuit.pipe';
 import { Cliente, mensajeDeError } from '../../core/models';
@@ -7,6 +7,7 @@ import { ClientesStore } from '../../core/services/clientes.store';
 import { SesionService } from '../../core/services/sesion.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Encabezado } from '../../core/ui/encabezado';
+import { RecorridoService } from '../../core/ui/recorrido.service';
 import { ClienteForm } from './cliente-form';
 
 @Component({
@@ -22,7 +23,7 @@ import { ClienteForm } from './cliente-form';
           <button type="button" class="mf-btn mf-btn-suave" (click)="precargar()" [disabled]="precargando()">
             {{ precargando() ? 'Precargando…' : 'Precargar clientes del estudio' }}
           </button>
-          <button type="button" class="mf-btn" (click)="abrir(null)">+ Nuevo cliente</button>
+          <button type="button" class="mf-btn" (click)="abrir(null)" data-tour="nuevo-cliente">+ Nuevo cliente</button>
         }
       }
     </app-encabezado>
@@ -74,7 +75,7 @@ import { ClienteForm } from './cliente-form';
 
     <!-- Lista a la izquierda; a la derecha el resumen o el cliente que se está editando -->
     <div class="cl-grilla" [class.cl-grilla-con-panel]="anchoGrande()">
-      <section class="mf-panel" aria-labelledby="t-lista">
+      <section class="mf-panel" aria-labelledby="t-lista" data-tour="lista-clientes">
         <div class="mf-panel-titulo">
           <h2 id="t-lista">Listado</h2>
           <span class="mf-sub">{{ visibles().length }} de {{ store.lista().length }}</span>
@@ -135,8 +136,11 @@ import { ClienteForm } from './cliente-form';
                     } @else if (busqueda() || filtro() !== 'todos') {
                       Nada que mostrar con esos filtros.
                     } @else {
-                      Todavía no hay clientes.
-                      @if (sesion.esSupervisor()) { <button type="button" class="mf-btn-link" (click)="abrir(null)">Cargar el primero</button> }
+                      <div class="cf-vacio !my-2">
+                        <strong>Todavía no hay clientes</strong>
+                        <p>Cada cliente es una empresa que vas a controlar. Necesitás su nombre como figura en Xubio, la CUIT con la que entrás a ARCA, la clave fiscal y la CUIT de la empresa.</p>
+                        @if (sesion.esSupervisor()) { <button type="button" class="mf-btn" (click)="abrir(null)">+ Cargar el primero</button> }
+                      </div>
                     }
                   </td>
                 </tr>
@@ -242,6 +246,11 @@ export class ClientesPantalla {
     }
     void this.acceso.revisar();
     void this.store.cargar(true);
+    // Con la sección bloqueada no hay nada que mostrar: el recorrido arranca al desbloquearla.
+    const recorrido = inject(RecorridoService);
+    effect(() => {
+      if (this.acceso.desbloqueado()) untracked(() => recorrido.alEntrar('/clientes'));
+    });
   }
 
   protected async entrar(): Promise<void> {

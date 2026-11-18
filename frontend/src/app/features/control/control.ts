@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, DestroyRef, HostListener, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
 import { AbstractControl, FormBuilder, ReactiveFormsModule, ValidationErrors, ValidatorFn, Validators } from '@angular/forms';
 import { Router, RouterLink } from '@angular/router';
@@ -18,6 +18,7 @@ import { EjecucionStore } from '../../core/services/ejecucion.store';
 import { SesionService } from '../../core/services/sesion.service';
 import { Reintento, leerReintento } from '../../core/reintento';
 import { Alerta } from '../../core/ui/alerta';
+import { Ayuda } from '../../core/ui/ayuda';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
@@ -62,6 +63,39 @@ const dos = (n: number) => String(n).padStart(2, '0');
 const aIso = (f: Date) => `${f.getFullYear()}-${dos(f.getMonth() + 1)}-${dos(f.getDate())}`;
 const fechaDmy = (f: Date) => `${dos(f.getDate())}/${dos(f.getMonth() + 1)}/${f.getFullYear()}`;
 /** '05/10/2026' -> Date local (sin hora). */
+/** Lo que se recuerda del último control que se ejecutó (en este navegador). */
+interface UltimoControl {
+  clientes: string[];
+  modo: ModoPeriodo;
+  mes: string;
+  anio: string;
+  desde: string;
+  hasta: string;
+  ventas: boolean;
+  compras: boolean;
+  /** ISO: cuándo se ejecutó. */
+  fecha: string;
+}
+
+const CLAVE_ULTIMO = 'cf-ultimo-control';
+
+function leerUltimo(): UltimoControl | null {
+  try {
+    const datos = JSON.parse(localStorage.getItem(CLAVE_ULTIMO) ?? 'null');
+    return datos && Array.isArray(datos.clientes) ? (datos as UltimoControl) : null;
+  } catch {
+    return null;
+  }
+}
+
+function guardarUltimo(u: UltimoControl): void {
+  try {
+    localStorage.setItem(CLAVE_ULTIMO, JSON.stringify(u));
+  } catch {
+    /* sin almacenamiento: no se recuerda */
+  }
+}
+
 function dmyAFecha(dmy: string): Date {
   const [d, m, a] = dmy.split('/').map(Number);
   return new Date(a, m - 1, d);
@@ -69,7 +103,7 @@ function dmyAFecha(dmy: string): Date {
 
 @Component({
   selector: 'app-nuevo-control',
-  imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado, Alerta],
+  imports: [ReactiveFormsModule, RouterLink, CuitPipe, Encabezado, Alerta, Ayuda],
   templateUrl: './control.html',
 })
 export class NuevoControl {
@@ -351,6 +385,7 @@ export class NuevoControl {
     // Viene de «Reintentar los que fallaron» (Ejecuciones).
     const reintento = leerReintento(typeof history !== 'undefined' ? history.state : null);
     if (reintento) this.aplicarReintento(reintento);
+    else this.aplicarUltimo();
 
     // Errores de conexión de la lista de clientes: toast, no un cartel en el layout.
     // Solo depende del error: el toast se dispara fuera del seguimiento del effect.
@@ -408,6 +443,53 @@ export class NuevoControl {
 
   /** Aviso arriba del formulario cuando se armó desde un control anterior. */
   protected readonly avisoReintento = signal<string | null>(null);
+
+  /** «Se cargó lo del último control»: con «Empezar de cero». */
+  protected readonly avisoUltimo = signal<string | null>(null);
+
+  /** Carga clientes, período y operaciones del último control ejecutado desde acá. */
+  private aplicarUltimo(): void {
+    const u = leerUltimo();
+    if (!u) return;
+    const { periodo, operaciones, clientes } = this.form.controls;
+    if (u.modo === 'mes' && u.mes && u.mes <= this.mesActualIso) {
+      periodo.controls.modo.setValue('mes');
+      periodo.controls.mes.setValue(u.mes);
+    } else if (u.modo === 'anio' && this.anios.includes(u.anio)) {
+      periodo.controls.modo.setValue('anio');
+      periodo.controls.anio.setValue(u.anio);
+    } else if (u.modo === 'rango' && u.desde && u.hasta && u.desde <= this.hoyIso) {
+      periodo.controls.modo.setValue('rango');
+      periodo.controls.desde.setValue(u.desde);
+      periodo.controls.hasta.setValue(u.hasta > this.hoyIso ? this.hoyIso : u.hasta);
+    }
+    if (u.ventas || u.compras) operaciones.setValue({ ventas: !!u.ventas, compras: !!u.compras });
+    clientes.setValue([...u.clientes]);
+    const cuando = new Date(u.fecha);
+    const fecha = isNaN(cuando.getTime()) ? '' : ` (${cuando.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' })})`;
+    const n = u.clientes.length;
+    this.avisoUltimo.set(`Se cargó lo del último control${fecha}: ${n} ${n === 1 ? 'cliente' : 'clientes'}, el mismo período y las mismas operaciones. Cambiá lo que necesites.`);
+  }
+
+  /** «Empezar de cero»: el formulario como la primera vez (el mes en curso, sin clientes). */
+  protected empezarDeCero(): void {
+    const { periodo, operaciones, clientes } = this.form.controls;
+    periodo.controls.modo.setValue('mes');
+    periodo.controls.mes.setValue(this.mesActualIso);
+    operaciones.setValue({ ventas: false, compras: false });
+    clientes.setValue([]);
+    this.avisoUltimo.set(null);
+    this.intentado.set(false);
+  }
+
+  /** Ctrl + Enter (⌘ + Enter en Mac) ejecuta desde cualquier parte de la pantalla. */
+  @HostListener('document:keydown', ['$event'])
+  protected alAtajo(ev: KeyboardEvent): void {
+    if (ev.key !== 'Enter' || !(ev.ctrlKey || ev.metaKey)) return;
+    if (document.querySelector('.swal2-container, dialog[open]')) return;
+    ev.preventDefault();
+    if (!this.ejecucion.enviando() && !this.ejecucion.hayActiva()) void this.ejecutar();
+  }
 
   /**
    * Carga clientes, período y operaciones del control que se reintenta. Un mes
@@ -561,6 +643,18 @@ export class NuevoControl {
         xubio: { usuario: v.xubio.usuario.trim(), clave: v.xubio.clave, recordar: v.xubio.recordar },
       });
       this.form.controls.xubio.controls.clave.reset('');
+      const p = v.periodo;
+      guardarUltimo({
+        clientes: v.clientes,
+        modo: p.modo,
+        mes: p.mes,
+        anio: p.anio,
+        desde: p.desde,
+        hasta: p.hasta,
+        ventas: v.operaciones.ventas,
+        compras: v.operaciones.compras,
+        fecha: new Date().toISOString(),
+      });
       this.toast.ok('Control iniciado', `${v.clientes.length} cliente(s) · ${this.resumen()}`);
       void this.router.navigate(['/ejecuciones', ej.id]);
     } catch (e) {

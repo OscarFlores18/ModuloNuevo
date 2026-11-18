@@ -49,6 +49,18 @@ export class EjecucionStore {
     }
   }
 
+  /** Lo saca del historial (en el servidor y en la lista). */
+  async eliminar(id: string): Promise<void> {
+    await this.api.eliminarEjecucion(id);
+    this.historial.update((l) => l.filter((h) => h.id !== id));
+    if (this.siguiendo === id) {
+      this.detener();
+      this.siguiendo = null;
+      this.actual.set(null);
+      this.log.set([]);
+    }
+  }
+
   async iniciar(pedido: PedidoEjecucion): Promise<DetalleEjecucion> {
     this.enviando.set(true);
     try {

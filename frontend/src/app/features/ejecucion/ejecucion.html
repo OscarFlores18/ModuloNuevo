@@ -6,16 +6,22 @@
 
 @if (!e) {
   @if (!store.error() && !store.historial().length) {
-    <div class="mf-aviso">
-      <strong>Todavía no se ejecutó ningún control.</strong>
-      <p><a routerLink="/control" class="mf-btn mt-2">Nuevo control</a></p>
+    <div class="cf-vacio">
+      <strong>Todavía no corriste ningún control</strong>
+      <p>Acá vas a ver el avance de cada control mientras corre y, al terminar, qué encontró y qué hay que hacer.</p>
+      <ol>
+        <li>Cargá tus clientes en <a routerLink="/clientes" class="mf-btn-link">Clientes</a> (CUIT y clave fiscal).</li>
+        <li>En <strong>Nuevo control</strong> elegí los clientes y el mes.</li>
+        <li>Apretá <strong>Ejecutar control</strong>: los bots hacen el resto.</li>
+      </ol>
+      <a routerLink="/control" class="mf-btn">Empezar un control →</a>
     </div>
   }
 } @else {
   @let ins = insigniaEjecucion[e.estado];
 
   <!-- 1. Estado global -->
-  <section class="mf-panel mf-panel-acento" aria-labelledby="t-ejecucion">
+  <section class="mf-panel mf-panel-acento" aria-labelledby="t-ejecucion" data-tour="estado">
     <header class="flex flex-wrap items-center justify-between gap-3">
       <div class="min-w-0">
         <h2 id="t-ejecucion" class="m-0 text-xl font-bold first-letter:uppercase">{{ titulo() }}</h2>
@@ -56,7 +62,7 @@
         </div>
       } @else {
         <div class="ej-kpi" [class.ej-kpi-error]="pendientes() > 0" [class.ej-kpi-ok]="!pendientes()">
-          <dt>Para hacer@if (conteoErrores().grave) { <span class="ej-kpi-grave">· {{ conteoErrores().grave }} grave{{ conteoErrores().grave === 1 ? '' : 's' }}</span> }</dt>
+          <dt>Para hacer<app-ayuda texto="Las tareas que dejó el control. Grave: el control no sirve hasta corregirlo. A revisar: corregir en Xubio o consultar al cliente. Info: es normal, no hay que hacer nada." />@if (conteoErrores().grave) { <span class="ej-kpi-grave">· {{ conteoErrores().grave }} grave{{ conteoErrores().grave === 1 ? '' : 's' }}</span> }</dt>
           <dd>
             @if (tareas().length) {
               <button type="button" class="ej-kpi-link" (click)="irATareas()" title="Ir a la lista de tareas">{{ pendientes() }} <small>{{ pendientes() ? 'de ' + tareas().length + (tareas().length === 1 ? ' tarea' : ' tareas') : 'todo hecho' }}</small></button>
@@ -80,10 +86,10 @@
 
   <!-- Qué hay que hacer: los hallazgos como órdenes, en el orden en que conviene hacerlas -->
   @if (!activa() && (tareas().length || conteoErrores().info)) {
-    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" aria-labelledby="t-tareas" id="t-tareas">
+    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" aria-labelledby="t-tareas" id="t-tareas" data-tour="tareas">
       <header class="tr-cab">
         <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold">{{ pendientes() ? 'Qué hay que hacer' : tareas().length ? 'Todo hecho' : 'Nada para corregir' }}</h2>
+          <h2 class="m-0 text-lg font-bold">{{ pendientes() ? 'Qué hay que hacer' : tareas().length ? 'Todo hecho' : 'Nada para corregir' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
           <p class="mf-sub m-0 mt-0.5">
             @if (!tareas().length) {
               El control salió bien: solo hay avisos para que sepas.
@@ -158,7 +164,7 @@
   }
 
   <!-- 2. Clientes: una fila por cliente con sus tres etapas; abiertos los que tienen algo para mirar -->
-  <section aria-labelledby="t-clientes-ej">
+  <section aria-labelledby="t-clientes-ej" data-tour="clientes-ej">
     <h2 id="t-clientes-ej" class="m-0 mb-2 text-lg font-bold">Clientes</h2>
     <ul class="ej-clientes">
       @for (c of clientes(); track c.nombre) {
@@ -242,7 +248,7 @@
 
 <!-- Historial: los controles anteriores, como una bandeja (quedan guardados en el servidor) -->
 @if (store.historial().length) {
-  <aside class="ej-historial" aria-labelledby="t-historial">
+  <aside class="ej-historial" aria-labelledby="t-historial" data-tour="historial">
     <div class="ej-historial-cab">
       <h2 id="t-historial">Historial</h2>
       <span class="mf-sub">{{ store.historial().length }} {{ store.historial().length === 1 ? 'control' : 'controles' }}</span>
@@ -251,6 +257,11 @@
       @for (h of store.historial(); track h.id) {
         @let insH = insigniaEjecucion[h.estado];
         <li>
+          @if (h.estado !== 'en_curso' && h.estado !== 'esperando') {
+            <button type="button" class="ej-hist-borrar" (click)="borrarDelHistorial(h)" [attr.aria-label]="'Borrar del historial el control de ' + periodoLegibleDe(h.periodo)" title="Borrar del historial">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
+            </button>
+          }
           <a [routerLink]="['/ejecuciones', h.id]" class="ej-hist-item" [class.activo]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null">
             <span class="ej-hist-fila">
               <span class="ej-hist-periodo first-letter:uppercase" [title]="h.periodo">{{ periodoLegibleDe(h.periodo) }}</span>
