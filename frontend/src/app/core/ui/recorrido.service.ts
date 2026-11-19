@@ -33,18 +33,14 @@ const RECORRIDOS: Record<string, PasoRecorrido[]> = {
   ],
 };
 
-const PREFIJO_VISTO = 'cf-recorrido-visto:';
-
 /**
- * Recorrido guiado: la primera vez que se entra a una pantalla señala sus
- * partes una por una. Se puede saltar y volver a ver con el «?» del encabezado.
+ * Recorrido guiado: señala las partes de una pantalla una por una. Nunca arranca
+ * solo (molestaba en cada visita): solo con el «?» del encabezado.
  */
 @Injectable({ providedIn: 'root' })
 export class RecorridoService {
   /** El recorrido en curso: los pasos que tienen algo en pantalla y cuál se muestra. */
   readonly actual = signal<{ pantalla: string; pasos: PasoRecorrido[]; indice: number } | null>(null);
-
-  private espera: ReturnType<typeof setTimeout> | null = null;
 
   pantallaDe(url: string): string {
     return url.split(/[/?#]/).filter(Boolean)[0] ?? 'control';
@@ -54,24 +50,14 @@ export class RecorridoService {
     return !!RECORRIDOS[pantalla]?.length;
   }
 
-  /** Al llegar a una pantalla: si es la primera vez, arranca solo (cuando terminó de dibujarse). */
-  alEntrar(url: string): void {
-    if (this.espera) clearTimeout(this.espera);
+  /** Al cambiar de pantalla, el recorrido abierto (de la anterior) se cierra. */
+  alNavegar(): void {
     this.cerrar();
-    const pantalla = this.pantallaDe(url);
-    if (!this.hayRecorrido(pantalla) || this.yaVisto(pantalla)) return;
-    this.espera = setTimeout(() => {
-      // Si hay una ventana abierta (SweetAlert, un formulario), no se interrumpe.
-      if (document.querySelector('.swal2-container, dialog[open]')) return;
-      this.iniciar(pantalla, true);
-    }, 900);
   }
 
-  /** `automatico`: si no hay nada que señalar todavía (pantalla vacía), queda para la próxima. */
-  iniciar(pantalla: string, automatico = false): void {
+  iniciar(pantalla: string): void {
     const pasos = (RECORRIDOS[pantalla] ?? []).filter((p) => this.elemento(p));
     if (!pasos.length) return;
-    if (automatico && pasos.length < Math.min(2, RECORRIDOS[pantalla].length)) return;
     this.actual.set({ pantalla, pasos, indice: 0 });
   }
 
@@ -87,10 +73,8 @@ export class RecorridoService {
     if (a && a.indice > 0) this.actual.set({ ...a, indice: a.indice - 1 });
   }
 
-  /** Terminar o saltar: no vuelve a aparecer solo en esa pantalla. */
+  /** Terminar o saltar. */
   terminar(): void {
-    const a = this.actual();
-    if (a) this.marcarVisto(a.pantalla);
     this.cerrar();
   }
 
@@ -100,21 +84,5 @@ export class RecorridoService {
 
   elemento(p: PasoRecorrido): HTMLElement | null {
     return document.querySelector<HTMLElement>(`[data-tour="${p.objetivo}"]`);
-  }
-
-  private yaVisto(pantalla: string): boolean {
-    try {
-      return localStorage.getItem(PREFIJO_VISTO + pantalla) === '1';
-    } catch {
-      return true; // sin almacenamiento no se insiste en cada visita
-    }
-  }
-
-  private marcarVisto(pantalla: string): void {
-    try {
-      localStorage.setItem(PREFIJO_VISTO + pantalla, '1');
-    } catch {
-      /* nada */
-    }
   }
 }

@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { CuitPipe, formatearCuit } from '../../core/cuit.pipe';
 import { Cliente, mensajeDeError } from '../../core/models';
@@ -7,7 +7,6 @@ import { ClientesStore } from '../../core/services/clientes.store';
 import { PerspectivaService } from '../../core/services/perspectiva.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Encabezado } from '../../core/ui/encabezado';
-import { RecorridoService } from '../../core/ui/recorrido.service';
 import { ClienteForm } from './cliente-form';
 
 @Component({
@@ -243,11 +242,6 @@ export class ClientesPantalla {
     }
     void this.acceso.revisar();
     void this.store.cargar(true);
-    // Con la sección bloqueada no hay nada que mostrar: el recorrido arranca al desbloquearla.
-    const recorrido = inject(RecorridoService);
-    effect(() => {
-      if (this.acceso.desbloqueado()) untracked(() => recorrido.alEntrar('/clientes'));
-    });
   }
 
   protected async entrar(): Promise<void> {

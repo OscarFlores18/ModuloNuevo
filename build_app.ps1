@@ -26,6 +26,11 @@ $ErrorActionPreference = 'Stop'
 $raiz = $PSScriptRoot
 Set-Location $raiz
 
+# Con la app abierta Windows no deja reemplazar sus archivos (dist\ControlFCT).
+if (Get-Process ControlFCT -ErrorAction SilentlyContinue) {
+    throw 'Control de Facturas está abierto: cerralo y volvé a correr este script.'
+}
+
 function Paso($texto) { Write-Host "`n==> $texto" -ForegroundColor Cyan }
 
 # --- Python ---------------------------------------------------------------------
@@ -73,7 +78,8 @@ $argumentos = @(
     # Lo que usan los diálogos «Guardar como» del backend.
     '--hidden-import', 'tkinter.filedialog'
 )
-$icono = Join-Path $raiz 'frontend\public\favicon.ico'
+# Ícono del .exe, del acceso directo y de la ventana (assets\icono.ico).
+$icono = Join-Path $raiz 'assets\icono.ico'
 if (Test-Path $icono) { $argumentos += @('--icon', $icono) }
 
 & $python @argumentos

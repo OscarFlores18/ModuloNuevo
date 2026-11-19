@@ -47,10 +47,10 @@ export class App {
   constructor() {
     // Para el contador de clientes en la pestaña.
     void this.actualizar();
-    // La primera vez que se entra a cada pantalla, el recorrido arranca solo.
+    // El recorrido solo se abre con el «?»; al cambiar de pantalla se cierra.
     this.router.events
       .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd), takeUntilDestroyed())
-      .subscribe((e) => this.recorrido.alEntrar(e.urlAfterRedirects));
+      .subscribe(() => this.recorrido.alNavegar());
     // El alto de la página cambia al navegar o cuando crece el contenido (registro, tablas).
     if (typeof ResizeObserver !== 'undefined') {
       const observador = new ResizeObserver(() => this.medirScroll());
