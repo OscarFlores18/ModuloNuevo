@@ -414,6 +414,35 @@ def _clave_cuit(cuit, comprobante) -> tuple[str, str]:
     return (_solo_digitos(cuit), str(comprobante))
 
 
+def _columnas_mail_arca(df_arca, operacion, col_fecha, col_cuit, col_prov, col_total) -> list[tuple[str, object]]:
+    """Las columnas de ARCA, con sus títulos de «Mis Comprobantes», que van en la
+    tabla del mail al cliente. La que no esté en la planilla queda vacía."""
+    columnas = [str(c) for c in getattr(df_arca, "columns", [])]
+
+    def buscar(*claves, evitar=()):
+        for c in columnas:
+            bajo = c.lower()
+            if any(k in bajo for k in claves) and not any(e in bajo for e in evitar):
+                return c
+        return None
+
+    parte = "Emisor" if operacion == "Compras" else "Receptor"
+    return [
+        ("Fecha", col_fecha),
+        ("Tipo", buscar("tipo de comprobante") or ("Tipo" if "Tipo" in columnas else None)),
+        ("Punto de Venta", buscar("punto de venta")),
+        ("Número Desde", buscar("número desde", "numero desde")),
+        ("Cód. Autorización", buscar("autoriz")),
+        (f"Tipo Doc. {parte}", buscar("tipo doc")),
+        (f"Nro. Doc. {parte}", col_cuit),
+        (f"Denominación {parte}", col_prov),
+        ("Imp. Neto Gravado", buscar("neto gravado total") or buscar("neto gravado", evitar=("no gravado", "iva "))),
+        ("Imp. Op. Exentas", buscar("exent")),
+        ("IVA", buscar("total iva") or next((c for c in columnas if c.strip().lower() == "iva"), None)),
+        ("Imp. Total", col_total),
+    ]
+
+
 def diagnosticar(
     operacion: str,
     df_arca,
@@ -449,13 +478,18 @@ def diagnosticar(
         ("Proveedor" if operacion == "Compras" else "Cliente", 'Proveedor'),
         ("Total", 'Total'),
     ]
+    columnas_mail = _columnas_mail_arca(df_arca, operacion, col_fecha_arca, col_cuit_arca, col_prov_arca, col_total_arca)
 
     def filas(df, columnas, origen, excluir=frozenset(), col_cuit=None, col_comp=None):
         salida = []
         for _, fila in df.iterrows():
             if excluir and _clave_cuit(fila.get(col_cuit), fila.get(col_comp)) in excluir:
                 continue
-            salida.append({"origen": origen, "fila": _fila_vista(fila, columnas)})
+            item = {"origen": origen, "fila": _fila_vista(fila, columnas)}
+            if origen == "arca":
+                # Las columnas de «Mis Comprobantes» para la tabla del mail al cliente.
+                item["mail"] = _fila_vista(fila, columnas_mail)
+            salida.append(item)
         return salida
 
     def error(tipo, gravedad, titulo, detalle, acciones, items, hoja=None, a_corregir=None):

@@ -748,12 +748,11 @@ export interface ContextoVentana {
 /** El de la ventana abierta (se fija al abrirla). */
 let contexto: ContextoVentana = { emails: {}, periodo: '' };
 
-const MAX_LINEAS_MAIL = 25;
-
 /**
- * «Consultar al cliente»: abre el compose web de Gmail con el mail del cliente,
- * el asunto y la lista de comprobantes a revisar (sin los normales: tiques,
- * anuladas...).
+ * «Consultar al cliente»: arma el mail con la estructura del estudio (saludo,
+ * pedido, tabla de comprobantes con bordes y cierre). El compose web de Gmail
+ * solo acepta texto plano en la URL, así que el mail con la tabla se copia al
+ * portapapeles y Gmail se abre con el destinatario y el asunto: se pega con Ctrl+V.
  *
  * Se usa el compose de Gmail y no `mailto:` porque Windows resuelve `mailto:`
  * con la aplicación de correo predeterminada del sistema (en esta PC, Outlook),
@@ -761,64 +760,154 @@ const MAX_LINEAS_MAIL = 25;
  */
 const COMPOSE_GMAIL = 'https://mail.google.com/mail/';
 
-function mailConsulta(e: Advertencia, ctx: ContextoVentana): string {
-  const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo);
-  const lineas = filas.slice(0, MAX_LINEAS_MAIL).map((f) => {
-    const d = normalizar(f.fila);
-    const total = typeof d.Total === 'number' ? ` · $ ${texto(d.Total)}` : '';
-    if (e.tipo === 'total_no_cierra') {
-      const v: Record<string, CeldaVista['valor']> = {};
-      for (const c of f.fila) v[c.columna] = c.valor;
-      return `- ${texto(d.Fecha)} · ${texto(d.Tipo)} ${texto(d.Comprobante)} · ${texto(d['Razón social'])} (CUIT ${cuit(d.CUIT)}) · total $ ${importe(d.Total)}, columnas $ ${importe(v['Suma columnas'])}, diferencia $ ${importe(v['Diferencia'])}`;
-    }
-    return `- ${texto(d.Fecha)} · ${texto(d.Tipo)} ${texto(d.Comprobante)} · ${texto(d['Razón social'])} (CUIT ${cuit(d.CUIT)})${total}`;
+/** Los mails armados de la ventana abierta, por id del botón. */
+const mailsArmados = new Map<string, { url: string; html: string; texto: string }>();
+
+/** Columnas de importe: «62.502,25»; en cero «-», como en ARCA. */
+const COLUMNAS_IMPORTE = /neto|exent|iva|total|suma|diferencia/i;
+
+function celdaMail(columna: string, v: CeldaVista['valor'] | undefined): string {
+  if (v === null || v === undefined || v === '') return '';
+  if (COLUMNAS_IMPORTE.test(columna)) {
+    const n = aNumero(v);
+    if (n === null) return String(v);
+    return n === 0 ? '-' : n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  // Punto de venta, número, CAE y CUIT: enteros, sin separadores de miles.
+  if (typeof v === 'number') return String(v);
+  return String(v);
+}
+
+/** La tabla del mail: las columnas de ARCA si vinieron; si no (controles viejos), las de la vista. */
+export function tablaMail(filas: FilaConError[]): { columnas: string[]; datos: string[][] } {
+  const conMail = filas.find((f) => f.mail?.length);
+  const base = conMail?.mail ?? filas[0]?.fila ?? [];
+  const columnas = base.map((c) => c.columna);
+  const datos = filas.map((f) => {
+    const valores: Record<string, CeldaVista['valor']> = {};
+    for (const c of (conMail ? f.mail : undefined) ?? f.fila) valores[c.columna] = c.valor;
+    return columnas.map((col) => celdaMail(col, valores[col]));
   });
-  const resto = filas.length > MAX_LINEAS_MAIL ? `\n…y ${filas.length - MAX_LINEAS_MAIL} más.` : '';
+  return { columnas, datos };
+}
+
+const ESTILO_TABLA = 'border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px';
+const ESTILO_TH = 'border:1px solid #000;padding:4px 6px;background:#d9e1f2;font-weight:bold;text-align:center;white-space:nowrap';
+const ESTILO_TD = 'border:1px solid #000;padding:3px 6px;white-space:nowrap';
+
+export function armarMail(e: Advertencia, ctx: ContextoVentana): { url: string; html: string; texto: string } {
+  const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo);
   const operacion = (e.operacion ?? '').toLowerCase();
-  const que =
+  const pedido =
     e.tipo === 'total_no_cierra'
-      ? 'en ARCA el neto, el IVA y los demás conceptos no suman el total (hay una diferencia sin discriminar)'
-      : e.tipo === 'faltante_en_xubio'
-        ? 'figuran en ARCA y no los tenemos registrados'
-        : 'los tenemos registrados y no figuran en ARCA';
-  const pregunta =
-    e.tipo === 'total_no_cierra'
-      ? '¿Nos podés decir a qué corresponde la diferencia (impuestos internos, combustibles, otro concepto)? Si podés, envianos la factura.'
-      : '¿Nos podés confirmar si corresponden? Si es así, por favor envianos el comprobante.';
-  const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
-  const cuerpo = [
-    'Hola,',
-    '',
-    `Al controlar ${operacion} del período ${ctx.periodo} encontramos ${filas.length === 1 ? 'este comprobante' : 'estos comprobantes'} ${e.tipo === 'total_no_cierra' ? (filas.length === 1 ? 'en el que' : 'en los que') : 'que'} ${que}:`,
-    '',
-    lineas.join('\n') + resto,
-    '',
-    pregunta,
-    '',
-    'Saludos.',
-  ].join('\n');
-  const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
-  const partes = [
-    'view=cm',
-    'fs=1',
-    `su=${encodeURIComponent(asunto)}`,
-    `body=${encodeURIComponent(cuerpo)}`,
+      ? [
+          `Enviamos detalles de facturas de ${operacion} en las que, en ARCA, el neto, el IVA y los demás conceptos no suman el total. Por favor, indicarnos a qué corresponde la diferencia (impuestos internos, combustibles u otro concepto) y enviarnos las facturas en cuanto las tengan.`,
+        ]
+      : e.tipo === 'faltante_en_arca'
+        ? [
+            `Enviamos detalles de comprobantes de ${operacion} que tenemos registrados y que no figuran en ARCA. Por favor, confirmarnos si corresponden y, si es así, enviarnos los comprobantes en cuanto los tengan.`,
+          ]
+        : [
+            'Enviamos detalles de facturas que están en ARCA y que fueron cargadas a Xubio; falta cargar las percepciones. Por favor, enviarlas en cuanto las tengan.',
+            'También aclarar en la factura a qué centro de costo imputamos y, en el caso de que fueron abonadas, aclarar de qué forma fueron canceladas.',
+          ];
+  const saludo = 'Estimados, buenos días, ¿cómo están?';
+  const cierre = [
+    'También adjuntamos la posición del IVA.',
+    'Quedamos a la espera, muchas gracias.',
+    'Saludos cordiales y buen comienzo de semana!!',
   ];
+  const { columnas, datos } = tablaMail(filas);
+  const derecha = columnas.map((c) => COLUMNAS_IMPORTE.test(c));
+
+  const parrafo = (t: string) => `<p style="margin:0 0 12px">${esc(t)}</p>`;
+  const tabla =
+    `<table style="${ESTILO_TABLA}"><thead><tr>` +
+    columnas.map((c) => `<th style="${ESTILO_TH}">${esc(c)}</th>`).join('') +
+    '</tr></thead><tbody>' +
+    datos
+      .map(
+        (fila) =>
+          '<tr>' +
+          fila.map((v, i) => `<td style="${ESTILO_TD};text-align:${derecha[i] ? 'right' : 'left'}">${esc(v)}</td>`).join('') +
+          '</tr>',
+      )
+      .join('') +
+    '</tbody></table>';
+  const html =
+    '<div style="font-family:Arial,sans-serif;font-size:13px">' +
+    parrafo(saludo) +
+    pedido.map(parrafo).join('') +
+    tabla +
+    '<br>' +
+    cierre.map(parrafo).join('') +
+    '</div>';
+  const texto = [
+    saludo,
+    '',
+    ...pedido.flatMap((t) => [t, '']),
+    columnas.join(' | '),
+    ...datos.map((f) => f.map((v) => v || ' ').join(' | ')),
+    '',
+    ...cierre.flatMap((t) => [t, '']),
+  ]
+    .join('\n')
+    .trimEnd();
+
+  const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
+  const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
+  const partes = ['view=cm', 'fs=1', `su=${encodeURIComponent(asunto)}`];
   // Las comas y las @ del destinatario se dejan legibles: Gmail separa varios
   // mails con coma y los reconoce igual estando sin escapar.
   if (para) {
     partes.splice(2, 0, `to=${encodeURIComponent(para).replace(/%2C/g, ',').replace(/%40/g, '@')}`);
   }
-  return `${COMPOSE_GMAIL}?${partes.join('&')}`;
+  return { url: `${COMPOSE_GMAIL}?${partes.join('&')}`, html, texto };
 }
 
-/** «✉ Consultar al cliente»: abre Gmail con el mail ya armado (o bloqueado en Empleado). */
+/**
+ * Copia el mail (con la tabla) al portapapeles en el mismo clic, antes de que se
+ * abra Gmail. Tiene que ser sincrónico: en cuanto se abre el navegador la app
+ * pierde el foco y Windows ya no deja escribir en el portapapeles (por eso el
+ * `navigator.clipboard` asincrónico dejaba Gmail vacío, solo con la firma).
+ */
+export function copiarMail(m: { html: string; texto: string }): boolean {
+  const alCopiar = (ev: ClipboardEvent) => {
+    ev.clipboardData?.setData('text/html', m.html);
+    ev.clipboardData?.setData('text/plain', m.texto);
+    ev.preventDefault();
+  };
+  // execCommand('copy') necesita algo seleccionado para disparar el evento.
+  const apoyo = document.createElement('textarea');
+  apoyo.value = m.texto;
+  apoyo.setAttribute('readonly', '');
+  apoyo.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.appendChild(apoyo);
+  apoyo.select();
+  document.addEventListener('copy', alCopiar);
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  } finally {
+    document.removeEventListener('copy', alCopiar);
+    apoyo.remove();
+  }
+  return ok;
+}
+
+/** «✉ Consultar al cliente»: copia el mail armado y abre Gmail (o bloqueado en Empleado). */
 function botonMail(e: Advertencia, canEdit: boolean): string {
   if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">✉ Consultar al cliente</button>`;
-  const ayuda = contexto.emails[e.cliente]
-    ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]} y los comprobantes a revisar.`
-    : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes).';
-  return `<a class="ve-boton" href="${esc(mailConsulta(e, contexto))}" target="_blank" rel="noopener" title="${esc(ayuda)}">✉ Consultar al cliente</a>`;
+  const destino = contexto.emails[e.cliente]
+    ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]}`
+    : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes)';
+  const ayuda = `${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
+  const m = armarMail(e, contexto);
+  const id = String(mailsArmados.size + 1);
+  mailsArmados.set(id, m);
+  return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener" title="${esc(ayuda)}">✉ Consultar al cliente</a>`;
 }
 
 
@@ -959,6 +1048,8 @@ function bloqueSubir(
     const a = adv ?? faltanteDesdeExcel(cliente, op, k);
     const tildadas = grupos.filter((g) => g.subir?.op === op && g.subir.incluida).length;
     if (conSubida) botones.push(botonSubir(a, registrar(a), canEdit, porOp.size > 1, tildadas));
+    // Avisarle al cliente: percepciones, centro de costo y forma de pago de estas facturas.
+    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) botones.push(botonMail(adv, canEdit));
   }
   const tildadas = grupos.filter((g) => g.subir?.incluida).length;
   const meta = `<span class="ve-meta" data-cuenta>${tildadas} de ${grupos.length} para subir</span>${ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : ''}`;
@@ -1407,6 +1498,7 @@ export function mostrarVentanaDeErrores(
   ctx: ContextoVentana = { emails: {}, periodo: '' },
 ) {
   contexto = ctx;
+  mailsArmados.clear();
   const hechas = leerHechas(ejecucionId);
   const graves = contarErrores(errores).grave;
   const conteo = contarBloques(errores, hojas?.sinLibro, hojas?.sinArca);
@@ -1599,6 +1691,22 @@ export function mostrarVentanaDeErrores(
       }
       contarAplicar();
       for (const grupo of popup.querySelectorAll<HTMLElement>('.ve-grupo')) sincronizar(grupo);
+      // «Consultar al cliente»: el mail con la tabla queda copiado mientras se abre Gmail.
+      popup.addEventListener('click', (ev) => {
+        const boton = (ev.target as HTMLElement).closest<HTMLElement>('a[data-mail]');
+        const m = boton ? mailsArmados.get(boton.dataset['mail'] ?? '') : undefined;
+        if (!boton || !m) return;
+        // Antes de que se abra Gmail (el enlace se sigue después de este clic).
+        const antes = boton.textContent;
+        if (copiarMail(m)) {
+          boton.setAttribute('href', m.url);
+          boton.textContent = '✓ Copiado: pegalo en Gmail con Ctrl+V';
+        } else {
+          // Sin portapapeles, el aviso va escrito en el cuerpo (sin bordes, pero completo).
+          boton.setAttribute('href', `${m.url}&body=${encodeURIComponent(m.texto)}`);
+        }
+        setTimeout(() => (boton.textContent = antes), 6000);
+      });
       // Copia rápida: clic en el comprobante o la CUIT.
       popup.addEventListener('click', (ev) => {
         const celda = (ev.target as HTMLElement).closest<HTMLElement>('[data-copiar]');

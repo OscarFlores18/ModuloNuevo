@@ -256,6 +256,8 @@ export interface FaltantesExcel {
 export interface FilaConError {
   origen: 'arca' | 'xubio';
   fila: CeldaVista[];
+  /** Solo ARCA: las columnas de «Mis Comprobantes» para la tabla del mail al cliente. */
+  mail?: CeldaVista[];
   /** Partida sin ARCA que es normal: tique o extracto bancario, o proveedor del exterior. */
   motivo?: 'tique' | 'exterior' | 'anulada' | 'liquidacion';
 }

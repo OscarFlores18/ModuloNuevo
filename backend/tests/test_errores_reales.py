@@ -131,3 +131,22 @@ def test_faltantes_cuentan_solo_los_que_hay_que_tocar(tmp_path: Path):
     e = errores["faltante_en_arca"]
     assert e["total"] == 2
     assert e["a_corregir"] == 1
+
+
+def test_faltante_trae_las_columnas_de_arca_para_el_mail(tmp_path: Path):
+    # «Consultar al cliente» arma la tabla con las columnas de «Mis Comprobantes».
+    errores = _errores(
+        tmp_path,
+        [{"cuit": "27479591992", "total": 1210, "numero": 400205}],
+        [{"cuit": "27-94206263-5", "total": 7777}],
+    )
+    item = errores["faltante_en_xubio"]["comprobantes"][0]
+    mail = {c["columna"]: c["valor"] for c in item["mail"]}
+    assert list(mail) == [
+        "Fecha", "Tipo", "Punto de Venta", "Número Desde", "Cód. Autorización",
+        "Tipo Doc. Emisor", "Nro. Doc. Emisor", "Denominación Emisor",
+        "Imp. Neto Gravado", "Imp. Op. Exentas", "IVA", "Imp. Total",
+    ]
+    assert str(mail["Número Desde"]) == "400205"
+    assert float(mail["Imp. Total"]) == 1210
+    assert mail["Denominación Emisor"] == "PROVEEDOR"
