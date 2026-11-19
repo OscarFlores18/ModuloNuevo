@@ -44,7 +44,8 @@ def test_endpoint_corre_el_bot_sin_importar(cliente_demo, monkeypatch):
     llamadas = []
 
     class SesionFalsa:
-        def __init__(self, usuario, clave, log=print):
+        def __init__(self, usuario, clave, log=print, visible=None):
+            assert visible is True  # «Cargar en Xubio» siempre muestra la ventana
             self._page = None
 
         def __enter__(self):
