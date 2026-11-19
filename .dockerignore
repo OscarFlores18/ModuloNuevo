@@ -17,3 +17,8 @@ frontend/.angular
 *.xlsx
 *.csv
 debug_log.txt
+# App de escritorio: no van a la imagen de la página
+build
+dist
+instalador
+*.exe
