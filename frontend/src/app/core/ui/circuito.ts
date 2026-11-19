@@ -18,7 +18,7 @@ const PASOS: PasoCircuito[] = [
   { numero: 1, texto: 'Clientes', ruta: '/clientes', ayuda: 'Cargá cada cliente con su CUIT y su clave fiscal de ARCA. Se hace una sola vez.', activoEn: ['/clientes'] },
   { numero: 2, texto: 'Nuevo control', ruta: '/control', ayuda: 'Elegí los clientes y el período: los bots bajan ARCA y Xubio y arman la auditoría.', activoEn: ['/control'] },
   { numero: 3, texto: 'Hallazgos y tareas', ruta: '/ejecuciones', ayuda: 'Mirá qué encontró el control y hacé las tareas: corregir en Xubio o consultar al cliente.', activoEn: ['/ejecuciones'] },
-  { numero: 4, texto: 'Faltantes a Xubio', ruta: '/convertir-aux', ayuda: 'Lo que está en ARCA y falta en Xubio se importa desde acá.', activoEn: ['/convertir-aux'] },
+  { numero: 4, texto: 'Subir a Xubio', ruta: '/convertir-aux', ayuda: 'Lo que está en ARCA y falta en Xubio se importa desde acá.', activoEn: ['/convertir-aux'] },
   { numero: 5, texto: 'Confirmar', ruta: '/control', ayuda: 'Corré un control nuevo del mismo período: si quedó todo bien, sale sin hallazgos.', activoEn: [] },
 ];
 

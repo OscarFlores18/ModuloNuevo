@@ -12,6 +12,7 @@ import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 import { Precarga, borrarPrecarga, leerPrecarga } from '../ejecucion/seleccion';
+import { abreviarTipo } from '../ejecucion/ventana-errores';
 
 /** Lo que dice el nombre del AUX de la app: operación, período y cliente. */
 const NOMBRE_AUX = /^AUX - Control de facturas (Ventas|Compras) con AFIP - (\d{2}-\d{2}) - (.+?)(?: - \d+\S* control)?\.xlsx?$/i;
@@ -49,9 +50,6 @@ interface ArchivoElegido {
     .op-ventas { background: #e0f2fe; color: #075985; }
     .op-compras { background: #fef3c7; color: #92400e; }
     .op-otro { background: #f1f5f9; color: #475569; }
-    .fx-desde { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border: 1px solid #bfdbfe; border-left: 4px solid #2563eb; border-radius: 10px; background: #f8fbff; }
-    .fx-desde-fila { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-    .fx-manual { margin: 14px 0 8px; font-size: .85rem; font-weight: 700; color: var(--color-tenue); }
     .fx-lista { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: .82rem; }
     .fx-lista th { text-align: left; font-size: .74rem; font-weight: 700; color: #64748b; padding: 4px 6px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
     .fx-lista td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -60,39 +58,45 @@ interface ArchivoElegido {
     .fx-detalle { margin-top: 8px; }
     .fx-detalle > summary { cursor: pointer; font-size: .85rem; font-weight: 700; color: var(--color-acento); }
     .fx-correcciones { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 0; font-size: .84rem; line-height: 1.4; }
+    .fx-cab-der { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding-bottom: 14px; border-bottom: 1px solid var(--color-borde); }
+    .fx-cab-der .op, .fx-res-cab .op { padding: 3px 8px; min-width: 0; }
+    .fx-resultado + .fx-resultado, app-alerta + .fx-resultado { margin-top: 18px; padding-top: 18px; border-top: 1px dashed var(--color-borde); }
+    .fx-res-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 14px; font-size: 1rem; }
+    .fx-op-titulo { margin: 10px 0 6px; font-size: .82rem; font-weight: 700; color: var(--color-tenue); }
+    .fx-op-titulo:first-of-type { margin-top: 0; }
+    .fx-subir-lista { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+    .fx-cargando { display: flex; align-items: center; gap: 10px; padding: 40px 0; justify-content: center; color: var(--color-tenue); font-weight: 600; }
+    .fx-pasos { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-direction: column; gap: 22px; }
+    .fx-paso { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; }
+    .fx-num { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: #eff6ff; color: var(--color-acento); font-weight: 800; font-size: .9rem; }
+    .fx-paso h3 { display: flex; align-items: center; gap: 4px; margin: 4px 0 8px; font-size: .98rem; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--color-texto, #0f172a); }
+    .fx-caja { border: 1px solid var(--color-borde); border-radius: 10px; overflow-x: auto; background: #fff; }
+    .fx-caja .fx-lista th { background: #f8fafc; padding: 8px 10px; }
+    .fx-caja .fx-lista td { padding: 7px 10px; }
+    .fx-caja .fx-lista tbody tr:last-child td { border-bottom: 0; }
+    .fx-empresa { max-width: 420px; }
+    .fx-subir { padding: 10px 18px; font-size: .95rem; }
+    .fx-hecho { display: inline-flex; align-items: center; padding: 8px 12px; border-radius: 8px; font-weight: 700; color: var(--color-ok-texto); background: #e7f6ec; }
+    .fx-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--color-borde); }
+    .fx-link { border: 0; background: none; padding: 0; color: var(--color-tenue); font-size: .85rem; text-decoration: underline; cursor: pointer; }
+    .fx-link:hover { color: var(--color-acento); }
     .fx-correcciones p { margin: 0; padding: 4px 8px; border-left: 3px solid #fca5a5; background: #fffafa; border-radius: 4px; }
   `,
   template: `
     <app-encabezado
-      titulo="Faltantes a Xubio"
-      bajada="Los comprobantes de ARCA que faltan en el Libro IVA de Xubio, listos para importarlos. No cambia ningún control."
+      titulo="Subir a Xubio lo que falta"
+      bajada="Los comprobantes que están en ARCA pero no en el Libro IVA de Xubio, listos para cargarlos. No cambia ningún control."
     />
 
-    <!-- Dos columnas: elegir los AUX a la izquierda, los .zip para Xubio a la derecha -->
+    <!-- Izquierda: elegir los Excel del control (siempre). Derecha: lo listo para Xubio; si se vino desde un control, ya armado -->
     <div class="fx-grilla">
     <section class="mf-panel" aria-labelledby="t-elegir" data-tour="elegir">
       <div class="fx-cab">
-        <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los AUX<app-ayuda texto="Lo más cómodo: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel AUX que dejó el control en la carpeta del cliente." /></h2>
-        <p class="mf-sub m-0 mt-1">Los Excel AUX que armó el control, de uno o varios clientes. El cliente, el período y la operación se reconocen solos.</p>
+        <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los Excel del control<app-ayuda texto="Lo más cómodo: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel «AUX - Control de facturas…» que dejó el control en la carpeta del cliente." /></h2>
+        <p class="mf-sub m-0 mt-1">Los archivos «AUX - Control de facturas…» de la carpeta del cliente. Pueden ser de varios clientes: el cliente, el mes y si es venta o compra se reconocen solos.</p>
       </div>
 
       <div class="fx-cuerpo">
-      @if (precarga(); as p) {
-        <div class="fx-desde" aria-live="polite">
-          <div class="fx-desde-fila">
-            <span class="op" [class]="'op op-' + (p.operacion === 'Ventas' ? 'ventas' : 'compras')">{{ p.operacion }}</span>
-            <span class="min-w-0 flex-1">
-              <strong class="block truncate" [title]="p.cliente">Desde el control · {{ p.cliente }}<app-ayuda texto="Vino de «⬆ Subir a Xubio» en el control: solo los comprobantes tildados. Para cambiar cuáles van, volvé al control y tildá o destildá." /></strong>
-              <span class="mf-tenue block text-sm">{{ p.partidas.length }} de {{ p.total }} {{ p.total === 1 ? 'comprobante tildado' : 'comprobantes tildados' }}@if (p.correcciones.length) { · {{ p.correcciones.length }} {{ p.correcciones.length === 1 ? 'corrección elegida' : 'correcciones elegidas' }} }</span>
-            </span>
-          </div>
-          <div class="fx-desde-fila">
-            <a class="mf-btn mf-btn-suave mf-btn-chico" [routerLink]="['/ejecuciones', p.ejecucionId]">← Volver al control para cambiar la selección</a>
-            <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="quitarPrecarga()" [disabled]="convirtiendo()">Quitar</button>
-          </div>
-        </div>
-        <p class="fx-manual">O elegí otros AUX a mano</p>
-      }
       <!-- Los elegidos quedan dentro del cuadro: se pueden soltar más encima -->
       <div
         class="zona"
@@ -131,12 +135,12 @@ interface ArchivoElegido {
             @if (convirtiendo()) {
               <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
             }
-            {{ convirtiendo() ? 'Convirtiendo…' : 'Convertir ' + elegidos().length + (elegidos().length === 1 ? ' archivo' : ' archivos') }}
+            {{ convirtiendo() ? 'Preparando…' : 'Preparar para Xubio (' + elegidos().length + ')' }}
           </button>
             </span>
           </div>
         } @else {
-          <span class="font-semibold">Arrastrá los AUX acá</span>
+          <span class="font-semibold">Arrastrá los Excel del control acá</span>
           <span class="mf-tenue text-sm">o</span>
           <label class="mf-btn mf-btn-suave cursor-pointer">
             Elegir archivos
@@ -145,124 +149,166 @@ interface ArchivoElegido {
         }
       </div>
 
-      @if (error(); as err) { <app-alerta class="mt-3" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
+      @if (!precarga() && error(); as err) { <app-alerta class="mt-3" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
       </div>
     </section>
 
-    @if (resultados(); as lista) {
-      <section class="mf-panel" aria-labelledby="t-resultado" data-tour="resultado">
-        <div class="fx-cab flex flex-wrap items-start justify-between gap-3">
+    <!-- Derecha: lo listo para Xubio, paso a paso. Igual venga del botón rápido del control o de los Excel elegidos a mano -->
+    <section class="mf-panel" aria-labelledby="t-resultado" data-tour="resultado">
+      <div class="fx-cab-der">
+        @if (precarga(); as p) {
+          <span class="op" [class]="'op op-' + (p.operacion === 'Ventas' ? 'ventas' : 'compras')">{{ p.operacion }}</span>
           <div class="min-w-0 flex-1">
-            <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Cargalos en Xubio<app-ayuda texto="«Cargar en Xubio» abre Xubio en esta PC y deja el archivo listo en «Importar desde Mis Comprobantes (ARCA)». El bot no aprieta «Importar»: lo confirmás vos en la ventana de Chrome." /></h2>
-            <p class="mf-sub m-0 mt-1">Un .zip por operación, listo para «Importar desde Mis Comprobantes (ARCA)» en Xubio. «Ver en Excel» trae los mismos datos para revisarlos antes.</p>
+            <h2 id="t-resultado" class="m-0 truncate text-lg font-bold" [title]="p.cliente">{{ p.cliente }}</h2>
+            <p class="mf-sub m-0 mt-0.5">
+              {{ p.partidas.length }} {{ p.partidas.length === 1 ? 'comprobante' : 'comprobantes' }} de {{ p.operacion }} para subir
+              @if (p.partidas.length < p.total) { <span class="mf-tenue">· dejaste afuera {{ p.total - p.partidas.length }}</span> }
+            </p>
+          </div>
+          <a class="mf-btn mf-btn-suave mf-btn-chico" [routerLink]="['/ejecuciones', p.ejecucionId]" title="Volvé al control para tildar o destildar comprobantes">← Cambiar cuáles van</a>
+        } @else {
+          <div class="min-w-0 flex-1">
+            <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Subilos a Xubio<app-ayuda texto="«Subir a Xubio» abre Xubio en esta PC y deja el archivo listo en «Importar desde Mis Comprobantes (ARCA)». El bot no aprieta «Importar»: lo confirmás vos en la ventana de Chrome." /></h2>
+            <p class="mf-sub m-0 mt-1">El bot los carga en Xubio por vos, o descargás el archivo para importarlo a mano.</p>
           </div>
           @if (todosLosZips().length > 1) {
-            <button type="button" class="mf-btn mf-btn-suave" (click)="descargarTodos()">Descargar todos ({{ todosLosZips().length }})</button>
+            <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargarTodos()">Descargar todos ({{ todosLosZips().length }})</button>
           }
-        </div>
-        <div class="fx-cuerpo">
-        @if (sinPartidas().length) {
-          <app-alerta
-            class="mt-3"
-            nivel="info"
-            titulo="Sin partidas de ARCA no encontradas"
-            [mensajes]="sinPartidas()"
-          />
         }
-        <ul class="ej-archivos mt-3">
+      </div>
+
+      <div class="fx-cuerpo">
+        @if (convirtiendo()) {
+          <div class="fx-cargando" aria-live="polite">
+            <span class="inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-[var(--color-acento)]" aria-hidden="true"></span>
+            Preparando los comprobantes…
+          </div>
+        } @else if (precarga() && error()) {
+          <app-alerta class="mt-4" nivel="error" [mensajes]="[error()!]" [descartable]="true" (cerrado)="error.set(null)" />
+        } @else if (resultados(); as lista) {
+          @if (sinPartidas().length) {
+            <app-alerta class="mt-4" nivel="info" titulo="Nada para subir" [mensajes]="sinPartidas()" />
+          }
           @for (r of lista; track $index) {
             @let i = $index;
-            <li class="!items-start">
-              <span class="min-w-0 flex-1">
-                <strong class="block truncate" [title]="r.cliente">{{ r.cliente }}@if (r.periodo) { · {{ r.periodo }} }</strong>
-                @if (r.error) {
-                  <span class="text-sm" style="color: var(--color-error)">{{ r.error }}</span>
-                } @else {
-                  @for (a of r.avisos; track a) {
-                    <span class="block text-sm" style="color: var(--color-acento)">ⓘ {{ a }}</span>
-                  }
-                  @if (operacionesConZip(r).length) {
-                    <span class="mt-2 flex flex-wrap items-center gap-2 text-sm">
-                      <label class="mf-tenue" [attr.for]="'empresa-' + i">Empresa en Xubio<app-ayuda texto="En qué empresa de Xubio se importa. Se elige sola si el nombre coincide con el cliente: revisala antes de cargar." /></label>
-                      <select class="mf-input !w-auto !py-1 text-sm" [id]="'empresa-' + i" [ngModel]="empresaDe(r, i)" (ngModelChange)="elegirEmpresa(i, $event)">
-                        <option value="">Elegí el cliente…</option>
+            @if (r.error) {
+              <app-alerta class="mt-4" nivel="error" [titulo]="r.cliente" [mensajes]="[r.error]" />
+            } @else if (operacionesConZip(r).length) {
+              <div class="fx-resultado">
+                @if (!precarga()) {
+                  <div class="fx-res-cab">
+                    @for (op of operacionesConZip(r); track op) {
+                      <span class="op" [class]="'op op-' + (op === 'Ventas' ? 'ventas' : 'compras')">{{ op }}</span>
+                    }
+                    <strong class="min-w-0 flex-1 truncate" [title]="r.cliente">{{ r.cliente }}@if (r.periodo) { <span class="mf-tenue font-normal"> · {{ r.periodo }}</span> }</strong>
+                  </div>
+                }
+                <ol class="fx-pasos">
+                  <li class="fx-paso">
+                    <span class="fx-num" aria-hidden="true">1</span>
+                    <div class="min-w-0">
+                      <h3>Revisá lo que se sube</h3>
+                      @for (op of operacionesConZip(r); track op) {
+                        @if (operacionesConZip(r).length > 1) {
+                          <p class="fx-op-titulo">{{ op }} · {{ r.partidas[op] }} {{ r.partidas[op] === 1 ? 'comprobante' : 'comprobantes' }}</p>
+                        }
+                        @if (filasDe(r, op).length) {
+                          <div class="fx-caja">
+                            <table class="fx-lista">
+                              <colgroup><col style="width: 92px" /><col style="width: 54px" /><col style="width: 150px" /><col /><col style="width: 104px" /></colgroup>
+                              <thead><tr><th>Fecha</th><th>Tipo</th><th>Número</th><th>{{ op === 'Compras' ? 'Proveedor' : 'Cliente' }}</th><th class="num">Total</th></tr></thead>
+                              <tbody>
+                                @for (f of filasDe(r, op); track $index) {
+                                  <tr><td>{{ f.fecha }}</td><td>{{ f.tipo }}</td><td class="mono">{{ f.comprobante }}</td><td [title]="f.razon">{{ f.razon }}</td><td class="num">{{ f.total }}</td></tr>
+                                }
+                              </tbody>
+                            </table>
+                          </div>
+                        } @else {
+                          <p class="mf-tenue m-0 text-sm">{{ r.partidas[op] }} {{ r.partidas[op] === 1 ? 'comprobante' : 'comprobantes' }} de {{ op }}. Para verlos, tocá «Ver en Excel».</p>
+                        }
+                      }
+                      @for (a of r.avisos; track a) {
+                        <p class="m-0 mt-2 text-sm" style="color: var(--color-acento)">ⓘ {{ a }}</p>
+                      }
+                      @if (precargaDe(r); as p) {
+                        @if (p.correcciones.length) {
+                          <details class="fx-detalle">
+                            <summary>Además, {{ p.correcciones.length }} {{ p.correcciones.length === 1 ? 'corrección' : 'correcciones' }} para hacer a mano en Xubio</summary>
+                            <div class="fx-correcciones">
+                              @for (c of p.correcciones; track $index) {
+                                <p><strong class="mono">{{ c.comprobante }}</strong>@if (c.razon) { · {{ c.razon }} } — {{ c.texto }}</p>
+                              }
+                            </div>
+                          </details>
+                        }
+                      }
+                    </div>
+                  </li>
+
+                  <li class="fx-paso">
+                    <span class="fx-num" aria-hidden="true">2</span>
+                    <div class="min-w-0">
+                      <h3><label [attr.for]="'empresa-' + i">Confirmá la empresa en Xubio</label><app-ayuda texto="En qué empresa de Xubio se cargan. Se elige sola si el nombre coincide con el cliente." /></h3>
+                      <select class="mf-input fx-empresa" [id]="'empresa-' + i" [ngModel]="empresaDe(r, i)" (ngModelChange)="elegirEmpresa(i, $event)">
+                        <option value="">Elegí la empresa…</option>
                         @for (c of clientes.lista(); track c.nombre) { <option [value]="c.nombre">{{ c.nombre }}</option> }
                       </select>
-                    </span>
-                    @for (op of operacionesConZip(r); track op) {
-                      @let clave = i + '-' + op;
-                      <span class="mt-2 flex flex-wrap items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-sm">
-                        <span class="min-w-0 flex-1">
-                          <strong>{{ op }}</strong>
-                          <span class="mf-tenue"> · {{ r.partidas[op] }} {{ r.partidas[op] === 1 ? 'partida' : 'partidas' }}</span>
-                        </span>
-                        @if (cargados()[clave]) {
-                          <span class="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-sm font-semibold" style="color: var(--color-ok-texto); background: #e7f6ec">✓ Cargado en Xubio<app-ayuda texto="El archivo quedó cargado en Xubio pero falta apretar «Importar» en la ventana de Chrome. Después, corré un control nuevo para confirmar." lado="izquierda" /></span>
-                        } @else {
-                          <button type="button" class="mf-btn mf-btn-chico inline-flex items-center gap-2" (click)="cargarEnXubio(r, i, op)" [disabled]="!!cargandoXubio() || !empresaDe(r, i) || !perspectiva.canEdit()" [attr.aria-busy]="cargandoXubio() === clave" [title]="perspectiva.motivoBloqueo() ?? (empresaDe(r, i) ? '' : 'Elegí primero la empresa en Xubio')">
-                            @if (cargandoXubio() === clave) {
-                              <span class="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
-                              Subiendo a Xubio…
-                            } @else {
-                              Cargar {{ op }} en Xubio
-                            }
-                          </button>
+                    </div>
+                  </li>
+
+                  <li class="fx-paso">
+                    <span class="fx-num" aria-hidden="true">3</span>
+                    <div class="min-w-0">
+                      <h3>Subilos<app-ayuda texto="Se abre Xubio en esta PC y el archivo queda cargado en «Importar desde Mis Comprobantes (ARCA)». El bot no aprieta «Importar»: lo confirmás vos en la ventana de Chrome." /></h3>
+                      <div class="fx-subir-lista">
+                        @for (op of operacionesConZip(r); track op) {
+                          @let clave = i + '-' + op;
+                          @if (cargados()[clave]) {
+                            <span class="fx-hecho">✓ {{ op }} cargado en Xubio · falta apretar «Importar» en Chrome</span>
+                          } @else {
+                            <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="cargarEnXubio(r, i, op)" [disabled]="!!cargandoXubio() || !empresaDe(r, i) || !perspectiva.canEdit()" [attr.aria-busy]="cargandoXubio() === clave" [title]="perspectiva.motivoBloqueo() ?? (empresaDe(r, i) ? '' : 'Elegí primero la empresa en Xubio')">
+                              @if (cargandoXubio() === clave) {
+                                <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
+                                Abriendo Xubio…
+                              } @else {
+                                ⬆ Subir {{ r.partidas[op] }} {{ r.partidas[op] === 1 ? 'comprobante' : 'comprobantes' }} de {{ op }}
+                              }
+                            </button>
+                          }
+                          @if (estadoXubio()[clave]; as est) {
+                            <p class="m-0 text-sm" [style.color]="est.ok ? 'var(--color-ok-texto)' : 'var(--color-error)'">{{ est.texto }}</p>
+                          }
                         }
-                        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="bajar(r.zips[op]!, 'application/zip')" [attr.aria-label]="'Descargar ' + r.zips[op]!.nombre">Descargar .zip</button>
-                      </span>
-                      @if (estadoXubio()[clave]; as est) {
-                        <span class="mt-1 block text-sm" [style.color]="est.ok ? 'var(--color-ok-texto)' : 'var(--color-error)'">{{ est.texto }}</span>
-                      }
-                    }
+                        <span class="mf-tenue text-sm">Vos confirmás con «Importar» en la ventana que se abre.</span>
+                      </div>
+                    </div>
+                  </li>
+                </ol>
+
+                <div class="fx-pie">
+                  <span class="mf-tenue text-sm">¿Preferís hacerlo a mano?</span>
+                  @for (op of operacionesConZip(r); track op) {
+                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="bajar(r.zips[op]!, 'application/zip')" title="El .zip que se importa en Xubio desde «Importar desde Mis Comprobantes (ARCA)»">Descargar archivo{{ operacionesConZip(r).length > 1 ? ' de ' + op : '' }}</button>
                   }
-                  @if (precargaDe(r); as p) {
-                    <details class="fx-detalle" open>
-                      <summary>Comprobantes que se suben ({{ p.partidas.length }})</summary>
-                      <table class="fx-lista mt-1">
-                        <colgroup><col style="width: 86px" /><col style="width: 58px" /><col style="width: 140px" /><col /><col style="width: 104px" /></colgroup>
-                        <thead><tr><th>Fecha</th><th>Tipo</th><th>Comprobante</th><th>Razón social</th><th class="num">Total</th></tr></thead>
-                        <tbody>
-                          @for (f of p.partidas; track $index) {
-                            <tr><td>{{ f.fecha }}</td><td>{{ f.tipo }}</td><td class="mono">{{ f.comprobante }}</td><td [title]="f.razon">{{ f.razon }}</td><td class="num">{{ f.total }}</td></tr>
-                          }
-                        </tbody>
-                      </table>
-                    </details>
-                    @if (p.correcciones.length) {
-                      <details class="fx-detalle" open>
-                        <summary>Correcciones a hacer a mano en Xubio ({{ p.correcciones.length }})</summary>
-                        <div class="fx-correcciones">
-                          @for (c of p.correcciones; track $index) {
-                            <p><strong class="mono">{{ c.comprobante }}</strong>@if (c.razon) { · {{ c.razon }} } — {{ c.texto }}</p>
-                          }
-                        </div>
-                      </details>
-                    }
+                  @if (r.excel) {
+                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="bajar(r.excel, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')" title="Los mismos datos en Excel, con el CAE y el CUIT completos">Ver en Excel</button>
                   }
-                }
-              </span>
-              @if (r.excel) {
-                <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="bajar(r.excel, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')" [attr.aria-label]="'Ver en Excel ' + r.excel.nombre" title="Los mismos datos en Excel, con el CAE y el CUIT completos">Ver en Excel</button>
-              }
-            </li>
+                  @if (precarga()) {
+                    <button type="button" class="fx-link ml-auto" (click)="quitarPrecarga()" [disabled]="!!cargandoXubio()">Usar otros archivos</button>
+                  }
+                </div>
+              </div>
+            }
           }
-        </ul>
-        </div>
-      </section>
-    } @else {
-      <section class="mf-panel" aria-labelledby="t-resultado-vacio" data-tour="resultado">
-        <div class="fx-cab">
-          <h2 id="t-resultado-vacio" class="m-0 text-lg font-bold">2. Cargalos en Xubio</h2>
-          <p class="mf-sub m-0 mt-1">Un .zip por operación, listo para importar en Xubio, o el bot lo carga por vos.</p>
-        </div>
-        <div class="fx-cuerpo">
+        } @else {
           <div class="fx-vacio">
-            <strong>Acá aparecen los .zip listos para Xubio</strong>
-            <span class="text-sm">Elegí los AUX en el paso 1 y apretá «Convertir».</span>
+            <strong>Acá aparece lo que falta subir</strong>
+            <span class="text-sm">Elegí los Excel en el paso 1 y tocá «Preparar para Xubio».</span>
           </div>
-        </div>
-      </section>
-    }
+        }
+      </div>
+    </section>
     </div>
   `,
 })
@@ -321,6 +367,19 @@ export class ConvertirPantalla {
     return p && r.archivos.includes(p.aux) ? p : null;
   }
 
+  /**
+   * Los comprobantes que van en el .zip de esa operación. Una sola fuente para el
+   * botón rápido del control y para los Excel elegidos a mano: lo que devuelve el
+   * servidor al convertir (ya sin los destildados), o sea exactamente lo que se sube.
+   */
+  protected filasDe(r: ResultadoConversion, op: 'Ventas' | 'Compras'): { fecha: string; tipo: string; comprobante: string; razon: string; total: string }[] {
+    return (r.filas?.[op] ?? []).map((f) => ({
+      ...f,
+      tipo: abreviarTipo(f.tipo),
+      total: typeof f.total === 'number' ? f.total.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : f.total,
+    }));
+  }
+
   protected quitarPrecarga(): void {
     borrarPrecarga();
     this.precarga.set(null);
@@ -354,11 +413,11 @@ export class ConvertirPantalla {
     const clave = `${i}-${op}`;
     if (!zip || !empresa || this.cargandoXubio() || this.cargados()[clave]) return;
     const seguir = await this.alertas.confirmar(
-      `Cargar ${op} en Xubio`,
+      `Subir ${op} a Xubio`,
       `Se abre Xubio en esta PC, en la empresa «${empresa}», y se carga el archivo en Importar desde Mis Comprobantes (ARCA).`,
       'Abrir Xubio',
       [
-        `${r.partidas[op]} ${r.partidas[op] === 1 ? 'partida' : 'partidas'} de ${op}.`,
+        `${r.partidas[op]} ${r.partidas[op] === 1 ? 'comprobante' : 'comprobantes'} de ${op}.`,
         'El bot NO aprieta «Importar»: queda la ventana abierta para que lo revises.',
         'Cerrá esa ventana de Chrome cuando termines.',
       ],
@@ -397,7 +456,7 @@ export class ConvertirPantalla {
   protected readonly sinPartidas = computed(() =>
     (this.resultados() ?? [])
       .filter((r) => !r.error && !Object.keys(r.zips).length)
-      .map((r) => `${r.cliente}${r.periodo ? ' · ' + r.periodo : ''}: todo lo de ARCA está cargado en el Libro IVA (${Object.keys(r.partidas).join(' y ')}). No se generó archivo.`),
+      .map((r) => `${r.cliente}${r.periodo ? ' · ' + r.periodo : ''}: todo lo de ARCA ya está en el Libro IVA de Xubio (${Object.keys(r.partidas).join(' y ')}). No se generó archivo.`),
   );
 
   protected elegir(ev: Event): void {
@@ -454,7 +513,7 @@ export class ConvertirPantalla {
       const vacios = r.resultados.filter((x) => !x.error && !Object.keys(x.zips).length).length;
       if (vacios) {
         this.toast.info(
-          'Sin partidas de ARCA no encontradas',
+          'Nada para subir',
           vacios === 1 ? 'Un cliente no tiene nada para convertir: todo ARCA está en su Libro IVA.' : `${vacios} clientes no tienen nada para convertir: todo ARCA está en su Libro IVA.`,
         );
       }

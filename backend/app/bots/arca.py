@@ -485,10 +485,30 @@ class SesionArca:
                 if len(cuit_limpio) == 11
                 else cuit_limpio
             )
-            tarjeta_empresa = servicio.locator(
+            tarjetas = servicio.locator(
                 f"a:has-text('{cuit_formateado}'), a:has-text('{cuit_limpio}')"
-            ).first
-            tarjeta_empresa.click()
+            )
+            if tarjetas.count() == 0:
+                raise RuntimeError(
+                    f"ARCA no muestra el CUIT {cuit_formateado} entre los perfiles."
+                )
+            # La tarjeta a veces nunca queda «visible y estable» para Playwright
+            # (animación del panel o un duplicado oculto) y el clic esperaba 30 s
+            # para nada. Se prueba un clic normal corto sobre la visible y, si no,
+            # se dispara su onclick (envía el formulario de selección).
+            visibles = tarjetas.locator("visible=true")
+            tarjeta_empresa = visibles.first if visibles.count() else tarjetas.first
+            try:
+                tarjeta_empresa.click(timeout=5000)
+            except Exception:
+                # El clic pudo haber andado igual (la página ya está navegando):
+                # solo se fuerza si seguimos en la pantalla de perfiles.
+                if titulo_eleccion.is_visible():
+                    tarjeta_empresa.evaluate("nodo => nodo.click()", timeout=5000)
+            try:
+                servicio.wait_for_load_state("domcontentloaded", timeout=20000)
+            except Exception:
+                pass  # Lo que importa es que aparezca «Emitidos», que se espera abajo.
             servicio.wait_for_timeout(500)
         except LookupError:
             pass

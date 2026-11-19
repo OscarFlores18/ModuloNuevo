@@ -127,3 +127,34 @@ describe('jerarquía de la ventana de hallazgos', () => {
     expect(auxDe({ archivos }, 'Ventas')).toBeNull();
   });
 });
+
+describe('«Aplicar cambios» con facturas en otra moneda', () => {
+  const fila = (valores: Record<string, string | number>) => Object.entries(valores).map(([columna, valor]) => ({ columna, valor }));
+
+  it('el importe que se escribe en el Libro IVA es el total de ARCA en pesos', () => {
+    const e: Advertencia = {
+      tipo: 'importe_distinto', gravedad: 'corregir', cliente: 'Acme', operacion: 'Compras', titulo: '', detalle: '', acciones: [],
+      total: 2, a_corregir: 1, hoja: null,
+      comprobantes: [
+        { origen: 'arca', fila: fila({ Tipo: '11 - Factura C', Comprobante: 'C-00002-00000006', 'Nro. Doc.': '20111111112', 'Imp. Total': 100, 'Total en pesos': 100000 }) },
+        { origen: 'xubio', fila: fila({ Tipo: 'Factura', Comprobante: 'C-00002-00000006', CUIT: '20-11111111-2', Total: 90000 }) },
+      ],
+    } as Advertencia;
+    const [cambio] = cambiosDisponibles([e]);
+    expect(cambio.datos.campo).toBe('importe');
+    expect(cambio.datos.valorArca).toBe(100000);
+  });
+});
+
+describe('tarea de un login de ARCA que no se sabe por qué falló', () => {
+  it('primero se reintenta; revisar el CUIT queda como segundo paso', () => {
+    const a: Advertencia = {
+      tipo: 'paso_error', gravedad: 'grave', cliente: 'Acme', operacion: null, titulo: 'ARCA · Ventas: falló',
+      detalle: 'ARCA no mostró a tiempo la pantalla de la clave', acciones: ['Volver a correr', 'Revisar clave de ARCA'],
+      total: 0, a_corregir: 0, comprobantes: [], hoja: null,
+    } as unknown as Advertencia;
+    const o = ordenDe(a);
+    expect(o?.orden).toBe('Volvé a correr el control; si ARCA vuelve a fallar, revisá el CUIT de ingreso y la clave fiscal');
+    expect(o?.destino?.texto).toBe('Volver a correr');
+  });
+});

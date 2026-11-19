@@ -573,7 +573,8 @@ class CambioElegido(BaseModel):
     operacion: str = Field(pattern="^(Ventas|Compras)$")
     campo: str = Field(pattern="^(letra|tipo|importe|cuit)$")
     # La CUIT y el comprobante como están en el Libro IVA (la fila a corregir).
-    cuit: str = Field(min_length=1, max_length=20)
+    # Vacía en ventas a consumidor final (Xubio no siempre le pone CUIT).
+    cuit: str = Field(default="", max_length=20)
     pv: int = Field(ge=0, le=99999)
     numero: int = Field(ge=0, le=99999999)
     comprobante: str = Field(default="", max_length=40)

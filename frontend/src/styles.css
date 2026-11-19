@@ -133,29 +133,44 @@ code {
   border-radius: 12px;
 }
 
+/* Secundario: igual de fácil de apuntar (40px de alto), solo un poco más discreto. */
 .mf-btn-chico {
-  min-height: 34px;
-  padding: 6px 14px;
-  font-size: 0.88rem;
-  border-radius: 8px;
+  min-height: 40px;
+  padding: 8px 16px;
+  font-size: 0.94rem;
+  border-radius: 9px;
 }
 
 /* Acciones chicas dentro de títulos y cabeceras de listas */
 .mf-btn-mini {
-  min-height: 28px;
-  gap: 5px;
-  padding: 3px 11px;
-  border-radius: 7px;
-  font-size: 0.8rem;
+  min-height: 34px;
+  gap: 6px;
+  padding: 5px 13px;
+  border-radius: 8px;
+  font-size: 0.86rem;
   font-weight: 600;
   letter-spacing: normal;
   text-transform: none;
 }
 
+/* Pantalla táctil: todo botón llega a 44px, el mínimo cómodo para el dedo. */
+@media (pointer: coarse) {
+  .mf-btn-chico,
+  .mf-btn-mini {
+    min-height: 44px;
+  }
+}
+
+.mf-btn:disabled {
+  cursor: not-allowed;
+}
+
 .mf-btn-link {
+  min-height: 32px;
   background: none;
   border: 0;
-  padding: 0;
+  border-radius: 6px;
+  padding: 2px 4px;
   color: var(--color-acento);
   font: inherit;
   font-weight: 600;
@@ -164,6 +179,11 @@ code {
 
 .mf-btn-link:hover {
   text-decoration: underline;
+}
+
+.mf-btn-link:focus-visible {
+  outline: 2px solid var(--color-acento);
+  outline-offset: 2px;
 }
 
 .mf-select,
@@ -1044,6 +1064,45 @@ input[type='checkbox'] {
   font-size: 0.9rem;
 }
 
+/* Encabezado del control: título + estado, una línea de datos y la acción a la derecha. */
+.ej-cab-fila {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Angosto: el botón baja en vez de apretar el título. */
+.ej-cab-info {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  .ej-pestana {
+    flex: 1;
+    justify-content: center;
+    padding: 10px 8px;
+    font-size: 0.88rem;
+  }
+}
+
+.ej-cab .ej-pildora {
+  padding: 3px 10px;
+  font-size: 0.8rem;
+}
+
+/* Mientras corre: quién se procesa y cuánto falta. */
+.ej-avance-texto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  margin-bottom: 6px;
+  font-size: 0.88rem;
+}
+
 .ej-kpis {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -1102,21 +1161,140 @@ input[type='checkbox'] {
   background: rgba(21, 128, 61, 0.06);
 }
 
-/* El número de «Para revisar» abre la ventana de hallazgos. */
-.ej-kpi-link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  text-decoration: underline;
-  text-decoration-thickness: 2px;
-  text-underline-offset: 4px;
+/* «Haciendo ahora»: texto, no número; más chico para que entre el paso y el cliente. */
+.ej-kpi-ahora dd {
+  font-size: 1.05rem;
+  font-weight: 700;
 }
 
-.ej-kpi-link:hover {
-  opacity: 0.8;
+.ej-kpi-ahora dd small {
+  font-size: 0.85rem;
+  color: var(--color-tenue);
+}
+
+/* Pestañas: «Qué hay que hacer» y «Clientes y archivos». */
+.ej-pestanas {
+  display: flex;
+  gap: 4px;
+  margin-bottom: -16px;
+  border-bottom: 1px solid var(--color-borde);
+}
+
+.ej-pestana {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: -1px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: none;
+  color: var(--color-tenue);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.ej-pestana:hover {
+  color: var(--color-texto);
+  background: var(--color-panel-alt);
+}
+
+.ej-pestana[aria-selected='true'] {
+  border-color: var(--color-borde);
+  background: var(--color-panel);
+  color: var(--color-texto);
+  box-shadow: inset 0 3px 0 var(--color-acento);
+}
+
+.ej-pestana:focus-visible {
+  outline: 2px solid var(--color-acento);
+  outline-offset: -2px;
+}
+
+.ej-pestana-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--color-aviso);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+/* El panel de la pestaña elegida pega con ella. */
+.ej-pestanas + .mf-panel {
+  border-top-left-radius: 0;
+}
+
+.ej-pestana-num-grave { background: var(--color-error); }
+.ej-pestana-num-ok { background: var(--color-ok); }
+.ej-pestana-num-tenue { background: #e2e8f0; color: #475569; }
+
+/* Dentro del cliente: lo suyo por hacer, arriba y con un solo botón. */
+.ej-cliente-cuerpo {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ej-cli-tareas {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 14px;
+  padding: 10px 14px;
+  border: 1px solid rgba(183, 121, 31, 0.35);
+  border-radius: 10px;
+  background: rgba(253, 240, 217, 0.55);
+  font-size: 0.9rem;
+}
+
+/* El Excel del control: lo que se abre siempre, a la vista. */
+.ej-principal {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--color-borde);
+  border-radius: 10px 10px 0 0;
+  background: #ffffff;
+}
+
+.ej-principal-icono {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  padding: 5px;
+  border-radius: 8px;
+  background: #e7f5ec;
+  color: #15803d;
+}
+
+/* Filtro de tareas por cliente. */
+.tr-filtro {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.tr-filtro select {
+  width: auto;
+  min-width: 220px;
+  max-width: 100%;
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 
 /* Encabezado del bloque de archivos: plegar a la izquierda, descargar todo a la derecha. */
@@ -1124,7 +1302,10 @@ input[type='checkbox'] {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 0;
+  min-height: 40px;
+  padding: 4px 8px;
+  margin-left: -8px;
+  border-radius: 8px;
   border: 0;
   background: none;
   color: var(--color-texto);
@@ -1133,96 +1314,42 @@ input[type='checkbox'] {
   cursor: pointer;
 }
 
-/* Acordeones: clientes */
-
-.ej-clientes,
-.ej-archivos {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.ej-carpeta-titulo:hover {
+  background: rgba(37, 99, 235, 0.08);
 }
 
-.ej-clientes {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.ej-cliente {
-  border: 1px solid var(--color-borde);
-  border-radius: 12px;
-  background: #ffffff;
-  box-shadow: 0 2px 8px rgba(30, 58, 138, 0.06);
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.ej-cliente:hover,
-.ej-cliente[open] {
-  border-color: rgba(37, 99, 235, 0.4);
-  box-shadow: 0 6px 18px rgba(30, 58, 138, 0.1);
-}
-
-.ej-cliente-error {
-  border-left: 4px solid var(--color-error);
-}
-
-.ej-cliente > summary {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-height: 56px;
-  padding: 10px 16px;
-  border-radius: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  list-style: none;
-}
-
-.ej-cliente > summary::-webkit-details-marker {
-  display: none;
-}
-
-.ej-cliente > summary:focus-visible {
+.ej-carpeta-titulo:focus-visible {
   outline: 2px solid var(--color-acento);
   outline-offset: 2px;
 }
 
-.ej-chevron {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  color: var(--color-acento);
-  transition: transform 0.15s ease;
-}
-
-details[open] > summary .ej-chevron {
-  transform: rotate(90deg);
-}
-
-.ej-cliente-nombre {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 1.05rem;
-}
-
-.ej-cliente-barra {
-  display: block;
-  width: 140px;
-  height: 8px;
-  flex-shrink: 0;
-}
-
-.ej-cliente-cuerpo {
-  min-width: 0;
-  overflow-wrap: anywhere;
-  padding: 16px;
-  border-top: 1px solid var(--color-borde);
-}
-
 /* Línea de tiempo: ARCA -> Xubio -> Auditoría */
+
+.ej-cli-avance {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 14px 14px;
+  border: 1px solid var(--color-borde);
+  border-radius: 12px;
+  background: var(--color-panel-alt);
+}
+
+.ej-cli-avance-texto {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 0.95rem;
+}
+
+.ej-etapa-estado {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 
 .ej-stepper {
   display: flex;
@@ -1332,6 +1459,88 @@ details[open] > summary .ej-chevron {
   color: var(--color-aviso-texto);
 }
 
+/* Acordeones: clientes */
+
+.ej-clientes,
+.ej-archivos {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ej-clientes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ej-cliente {
+  border: 1px solid var(--color-borde);
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(30, 58, 138, 0.06);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ej-cliente:hover,
+.ej-cliente[open] {
+  border-color: rgba(37, 99, 235, 0.4);
+  box-shadow: 0 6px 18px rgba(30, 58, 138, 0.1);
+}
+
+.ej-cliente-error {
+  border-left: 4px solid var(--color-error);
+}
+
+.ej-cliente > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
+}
+
+.ej-cliente > summary::-webkit-details-marker {
+  display: none;
+}
+
+.ej-cliente > summary:focus-visible {
+  outline: 2px solid var(--color-acento);
+  outline-offset: 2px;
+}
+
+.ej-chevron {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  color: var(--color-acento);
+  transition: transform 0.15s ease;
+}
+
+details[open] > summary .ej-chevron {
+  transform: rotate(90deg);
+}
+
+.ej-cliente-nombre {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 1.05rem;
+}
+
+.ej-cliente-cuerpo {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 16px;
+  border-top: 1px solid var(--color-borde);
+}
+
 .ej-spinner {
   width: 22px;
   height: 22px;
@@ -1350,7 +1559,7 @@ details[open] > summary .ej-chevron {
 /* Carpeta de archivos de un cliente */
 
 .ej-carpeta {
-  margin-top: 10px;
+  margin-top: 0;
   border: 1px solid var(--color-borde);
   border-radius: 10px;
   background: var(--color-panel-alt);
@@ -1362,7 +1571,7 @@ details[open] > summary .ej-chevron {
   gap: 10px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--color-borde);
-  font-size: 0.85rem;
+  font-size: 0.92rem;
 }
 
 .ej-archivos li {
@@ -1374,12 +1583,6 @@ details[open] > summary .ej-chevron {
 
 .ej-archivos li + li {
   border-top: 1px solid var(--color-borde);
-}
-
-@media (max-width: 720px) {
-  .ej-cliente-barra {
-    width: 72px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1585,8 +1788,8 @@ details[open] > summary .ej-chevron {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 34px;
+  height: 34px;
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
@@ -1646,17 +1849,32 @@ details[open] > summary .ej-chevron {
 
 .ej-hist-meta {
   color: var(--color-tenue);
-  font-size: 0.75rem;
+  font-size: 0.8rem;
 }
 
+/* El resultado de cada control: una etiqueta de color, que se lee de un vistazo. */
 .ej-hist-res {
-  color: var(--color-ok-texto);
-  font-size: 0.78rem;
-  font-weight: 600;
+  align-self: flex-start;
+  margin-top: 3px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: #e7f5ec;
+  color: #166534;
+  font-size: 0.84rem;
+  font-weight: 700;
 }
 
-.ej-hist-res-mal {
-  color: var(--color-aviso-texto);
+.ej-hist-res-mal { background: #fdf0d9; color: #92400e; }
+.ej-hist-res-error { background: #fde2e2; color: #b91c1c; }
+.ej-hist-res-gris { background: #eef2f7; color: #475569; }
+.ej-hist-res-curso { background: #e0ebff; color: #1d4ed8; }
+
+/* Celular: el historial no empuja la página hacia abajo. */
+@media (max-width: 1023px) {
+  .ej-hist-scroll {
+    max-height: 340px;
+    overflow-y: auto;
+  }
 }
 
 .ej-hist-punto { width: 9px; height: 9px; }
@@ -1678,11 +1896,47 @@ details[open] > summary .ej-chevron {
     top: 124px;
     display: flex;
     flex-direction: column;
-    max-height: calc(100vh - 140px);
+    max-height: min(620px, calc(100vh - 160px));
   }
-  .ej-layout-con-historial .ej-historial-lista {
+  .ej-layout-con-historial .ej-hist-scroll {
     overflow-y: auto;
   }
+}
+
+.ej-hist-buscar {
+  margin: 0 0 8px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 0.88rem;
+}
+
+.ej-hist-scroll {
+  min-height: 0;
+}
+
+/* «Hoy», «Ayer», «lunes 17/11»: separa los controles por día. */
+.ej-hist-dia {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 8px 0 4px;
+  padding: 2px 4px;
+  background: var(--color-panel);
+  color: var(--color-tenue);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.ej-hist-dia:first-child {
+  margin-top: 0;
+}
+
+.ej-hist-periodo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Etapas del cliente en la misma fila: ARCA · Xubio · Auditoría. */
@@ -1729,12 +1983,6 @@ details[open] > summary .ej-chevron {
   .ej-cliente-nombre {
     flex-basis: calc(100% - 40px);
   }
-}
-
-.ej-kpi-grave {
-  margin-left: 4px;
-  color: #b91c1c;
-  font-weight: 800;
 }
 
 /* --- Clientes: lista + panel de edición ---------------------------------------- */
@@ -1956,37 +2204,6 @@ details[open] > summary .ej-chevron {
   flex-basis: 100%;
 }
 
-/* «Para revisar»: toda la tarjeta abre los hallazgos, no solo el número. */
-.ej-kpi {
-  position: relative;
-}
-
-.ej-kpi-link::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 12px;
-}
-
-.ej-kpi:has(.ej-kpi-link) {
-  cursor: pointer;
-  transition: background-color 0.15s, box-shadow 0.15s;
-}
-
-.ej-kpi:has(.ej-kpi-link):hover {
-  background: rgba(197, 48, 48, 0.12);
-  box-shadow: 0 2px 8px rgba(197, 48, 48, 0.15);
-}
-
-.ej-kpi:has(.ej-kpi-link:focus-visible) {
-  outline: 2px solid var(--color-acento);
-  outline-offset: 2px;
-}
-
-.ej-kpi-link:focus-visible {
-  outline: none;
-}
-
 /* --- Qué hay que hacer (pantalla del control) ------------------------------------ */
 
 .tr-panel {
@@ -2088,8 +2305,8 @@ details[open] > summary .ej-chevron {
 
 .tr-check {
   flex: none;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   margin-top: 2px;
   accent-color: var(--color-ok);
   cursor: pointer;
@@ -2374,18 +2591,6 @@ details[open] > summary .ej-chevron {
 /* --- Faltantes en IVA (partidas de ARCA no encontradas en el Libro IVA) -------
    Sobrio: un solo acento azul a la izquierda, sin fondos ni bordes gruesos. */
 
-.ej-prioritaria {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  padding: 10px 14px;
-  border: 1px solid var(--color-borde);
-  border-left: 3px solid #2563eb;
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
 .tr-grupo[data-grupo='prioridad'] .tr-grupo-num {
   background: #2563eb;
 }
@@ -2458,7 +2663,7 @@ details[open] > summary .ej-chevron {
   text-overflow: ellipsis;
 }
 
-.tr-falt-tabla th:nth-child(1) { width: 34px; }
+.tr-falt-tabla th:nth-child(1) { width: 40px; }
 .tr-falt-tabla th:nth-child(2) { width: 92px; }
 .tr-falt-tabla th:nth-child(3) { width: 62px; }
 .tr-falt-tabla th:nth-child(4) { width: 138px; }
@@ -2466,7 +2671,7 @@ details[open] > summary .ej-chevron {
 .tr-falt-tabla th:nth-child(7) { width: 104px; }
 /* Checkbox por comprobante: tildados van a Xubio; el resto queda a la vista, apagado. */
 .tr-falt-tabla .tr-falt-sel { text-align: center; padding-left: 0; padding-right: 0; }
-.tr-falt-tabla .tr-falt-sel input { width: 15px; height: 15px; margin: 0; vertical-align: middle; cursor: pointer; accent-color: #2563eb; }
+.tr-falt-tabla .tr-falt-sel input { width: 18px; height: 18px; margin: 0; vertical-align: middle; cursor: pointer; accent-color: #2563eb; }
 .tr-falt-tabla .tr-falt-sel input:disabled { cursor: not-allowed; }
 .tr-falt-tabla tr.tr-falt-fuera td:not(.tr-falt-sel) { opacity: .4; }
 

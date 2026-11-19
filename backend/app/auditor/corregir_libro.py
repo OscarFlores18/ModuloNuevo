@@ -15,6 +15,8 @@ from pathlib import Path
 
 import openpyxl
 
+from ..core.archivos_excel import guardar_excel
+
 CAMPOS = ("letra", "tipo", "importe", "cuit")
 
 # Si el Libro IVA no trae ningún comprobante de esa clase para copiar cómo se escribe.
@@ -170,8 +172,5 @@ def corregir_libro(origen: Path | str, destino: Path | str, cambios: list[dict])
             celda.value = _cuit_como(d, antes)
         aplicados.append({**cambio, "fila": r, "antes": antes, "despues": celda.value})
 
-    destino = Path(destino)
-    temporal = destino.with_name(destino.name + ".tmp")
-    wb.save(temporal)
-    temporal.replace(destino)
+    guardar_excel(wb, destino)
     return {"aplicados": aplicados, "no_aplicados": no_aplicados}

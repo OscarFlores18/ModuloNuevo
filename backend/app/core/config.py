@@ -16,10 +16,17 @@ a una máquina concreta (requisito de la migración a sitio web).
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 # backend/app/core/config.py -> backend/
 BACKEND_DIR = Path(__file__).resolve().parents[2]
+
+# Empaquetado con PyInstaller (app de escritorio): el código vive en una carpeta
+# temporal o de instalación que puede borrarse o no tener permiso de escritura.
+# Ahí no se guarda nada: los datos van a Documentos\ControlFCT del usuario.
+EMPAQUETADO = bool(getattr(sys, "frozen", False))
+CARPETA_USUARIO = Path(os.path.expanduser("~")) / "Documents" / "ControlFCT"
 
 
 def _path_env(nombre: str, default: Path) -> Path:
@@ -27,9 +34,11 @@ def _path_env(nombre: str, default: Path) -> Path:
     return Path(valor).expanduser().resolve() if valor else default
 
 
-DATA_DIR = _path_env("MODULONUEVO_DATA_DIR", BACKEND_DIR / "data")
-OUTPUT_DIR = _path_env("MODULONUEVO_OUTPUT_DIR", BACKEND_DIR / "salidas")
-LOG_DIR = _path_env("MODULONUEVO_LOG_DIR", BACKEND_DIR / "logs")
+_BASE_DATOS = CARPETA_USUARIO if EMPAQUETADO else BACKEND_DIR
+
+DATA_DIR = _path_env("MODULONUEVO_DATA_DIR", _BASE_DATOS / "data")
+OUTPUT_DIR = _path_env("MODULONUEVO_OUTPUT_DIR", _BASE_DATOS / "salidas")
+LOG_DIR = _path_env("MODULONUEVO_LOG_DIR", _BASE_DATOS / "logs")
 
 CONFIG_PATH = DATA_DIR / "config.json"
 XUBIO_CRED_PATH = DATA_DIR / "xubio_credenciales.json"
@@ -130,10 +139,13 @@ DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:4210",
 )
 
-# Build del frontend que sirve este backend (si existe).
+# Build del frontend que sirve este backend (si existe). Empaquetado, PyInstaller
+# lo copia (--add-data) a «frontend» dentro de sys._MEIPASS.
 FRONT_DIST = _path_env(
     "MODULONUEVO_FRONT_DIST",
-    BACKEND_DIR.parent / "frontend" / "dist" / "control-fct-frontend" / "browser",
+    Path(getattr(sys, "_MEIPASS", "")) / "frontend"
+    if EMPAQUETADO
+    else BACKEND_DIR.parent / "frontend" / "dist" / "control-fct-frontend" / "browser",
 )
 
 

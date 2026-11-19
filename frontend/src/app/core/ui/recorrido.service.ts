@@ -18,14 +18,14 @@ const RECORRIDOS: Record<string, PasoRecorrido[]> = {
     { objetivo: 'ayuda-recorrido', titulo: '¿Te perdiste?', texto: 'Tocá este «?» para volver a ver el recorrido de cualquier pantalla. Los «?» chiquitos al lado de cada dato explican qué es.' },
   ],
   ejecuciones: [
-    { objetivo: 'estado', titulo: 'Estado del control', texto: 'Mientras corre ves el avance. Al terminar, cuántos comprobantes de ARCA coinciden con Xubio y cuántas tareas quedan.' },
-    { objetivo: 'tareas', titulo: 'Qué hay que hacer', texto: 'Las tareas en orden. Lo que falta en Xubio se sube con «⬆ Subir a Xubio» (destildá lo que no va); los errores de carga se corrigen con «Aplicar cambios», que arma un Libro IVA corregido y vuelve a cruzar. «Ver todos los hallazgos» abre el detalle.' },
-    { objetivo: 'clientes-ej', titulo: 'Clientes y archivos', texto: 'Cada cliente con sus pasos (ARCA, Xubio, auditoría) y los Excel que se generaron, para abrirlos o guardarlos.' },
-    { objetivo: 'historial', titulo: 'Historial', texto: 'Los controles anteriores. Tocá uno para verlo; con el tachito lo sacás de la lista (los Excel quedan en las carpetas).' },
+    { objetivo: 'estado', titulo: 'El control', texto: 'Qué mes, cuándo empezó, cuántos clientes y comprobantes. Mientras corre ves quién se está procesando y cuánto falta.' },
+    { objetivo: 'tareas', titulo: 'Qué hay que hacer', texto: 'Al terminar, esta pestaña es lo primero: las tareas en orden. Lo que falta en Xubio se sube con «⬆ Subir a Xubio» (destildá lo que no va); los errores de carga se corrigen con «Aplicar cambios». El número es lo que queda por hacer.' },
+    { objetivo: 'clientes-ej', titulo: 'Clientes y archivos', texto: 'Cada cliente con sus pasos (ARCA, Xubio, auditoría), el Excel del control para descargar y lo que bajaron los bots.' },
+    { objetivo: 'historial', titulo: 'Historial', texto: 'Los controles anteriores, por día y con sus clientes. Buscá por cliente o mes; con el tachito lo sacás de la lista (los Excel quedan en las carpetas).' },
   ],
   'convertir-aux': [
-    { objetivo: 'elegir', titulo: '1. Elegí los AUX', texto: 'Lo más fácil: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel AUX que dejó el control en la carpeta del cliente.' },
-    { objetivo: 'resultado', titulo: '2. Cargalos en Xubio', texto: 'Elegí la empresa y tocá «Cargar en Xubio»: el bot deja el archivo listo en Xubio y vos apretás «Importar» en la ventana de Chrome. También podés bajar el .zip o verlo en Excel.' },
+    { objetivo: 'elegir', titulo: '1. Elegí los Excel del control', texto: 'Lo más fácil: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel «AUX - Control de facturas…» que dejó el control en la carpeta del cliente.' },
+    { objetivo: 'resultado', titulo: 'Subilos a Xubio', texto: 'Revisá los comprobantes, confirmá la empresa y tocá «Subir a Xubio»: el bot deja el archivo listo en Xubio y vos apretás «Importar» en la ventana de Chrome. Si preferís, descargá el archivo y lo importás a mano.' },
   ],
   clientes: [
     { objetivo: 'nuevo-cliente', titulo: 'Nuevo cliente', texto: 'Cargá el nombre tal como figura en Xubio, la CUIT con la que se entra a ARCA, la clave fiscal y la CUIT de la empresa que se controla.' },

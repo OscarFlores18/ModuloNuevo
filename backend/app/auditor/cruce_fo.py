@@ -8,6 +8,7 @@ Reglas:
 
 import os
 import re
+import unicodedata
 from collections import Counter
 from typing import Callable
 
@@ -19,8 +20,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.dataframe import dataframe_to_rows
 
+from ..core.archivos_excel import guardar_excel
 from ..core.controles import ordinal, ruta_siguiente_control
-from ..core.errors import ArchivoNoEncontrado
+from ..core.errors import ArchivoIlegible, ArchivoNoEncontrado
 
 def formatear_mes_anio(fecha_str):
     partes = fecha_str.split('/')
@@ -186,16 +188,26 @@ def _clase_comprobante(tipo) -> str:
     return "FC"
 
 
-def _faltantes_por_cuit(df_arca, df_xubio, col_cuit_arca):
-    """Filas de ARCA sin par en Xubio y al revés, comparando CUIT + comprobante +
+def _clave_identidad(df, col_cuit, col_comp, usa_cuit: bool = True) -> pd.Series:
+    """«CUIT|A-00001-00000005|FC» por fila: lo que identifica un comprobante.
+
+    En Compras va la CUIT (dos proveedores pueden repetir número). En Ventas el
+    número lo pone la empresa, así que alcanza con comprobante + clase; la CUIT del
+    cliente se controla aparte (consumidor final puede no tenerla)."""
+    tipo = df['Tipo'] if 'Tipo' in df.columns else pd.Series([""] * len(df), index=df.index)
+    if usa_cuit and col_cuit is not None and col_cuit in df.columns:
+        cuit = df[col_cuit].map(_solo_digitos)
+    else:
+        cuit = pd.Series([""] * len(df), index=df.index)
+    return cuit + "|" + df[col_comp].astype(str) + "|" + tipo.map(_clase_comprobante)
+
+
+def _faltantes_por_cuit(df_arca, df_xubio, col_cuit_arca, usa_cuit: bool = True):
+    """Filas de ARCA sin par en Xubio y al revés, comparando (CUIT +) comprobante +
     tipo (factura / nota de crédito / débito). Un comprobante cargado dos veces
     en Xubio no se repite como faltante: ya se informa como duplicado."""
     def claves(df, col_cuit, col_comp):
-        tipo = df['Tipo'] if 'Tipo' in df.columns else pd.Series([""] * len(df), index=df.index)
-        return (
-            df[col_cuit].map(_solo_digitos) + "|" + df[col_comp].astype(str)
-            + "|" + tipo.map(_clase_comprobante)
-        )
+        return _clave_identidad(df, col_cuit, col_comp, usa_cuit)
 
     ka = claves(df_arca, col_cuit_arca, 'Clave_Py')
     kx = claves(df_xubio, 'CUIT', 'Comprobante')
@@ -214,6 +226,87 @@ def _faltantes_por_cuit(df_arca, df_xubio, col_cuit_arca):
     falta_en_xubio = sin_par(ka, kx)
     falta_en_arca = sin_par(kx, ka) & ~kx.duplicated(keep=False)
     return df_arca[falta_en_xubio], df_xubio[falta_en_arca]
+
+
+# --- Libro IVA de Xubio: columnas por nombre ---------------------------------
+COLUMNAS_LIBRO_IVA = [
+    'Fecha', 'Tipo', 'Comprobante', 'Proveedor', 'CUIT', 'Condición IVA',
+    'Neto gravado 21%', 'IVA 21%', 'Neto gravado 10.5%', 'IVA 10.5%',
+    'Neto gravado 27%', 'IVA 27%', 'Neto gravado 2.5%', 'IVA 2.5%',
+    'Neto gravado 5%', 'IVA 5%', 'Retención IVA', 'Percepción IVA',
+    'Percepción IIBB', 'Impuestos internos', 'No gravado exento', 'Total',
+]
+# Sin estas el cruce no tiene sentido: se avisa en vez de cruzar mal.
+COLUMNAS_LIBRO_IVA_CLAVE = ('Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Total')
+
+
+def _norm_titulo(texto) -> str:
+    sin_tildes = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode()
+    return " ".join(sin_tildes.lower().replace(",", ".").split())
+
+
+# Ventas trae «Cliente» donde Compras trae «Proveedor».
+_SINONIMOS_LIBRO_IVA = {"cliente": "Proveedor", "razon social": "Proveedor", "cuit/cuil": "CUIT"}
+_CANONICA_LIBRO_IVA = {_norm_titulo(c): c for c in COLUMNAS_LIBRO_IVA}
+
+
+def fila_de_titulos_libro_iva(crudo: pd.DataFrame) -> int | None:
+    """La fila con «Fecha» y «Comprobante» (Xubio pone arriba «Fecha desde:», etc.)."""
+    for i in range(min(20, len(crudo))):
+        titulos = {_norm_titulo(v) for v in crudo.iloc[i].tolist() if not pd.isna(v)}
+        if "fecha" in titulos and "comprobante" in titulos:
+            return i
+    return None
+
+
+def columnas_libro_iva(df: pd.DataFrame, nombre_archivo: str = "") -> pd.DataFrame:
+    """El Libro IVA con las columnas de siempre, tomadas por su título (no por
+    posición: si Xubio agrega o mueve una columna, el CUIT no cae en «Proveedor»).
+    Las de importes que no vengan quedan vacías; sin las clave, ``ArchivoIlegible``."""
+    origen: dict[str, object] = {}
+    for c in df.columns:
+        n = _norm_titulo(c)
+        canonica = _CANONICA_LIBRO_IVA.get(n) or _SINONIMOS_LIBRO_IVA.get(n)
+        if canonica and canonica not in origen:
+            origen[canonica] = c
+    faltan = [c for c in COLUMNAS_LIBRO_IVA_CLAVE if c not in origen]
+    if faltan:
+        raise ArchivoIlegible(
+            f"El Libro IVA de Xubio{f' «{nombre_archivo}»' if nombre_archivo else ''} no tiene "
+            f"{'la columna' if len(faltan) == 1 else 'las columnas'} {', '.join(faltan)}. "
+            "Volvé a bajarlo de Xubio sin cambiarle las columnas.",
+            detalle={"faltan": faltan},
+        )
+    return pd.DataFrame(
+        {c: (df[origen[c]] if c in origen else pd.Series(np.nan, index=df.index)) for c in COLUMNAS_LIBRO_IVA},
+        index=df.index,
+    )
+
+
+def _cuits_distintos_ventas(df_arca, df_xubio, columnas_arca, columnas_xubio, col_cuit_arca) -> list[dict]:
+    """Ventas: el mismo comprobante (número y clase) cargado en Xubio a otro cliente.
+
+    Solo cuando los dos lados traen una CUIT (11 dígitos): a consumidor final ARCA
+    informa DNI o 0 y Xubio suele dejarla vacía, y eso no es un error."""
+    if col_cuit_arca is None or 'CUIT' not in df_xubio.columns or 'Clave_Py' not in df_arca.columns:
+        return []
+    ka = _clave_identidad(df_arca, None, 'Clave_Py', usa_cuit=False)
+    kx = _clave_identidad(df_xubio, None, 'Comprobante', usa_cuit=False)
+    unicas_a, unicas_x = ka[~ka.duplicated(keep=False)], kx[~kx.duplicated(keep=False)]
+    por_clave_x = {k: i for i, k in unicas_x.items()}
+    salida = []
+    for i, k in unicas_a.items():
+        j = por_clave_x.get(k)
+        if j is None:
+            continue
+        fa, fx = df_arca.loc[i], df_xubio.loc[j]
+        cuit_a, cuit_x = _solo_digitos(fa.get(col_cuit_arca)), _solo_digitos(fx.get('CUIT'))
+        if len(cuit_a) == 11 and len(cuit_x) == 11 and cuit_a != cuit_x:
+            salida += [
+                {"origen": "arca", "fila": _fila_vista(fa, columnas_arca)},
+                {"origen": "xubio", "fila": _fila_vista(fx, columnas_xubio)},
+            ]
+    return salida
 
 
 # Se muestran todos; el tope solo evita mandar miles de filas a la web.
@@ -257,8 +350,13 @@ def _importes_distintos(operacion, df_arca, df_xubio, columnas_arca, columnas_xu
         if tc and tc > 0:
             total_a *= tc
         if abs(abs(total_a) - abs(total_x)) > TOLERANCIA_IMPORTE:
+            fila_a = _fila_vista(fa, columnas_arca)
+            if tc and tc > 1:
+                # El Imp. Total de ARCA está en la moneda original; «Aplicar» tiene
+                # que escribir en el Libro IVA (en pesos) este valor, no aquel.
+                fila_a.append({"columna": "Total en pesos", "valor": round(total_a, 2)})
             salida += [
-                {"origen": "arca", "fila": _fila_vista(fa, columnas_arca)},
+                {"origen": "arca", "fila": fila_a},
                 {"origen": "xubio", "fila": _fila_vista(fx, columnas_xubio)},
             ]
     return salida
@@ -428,7 +526,8 @@ def diagnosticar(
         cuits_extracto = set(df_xubio.loc[es_extracto, 'CUIT'].map(_solo_digitos))
     liquidaciones = [f for f in falta_x if 'liquidaci' in str(_valor(f, "Tipo") or "").lower()]
     liq_con_extracto = [f for f in liquidaciones if _solo_digitos(_valor(f, "Nro. Doc.")) in cuits_extracto]
-    falta_x = [f for f in falta_x if f not in liq_con_extracto]
+    con_extracto = {id(f) for f in liq_con_extracto}
+    falta_x = [f for f in falta_x if id(f) not in con_extracto]
 
     # Factura y nota de crédito del mismo período quedan las dos como faltantes:
     # quien sube elige a mano cuáles cargar (no se emparejan solas).
@@ -442,8 +541,10 @@ def diagnosticar(
 
     # Mismo CUIT y número con distinto tipo (ARCA «Factura», Xubio «Nota Débito»):
     # es un error de carga del tipo, no dos faltantes.
+    # En Ventas, sin la CUIT (a consumidor final puede no estar en Xubio).
     def _clave_tipo(f, col_cuit):
-        return (_solo_digitos(_valor(f, col_cuit)), str(_valor(f, "Comprobante")))
+        cuit = _solo_digitos(_valor(f, col_cuit)) if operacion == "Compras" else ""
+        return (cuit, str(_valor(f, "Comprobante")))
     por_clave_x = {}
     for f in falta_a:
         por_clave_x.setdefault(_clave_tipo(f, "CUIT"), []).append(f)
@@ -468,25 +569,46 @@ def diagnosticar(
     # comprobante cargado a otro proveedor, no dos faltantes.
     cuit_distinto = []
     if operacion == "Compras":
-        for f in list(falta_x):
+        # Por (comprobante, clase): una pasada en vez de comparar todos contra todos.
+        candidatos_x: dict[tuple, list] = {}
+        for xf in falta_a:
+            candidatos_x.setdefault(
+                (str(_valor(xf, "Comprobante")), _clase_comprobante(_valor(xf, "Tipo"))), []
+            ).append(xf)
+        sobran_a = []
+        usados_x: set[int] = set()
+        for f in falta_x:
             total_a = _numero(_valor(f, "Imp. Total"))
-            for xf in falta_a:
+            par = None
+            for xf in candidatos_x.get((str(_valor(f, "Comprobante")), _clase_comprobante(_valor(f, "Tipo"))), []):
                 total_x = _numero(_valor(xf, "Total"))
                 if (
-                    str(_valor(xf, "Comprobante")) == str(_valor(f, "Comprobante"))
-                    and _clase_comprobante(_valor(xf, "Tipo")) == _clase_comprobante(_valor(f, "Tipo"))
+                    id(xf) not in usados_x
                     and total_a is not None and total_x is not None
                     and abs(abs(total_a) - abs(total_x)) <= TOLERANCIA_IMPORTE
                 ):
-                    cuit_distinto += [f, xf]
-                    falta_x.remove(f)
-                    falta_a.remove(xf)
+                    par = xf
                     break
+            if par is None:
+                sobran_a.append(f)
+            else:
+                usados_x.add(id(par))
+                cuit_distinto += [f, par]
+        quedan_x = [xf for xf in falta_a if id(xf) not in usados_x]
+        falta_x, falta_a = sobran_a, quedan_x
+    else:
+        # Ventas: el comprobante está en los dos lados (no es faltante) pero en
+        # Xubio quedó a nombre de otro cliente.
+        cuit_distinto = _cuits_distintos_ventas(df_arca, df_xubio, columnas_arca, columnas_xubio, col_cuit_arca)
     if cuit_distinto:
         errores.append(error(
             "cuit_distinto", "corregir",
             "CUIT distinto entre ARCA y Xubio",
-            "Mismo comprobante e importe; en Xubio quedó cargado con otro CUIT (otro proveedor).",
+            (
+                "Mismo comprobante e importe; en Xubio quedó cargado con otro CUIT (otro proveedor)."
+                if operacion == "Compras" else
+                "Mismo comprobante; en Xubio quedó cargado a nombre de otro cliente (otra CUIT)."
+            ),
             ["Corregir en Xubio"],
             cuit_distinto,
             a_corregir=len(cuit_distinto) // 2,
@@ -541,7 +663,8 @@ def diagnosticar(
 
     # Proveedores del exterior (CUIT genérico 50-/51-/55-): no están en ARCA.
     exterior = [f for f in falta_a if _solo_digitos(_valor(f, "CUIT"))[:2] in ("50", "51", "55")]
-    falta_a = [f for f in falta_a if f not in exterior]
+    del_exterior = {id(f) for f in exterior}
+    falta_a = [f for f in falta_a if id(f) not in del_exterior]
 
     # Todo lo de ARCA sin par en Xubio va junto, como el bloque «Partidas de
     # ARCA no encontradas en el Libro IVA …» del Excel. Las liquidaciones
@@ -661,6 +784,39 @@ def _claves_de_error(e: dict) -> tuple[set, set]:
         else:
             xubio.add(_clave_fila(f.get("CUIT"), f.get("Comprobante"), f.get("Tipo")))
     return arca, xubio
+
+
+ERRORES_SEGUNDA_PASADA = ("letra_distinta", "tipo_distinto", "cuit_distinto")
+
+
+def sin_segunda_pasada(errores: list[dict], df_faltantes_arca, df_faltantes_xubio, col_cuit_arca):
+    """Saca de los faltantes los comprobantes que la 2ª pasada encontró en el otro
+    lado con otra letra, tipo o CUIT: están cargados (mal), no faltan. Si quedaran,
+    irían al CSV de «Subir a Xubio» y el comprobante terminaría duplicado."""
+    claves_a, claves_x = set(), set()
+    for e in errores:
+        if e["tipo"] in ERRORES_SEGUNDA_PASADA:
+            a, x = _claves_de_error(e)
+            claves_a |= a
+            claves_x |= x
+    if not claves_a and not claves_x:
+        return df_faltantes_arca, df_faltantes_xubio
+
+    def fuera(df, col_cuit, col_comp, claves):
+        if df.empty or not claves:
+            return df
+        tipo = df['Tipo'] if 'Tipo' in df.columns else pd.Series([""] * len(df), index=df.index)
+        cuits = df[col_cuit] if col_cuit in df.columns else pd.Series([""] * len(df), index=df.index)
+        quedan = [
+            _clave_fila(c, comp, t) not in claves
+            for c, comp, t in zip(cuits, df[col_comp], tipo)
+        ]
+        return df[quedan]
+
+    return (
+        fuera(df_faltantes_arca, col_cuit_arca, 'Clave_Py', claves_a),
+        fuera(df_faltantes_xubio, 'CUIT', 'Comprobante', claves_x),
+    )
 
 
 def _columnas(ws) -> dict[str, int]:
@@ -1009,14 +1165,16 @@ def procesar_cruce(
         'tipo': next((c for c in df_arca.columns if 'tipo' in str(c).lower() and 'cambio' not in str(c).lower()), None),
         'pto': next((c for c in df_arca.columns if 'punto de venta' in str(c).lower()), None),
         'num': next((c for c in df_arca.columns if 'número desde' in str(c).lower()), None),
-        'cuit': df_arca.columns[8] if len(df_arca.columns) > 8 else None, 
+        # Por título: «Nro. Doc. Emisor» en Recibidos, «Nro. Doc. Receptor» en Emitidos.
+        'cuit': next((c for c in df_arca.columns if 'nro. doc' in str(c).lower()), df_arca.columns[8] if len(df_arca.columns) > 8 else None),
         'prov': next((c for c in df_arca.columns if 'denominaci' in str(c).lower()), None),
         'neto': next((c for c in df_arca.columns if 'neto gravado total' in str(c).lower() or ('neto' in str(c).lower() and 'total' in str(c).lower())), 
                      next((c for c in df_arca.columns if 'neto' in str(c).lower() and 'gravado' in str(c).lower() and '0%' not in str(c).lower() and 'no' not in str(c).lower()), None)),
         'exe': next((c for c in df_arca.columns if 'exent' in str(c).lower() or 'no gravado' in str(c).lower()), None),
         'iva': next((c for c in df_arca.columns if 'total iva' in str(c).lower() or 'iva' == str(c).lower().strip()), None),
         'trib': next((c for c in df_arca.columns if 'otros tributos' in str(c).lower() or 'tributos' in str(c).lower()), None),
-        'tot': next((c for c in df_arca.columns if 'imp. total' in str(c).lower() or ('total' in str(c).lower() and 'iva' not in str(c).lower())), None),
+        'tot': next((c for c in df_arca.columns if 'imp. total' in str(c).lower()),
+                    next((c for c in df_arca.columns if 'total' in str(c).lower() and 'iva' not in str(c).lower() and 'neto' not in str(c).lower()), None)),
         'tc': next((c for c in df_arca.columns if 'tipo cambio' in str(c).lower()), None)
     }
 
@@ -1024,7 +1182,12 @@ def procesar_cruce(
         df_arca[arca_map['fecha']] = df_arca[arca_map['fecha']].apply(format_to_dd_mm_yyyy)
         df_arca_temp[arca_map['fecha']] = df_arca[arca_map['fecha']]
 
-    dups_a = set(df_arca_temp['Clave_Py'][df_arca_temp['Clave_Py'].duplicated(keep=False)])
+    usa_cuit = operacion == "Compras"
+    col_doc_arca = next(
+        (c for c in df_arca_temp.columns if 'nro. doc' in str(c).lower()), arca_map['cuit']
+    )
+    ident_a = _clave_identidad(df_arca_temp, col_doc_arca, 'Clave_Py', usa_cuit)
+    dups_a = set(df_arca_temp['Clave_Py'][ident_a.duplicated(keep=False)])
     df_arca_temp['Clave_Unica'] = df_arca_temp['Clave_Py'] + "_" + df_arca_temp.groupby('Clave_Py').cumcount().astype(str)
 
     def normalize_comp_standard(x):
@@ -1036,32 +1199,21 @@ def procesar_cruce(
     # 2. CARGA INTELIGENTE DE LIBRO IVA
     df_xubio_raw = pd.read_csv(ruta_xubio, header=None) if ruta_xubio.endswith('.csv') else pd.read_excel(ruta_xubio, header=None)
     
-    header_idx = 0
-    val_a1 = str(df_xubio_raw.iloc[0, 0]).strip().lower() if not df_xubio_raw.empty else ""
-    
-    if "fecha desde" in val_a1:
-        header_idx = 5
+    nombre_xubio = os.path.basename(ruta_xubio)
+    if df_xubio_raw.empty:
+        df_xubio = pd.DataFrame(columns=COLUMNAS_LIBRO_IVA)
     else:
-        for i, r in df_xubio_raw.head(15).iterrows():
-            r_strs = [str(x).lower() for x in r.values]
-            if any('comprobante' in x for x in r_strs) or any('fecha' in x for x in r_strs):
-                header_idx = i
-                break
-                
-    df_xubio = pd.read_csv(ruta_xubio, skiprows=header_idx) if ruta_xubio.endswith('.csv') else pd.read_excel(ruta_xubio, skiprows=header_idx)
-    
-    for i in range(22):
-        if i >= len(df_xubio.columns):
-            df_xubio[f"Col_Extra_{i}"] = np.nan
-    
-    nuevas_cols = list(df_xubio.columns)
-    nuevas_cols[0:22] = ['Fecha', 'Tipo', 'Comprobante', 'Proveedor', 'CUIT', 'Condición IVA',
-                         'Neto gravado 21%', 'IVA 21%', 'Neto gravado 10.5%', 'IVA 10.5%',
-                         'Neto gravado 27%', 'IVA 27%', 'Neto gravado 2.5%', 'IVA 2.5%',
-                         'Neto gravado 5%', 'IVA 5%', 'Retención IVA', 'Percepción IVA',
-                         'Percepción IIBB', 'Impuestos internos', 'No gravado exento', 'Total']
-    df_xubio.columns = nuevas_cols
-    
+        header_idx = fila_de_titulos_libro_iva(df_xubio_raw)
+        if header_idx is None:
+            raise ArchivoIlegible(
+                f"No se encontró la fila de títulos (Fecha, Comprobante…) en el Libro IVA «{nombre_xubio}». "
+                "Volvé a bajarlo de Xubio.",
+                detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_xubio},
+            )
+        df_xubio = pd.read_csv(ruta_xubio, skiprows=header_idx) if ruta_xubio.endswith('.csv') else pd.read_excel(ruta_xubio, skiprows=header_idx)
+        df_xubio = columnas_libro_iva(df_xubio, nombre_xubio)
+    nuevas_cols = list(COLUMNAS_LIBRO_IVA)
+
     df_xubio = df_xubio.dropna(subset=['Tipo'])
     df_xubio['Comprobante'] = df_xubio['Comprobante'].apply(normalize_comp_standard)
     df_xubio['Condición IVA'] = df_xubio['Condición IVA'].astype(str).replace(r'^\s*RI\s*$', 'Responsable Inscripto', regex=True)
@@ -1081,20 +1233,14 @@ def procesar_cruce(
     df_xubio = df_xubio[~df_xubio['Comprobante'].astype(str).str.upper().str.contains('NONE', na=False)]
     df_xubio = df_xubio[~df_xubio['Comprobante'].astype(str).str.upper().str.contains('TOTAL', na=False)]
 
-    c_tipo_mask = next((c for c in df_xubio.columns if 'tipo' in str(c).lower() and 'cambio' not in str(c).lower()), None)
-    if c_tipo_mask:
-        mask_no_extracto = ~df_xubio[c_tipo_mask].astype(str).str.lower().str.contains('extracto', na=False)
-        dups_x = set(df_xubio[mask_no_extracto]['Comprobante'][df_xubio[mask_no_extracto]['Comprobante'].duplicated(keep=False)])
-    else:
-        dups_x = set(df_xubio['Comprobante'][df_xubio['Comprobante'].duplicated(keep=False)])
+    ident_x = _clave_identidad(df_xubio, 'CUIT', 'Comprobante', usa_cuit)
+    no_extracto = ~df_xubio['Tipo'].astype(str).str.lower().str.contains('extracto', na=False)
+    dups_x = set(df_xubio['Comprobante'][ident_x.duplicated(keep=False) & no_extracto])
 
     all_dups = dups_a.union(dups_x)
 
     # Misma factura (mismo CUIT, punto de venta y número) con otra letra en
     # Xubio: casi siempre un error de carga en el Libro IVA. No frena el control.
-    col_doc_arca = next(
-        (c for c in df_arca_temp.columns if 'nro. doc' in str(c).lower()), arca_map['cuit']
-    )
     letras_distintas = detectar_letras_distintas(
         df_arca_temp, df_xubio, col_doc_arca, arca_map['prov'],
         arca_map['fecha'],
@@ -1114,14 +1260,10 @@ def procesar_cruce(
     df_xubio['Clave_Unica'] = df_xubio['Comprobante'] + "_" + df_xubio.groupby('Comprobante').cumcount().astype(str)
 
     # 3. IDENTIFICACIÓN DE FALTANTES
-    df_faltantes_arca = df_arca_temp[(~df_arca_temp['Clave_Unica'].isin(df_xubio['Clave_Unica'])) & (~df_arca_temp['Clave_Py'].isin(all_dups))].copy()
-    df_faltantes_xubio = df_xubio[(~df_xubio['Clave_Unica'].isin(df_arca_temp['Clave_Unica'])) & (~df_xubio['Comprobante'].isin(all_dups))].copy()
-    # En Compras la clave sin CUIT dejaba afuera comprobantes que comparten número
-    # con otro proveedor (o factura y NC con el mismo número): el Excel usa la
-    # misma comparación exacta que la ventana de errores.
-    if operacion == "Compras" and col_doc_arca is not None and 'CUIT' in df_xubio.columns:
-        df_faltantes_arca, df_faltantes_xubio = _faltantes_por_cuit(df_arca_temp, df_xubio, col_doc_arca)
-        df_faltantes_arca, df_faltantes_xubio = df_faltantes_arca.copy(), df_faltantes_xubio.copy()
+    # Una sola comparación para la ventana de errores, el Excel y el CSV de Xubio:
+    # (CUIT en Compras +) comprobante + clase (factura / NC / ND).
+    df_faltantes_arca, df_faltantes_xubio = _faltantes_por_cuit(df_arca_temp, df_xubio, col_doc_arca, usa_cuit)
+    df_faltantes_arca, df_faltantes_xubio = df_faltantes_arca.copy(), df_faltantes_xubio.copy()
 
     # Ventana de errores de la web: qué está mal y cómo solucionarlo. Se arma
     # antes de convertir los USD para mostrar los importes como en la planilla.
@@ -1133,6 +1275,11 @@ def procesar_cruce(
     )
     if avisar_errores is not None:
         avisar_errores(errores_diag)
+    # 2ª pasada (mismo comprobante con otra letra, tipo o CUIT): ya existe en
+    # Xubio mal cargado. Se corrige allá; subirlo desde «Faltantes» lo duplicaría.
+    df_faltantes_arca, df_faltantes_xubio = sin_segunda_pasada(
+        errores_diag, df_faltantes_arca, df_faltantes_xubio, col_doc_arca,
+    )
     if avisar_resumen is not None:
         # Cuántos comprobantes de ARCA tienen su par en Xubio (los demás son los
         # de la sección «Partidas de ARCA no encontradas…»).
@@ -1146,17 +1293,28 @@ def procesar_cruce(
             "a_corregir": a_corregir,
         })
 
-    df_faltantes_usd_original = pd.DataFrame()
+    # La hoja «Faltantes» es la que se convierte al CSV de Xubio: va como la da
+    # ARCA (moneda original + tipo de cambio). En pesos solo se usa para el Libro
+    # IVA del control y para la hoja «USD en pesos».
+    df_faltantes_para_xubio = df_faltantes_arca.copy()
+    df_faltantes_usd_pesos = pd.DataFrame()
     col_tc_faltantes = [c for c in df_faltantes_arca.columns if 'tipo cambio' in str(c).lower()]
     if col_tc_faltantes:
         tc_col = col_tc_faltantes[0]
         tc_values = pd.to_numeric(df_faltantes_arca[tc_col], errors='coerce').fillna(1)
         mask_usd = tc_values > 1
         if mask_usd.any():
-            df_faltantes_usd_original = df_faltantes_arca[mask_usd].drop(columns=['Clave_Py', 'Clave_Unica', 'Clave_Conciliacion'], errors='ignore').copy()
-            money_cols_names = [c for c in df_faltantes_arca.columns if any(kw in str(c).lower() for kw in ['imp.', 'iva', 'total', 'gravado', 'exenta', 'exento', 'tributo', 'monto', 'neto'])]
+            money_cols_names = [
+                c for c in df_faltantes_arca.columns
+                if any(kw in str(c).lower() for kw in ['imp.', 'iva', 'total', 'gravado', 'exenta', 'exento', 'tributo', 'monto', 'neto'])
+                and not any(no in str(c).lower() for no in ['cambio', 'condici', 'moneda', 'tipo doc', 'nro. doc'])
+            ]
             for c in money_cols_names:
-                df_faltantes_arca.loc[mask_usd, c] = pd.to_numeric(df_faltantes_arca.loc[mask_usd, c], errors='coerce').fillna(0) * tc_values[mask_usd]
+                # Columna entera a número antes de asignar: con pandas 3 una
+                # columna de texto no acepta floats por .loc.
+                numeros = pd.to_numeric(df_faltantes_arca[c], errors='coerce')
+                df_faltantes_arca[c] = numeros.where(~mask_usd, numeros.fillna(0) * tc_values)
+            df_faltantes_usd_pesos = df_faltantes_arca[mask_usd].drop(columns=['Clave_Py', 'Clave_Unica', 'Clave_Conciliacion'], errors='ignore').copy()
 
     # --- LISTA INTELIGENTE DE TASAS ---
     tasas = [
@@ -1166,6 +1324,9 @@ def procesar_cruce(
         {'a_keys': ['2,5%', '2.5%'], 'x_n': 'Neto gravado 2.5%', 'x_i': 'IVA 2.5%'},
         {'a_keys': [' 5%', '05%'], 'x_n': 'Neto gravado 5%', 'x_i': 'IVA 5%'}
     ]
+
+    # «Neto No Gravado» y «Op. Exentas» van juntas a «No gravado exento» de Xubio.
+    cols_exento_arca = [c for c in df_arca.columns if 'exent' in str(c).lower() or 'no gravado' in str(c).lower()]
 
     # 4. XUBIO -> ARCA (Inyectar)
     def inyectar_hacia_arca(row):
@@ -1200,7 +1361,7 @@ def procesar_cruce(
             dk = 'CUIT' if 'CUIT' in row else ('Documento' if 'Documento' in row else 'Nro. Doc. Emisor')
             nueva_fila[arca_map['cuit']] = row.get(dk, '')
             
-        if arca_map['tot']: nueva_fila[arca_map['tot']] = 0
+        if arca_map['tot']: nueva_fila[arca_map['tot']] = abs(parse_num(row.get('Total'))) * signo_nc
         
         if arca_map['neto']:
             netos = [parse_num(row.get(c)) for c in row.keys() if 'neto' in str(c).lower()]
@@ -1273,7 +1434,7 @@ def procesar_cruce(
         if c_neto_x_total: nueva_fila[c_neto_x_total] = parse_num(row.get(arca_map['neto'])) * signo
 
         c_exe = next((c for c in df_xubio.columns if 'exent' in str(c).lower() or 'no gravado' in str(c).lower()), None)
-        if c_exe: nueva_fila[c_exe] = parse_num(row.get(arca_map['exe'])) * signo
+        if c_exe: nueva_fila[c_exe] = sum(parse_num(row.get(c)) for c in cols_exento_arca) * signo
             
         c_trib = next((c for c in df_xubio.columns if 'percepción iva' in str(c).lower() or 'percepcion iva' in str(c).lower()), None)
         if c_trib: nueva_fila[c_trib] = parse_num(row.get(arca_map['trib'])) * signo
@@ -1364,6 +1525,7 @@ def procesar_cruce(
     letra_tot_ajust_arca = get_column_letter(idx_tot_ajust)
 
     max_row_arca = ws_arca.max_row
+    n_col_arca = ws_arca.max_column  # max_column recorre toda la hoja: se calcula una vez
     fila_vacia_arca = None
     fila_titulo_arca = None
 
@@ -1371,19 +1533,19 @@ def procesar_cruce(
         val_a = str(ws_arca[f"A{row}"].value or "").strip()
         
         if val_a == "---":
-            for c in range(1, ws_arca.max_column + 1): ws_arca.cell(row, c).value = ""
+            for c in range(1, n_col_arca + 1): ws_arca.cell(row, c).value = ""
             fila_vacia_arca = row
             continue 
         
         if val_a == "---TITULO---":
-            for c in range(1, ws_arca.max_column + 1): ws_arca.cell(row, c).value = ""
+            for c in range(1, n_col_arca + 1): ws_arca.cell(row, c).value = ""
             ws_arca[f"A{row}"].value = f"Partidas del Libro IVA {operacion} no encontradas en ARCA"
             ws_arca[f"A{row}"].font = bold_font
             fila_titulo_arca = row
             continue
             
         if val_a == "---ENCABEZADOS---":
-            for c in range(1, ws_arca.max_column + 1):
+            for c in range(1, n_col_arca + 1):
                 let_c = get_column_letter(c)
                 ws_arca.cell(row, c).value = f"={let_c}1"
                 ws_arca.cell(row, c).font = bold_font
@@ -1393,7 +1555,7 @@ def procesar_cruce(
             continue
 
         if fila_titulo_arca and row > fila_titulo_arca:
-            for c in range(1, ws_arca.max_column + 1):
+            for c in range(1, n_col_arca + 1):
                 if c != idx_iva_ajust and c != idx_tot_ajust: ws_arca.cell(row=row, column=c).fill = injected_fill
             if col_tot_arca:
                 col_start_sum = "Z" if operacion == "Compras" else "X"
@@ -1401,7 +1563,7 @@ def procesar_cruce(
                 ws_arca[f"{col_tot_arca}{row}"].value = f"=SUM({col_start_sum}{row}:{col_end_sum}{row})"
 
         if val_a != "" and val_a in all_dups:
-            for c in range(1, ws_arca.max_column + 1):
+            for c in range(1, n_col_arca + 1):
                 if c != idx_iva_ajust and c != idx_tot_ajust: ws_arca.cell(row=row, column=c).fill = light_red_fill
 
         ws_arca[f"{letra_iva_ajust_arca}{row}"].fill = yellow_fill
@@ -1447,6 +1609,7 @@ def procesar_cruce(
     letra_est = get_column_letter(idx_est)
 
     max_row_xubio = ws_xubio.max_row
+    n_col_xubio = ws_xubio.max_column
     fila_vacia_xubio = None
     fila_titulo_xubio = None
 
@@ -1458,19 +1621,19 @@ def procesar_cruce(
         is_dup = (val_c != "") and (val_c in all_dups) and ("extracto" not in tipo_val)
         
         if val_a == "---":
-            for c in range(1, ws_xubio.max_column + 1): ws_xubio.cell(row, c).value = ""
+            for c in range(1, n_col_xubio + 1): ws_xubio.cell(row, c).value = ""
             fila_vacia_xubio = row
             continue
         
         if val_a == "---TITULO2---":
-            for c in range(1, ws_xubio.max_column + 1): ws_xubio.cell(row, c).value = ""
+            for c in range(1, n_col_xubio + 1): ws_xubio.cell(row, c).value = ""
             ws_xubio[f"A{row}"].value = f"Partidas de ARCA no encontradas en el Libro IVA {operacion}"
             ws_xubio[f"A{row}"].font = bold_font
             fila_titulo_xubio = row
             continue
             
         if val_a == "---ENCABEZADOS2---":
-            for c in range(1, ws_xubio.max_column + 1):
+            for c in range(1, n_col_xubio + 1):
                 let_c = get_column_letter(c)
                 ws_xubio.cell(row, c).value = f"={let_c}1"
                 ws_xubio.cell(row, c).font = bold_font
@@ -1569,15 +1732,15 @@ def procesar_cruce(
 
     # --- HOJA FALTANTES (OPCIONAL EN ARCA) ---
     ws_faltantes = wb.create_sheet(f"Faltantes en Libro IVA {operacion}")
-    for r in dataframe_to_rows(df_faltantes_arca, index=False, header=True): ws_faltantes.append(r)
-    
-    if not df_faltantes_usd_original.empty:
-        start_row_usd = ws_faltantes.max_row + 5
-        ws_faltantes.cell(row=start_row_usd, column=1, value="Facturas Originales en USD").font = bold_font
-        header_row = start_row_usd + 1
-        for col_idx, col_name in enumerate(df_faltantes_usd_original.columns, 1): ws_faltantes.cell(row=header_row, column=col_idx, value=col_name).font = bold_font
-        for r_idx, r_data in enumerate(dataframe_to_rows(df_faltantes_usd_original, index=False, header=False), header_row + 1):
-            for c_idx, val in enumerate(r_data, 1): ws_faltantes.cell(row=r_idx, column=c_idx, value=val)
+    df_faltantes_para_xubio = df_faltantes_para_xubio.drop(columns=['Clave_Py', 'Clave_Unica', 'Clave_Conciliacion'], errors='ignore')
+    for r in dataframe_to_rows(df_faltantes_para_xubio, index=False, header=True): ws_faltantes.append(r)
+
+    # Cuánto son en pesos las de otra moneda: hoja aparte (no se sube a Xubio;
+    # el nombre no dice «faltante» a propósito).
+    ws_usd = None
+    if not df_faltantes_usd_pesos.empty:
+        ws_usd = wb.create_sheet("USD en pesos")
+        for r in dataframe_to_rows(df_faltantes_usd_pesos, index=False, header=True): ws_usd.append(r)
 
     # --- ESTILOS DE MONEDA Y TAMAÑO DE COLUMNAS ---
     money_cols_arca = get_money_cols(ws_arca)
@@ -1611,6 +1774,8 @@ def procesar_cruce(
     aplicar_moneda(ws_arca, max_row_arca, t_a3, money_cols_arca, filas_a_saltar)
     aplicar_moneda(ws_xubio, max_row_xubio, t_x3, money_cols_xubio, filas_a_saltar_xubio, fila_titulo_xubio, idx_v_iva)
     aplicar_moneda(ws_faltantes, ws_faltantes.max_row, ws_faltantes.max_row, get_money_cols(ws_faltantes))
+    if ws_usd is not None:
+        aplicar_moneda(ws_usd, ws_usd.max_row, ws_usd.max_row, get_money_cols(ws_usd))
 
     for col_to_hide in ['D', 'E', 'F', 'G', 'H', 'L', 'K']: ws_arca.column_dimensions[col_to_hide].hidden = True
     for col_to_hide in ['E', 'S', 'T', 'U']: ws_xubio.column_dimensions[col_to_hide].hidden = True
@@ -1644,6 +1809,6 @@ def procesar_cruce(
     marcar_errores(wb, errores_diag, operacion)
     etiquetar_filas(wb, errores_diag)
 
-    wb.save(ruta_salida)
+    guardar_excel(wb, ruta_salida)
     log(f"      [OK] Control de facturas generado: {ruta_salida}")
     return ruta_salida

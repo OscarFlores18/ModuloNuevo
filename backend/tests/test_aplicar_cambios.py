@@ -122,3 +122,69 @@ def test_no_aplica_con_el_control_corriendo(entorno, tmp_path: Path):
     ej.estado = "en_curso"
     r = client.post("/api/ejecuciones/apl123/aplicar-cambios", json={"cambios": CAMBIOS})
     assert r.status_code == 409
+
+
+# --- Fallas a mitad de camino ------------------------------------------------
+
+
+def test_excel_abierto_avisa_que_lo_cierren_y_no_deja_temporales(tmp_path: Path, monkeypatch):
+    from backend.app.core.archivos_excel import guardar_excel
+    from backend.app.core.errors import ArchivoEnUso
+
+    destino = tmp_path / "libro.xlsx"
+
+    def ocupado(self, *_):
+        raise PermissionError(32, "El proceso no tiene acceso al archivo")
+
+    monkeypatch.setattr(Path, "replace", ocupado)
+    try:
+        guardar_excel(openpyxl.Workbook(), destino)
+    except ArchivoEnUso as exc:
+        assert "«libro.xlsx» está abierto" in str(exc) and "Cerralo" in str(exc)
+    else:
+        raise AssertionError("tenía que avisar")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_si_el_recruce_falla_el_libro_corregido_vuelve_a_como_estaba(entorno, tmp_path: Path, monkeypatch):
+    client, _ = entorno
+    carpeta = _carpeta(tmp_path)
+    ej = _ejecucion(carpeta)
+    antes = list(ej.advertencias)
+
+    def falla(*_a, **_k):
+        raise RuntimeError("Page.click: Target page, context or browser has been closed")
+
+    monkeypatch.setattr(srv, "procesar_cruce", falla)
+    r = client.post("/api/ejecuciones/apl123/aplicar-cambios", json={"cambios": CAMBIOS})
+
+    assert r.status_code == 500
+    assert "No se aplicó ningún cambio" in r.json()["detail"]["mensaje"]
+    assert not any(p.name.endswith(" - corregido.xlsx") for p in carpeta.iterdir())
+    assert ej.advertencias == antes
+
+
+def test_una_operacion_que_falla_no_frena_ni_borra_las_demas(entorno, tmp_path: Path):
+    client, _ = entorno
+    ej = _ejecucion(_carpeta(tmp_path))
+    cambios = CAMBIOS + [{**CAMBIOS[0], "operacion": "Ventas"}]  # Ventas no tiene archivos
+
+    r = client.post("/api/ejecuciones/apl123/aplicar-cambios", json={"cambios": cambios})
+
+    assert r.status_code == 200, r.text
+    por_op = {x["operacion"]: x for x in r.json()["resultados"]}
+    assert por_op["Compras"]["aplicados"] == 3
+    assert "falta" in por_op["Ventas"]["error"]
+    # Lo aplicado quedó guardado en disco (sobrevive a un reinicio).
+    guardado = srv._carpeta_historial() / "apl123.json"
+    assert guardado.is_file() and "corregido" in guardado.read_text(encoding="utf-8")
+    assert ej.clientes[0].corregidos["Compras"]["cambios"]
+
+
+def test_consumidor_final_sin_cuit_se_puede_aplicar(tmp_path: Path):
+    libro = tmp_path / "libro.xlsx"
+    _xubio(libro, [{"cuit": None, "comprobante": "A-0002-00000006", "total": 900}])
+    r = corregir_libro(libro, tmp_path / "copia.xlsx", [
+        {"campo": "importe", "cuit": "", "pv": 2, "numero": 6, "valor_arca": 1000},
+    ])
+    assert len(r["aplicados"]) == 1 and r["no_aplicados"] == []

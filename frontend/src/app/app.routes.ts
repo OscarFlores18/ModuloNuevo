@@ -30,7 +30,7 @@ export const routes: Routes = [
   },
   {
     path: 'convertir-aux',
-    title: 'Faltantes a Xubio · Control de Facturas',
+    title: 'Subir a Xubio · Control de Facturas',
     loadComponent: () => import('./features/convertir/convertir').then((m) => m.ConvertirPantalla),
   },
   { path: '**', redirectTo: '' },

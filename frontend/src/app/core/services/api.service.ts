@@ -157,7 +157,9 @@ ${cuerpo}`.trim();
   if (e.status === 0) mensaje = 'No se pudo hablar con el servidor. Revisá que el backend esté corriendo.';
   else if (e.status === 401 || e.status === 403) mensaje = delBackend || 'No tenés permiso para hacer esto.';
   else if (e.status === 404) mensaje = delBackend || 'No se encontró lo que se pidió en el servidor.';
-  else if (e.status >= 500) mensaje = 'El servidor tuvo un error interno. Probá de nuevo; si sigue, pasá el detalle técnico.';
+  // Un 500 con mensaje propio del backend («No se pudo volver a cruzar…») dice
+  // qué pasó: se muestra. Sin mensaje es un error no previsto.
+  else if (e.status >= 500) mensaje = delBackend || 'El servidor tuvo un error interno. Probá de nuevo; si sigue, pasá el detalle técnico.';
   else mensaje = delBackend || porDefecto;
   return new ErrorApi(mensaje, tecnico, e.status);
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,6 +35,13 @@ def entorno(tmp_path, monkeypatch):
     app = create_app()
     with TestClient(app) as client:
         yield client, app
+
+    # Los controles corren en su propio hilo y se guardan al terminar. Si el test
+    # termina antes, monkeypatch devuelve DATA_DIR a la carpeta real y el control
+    # de prueba («Acme») aparecía en el historial de verdad: se espera a que terminen.
+    for hilo in threading.enumerate():
+        if hilo.name.startswith("control-"):
+            hilo.join(timeout=30)
 
 
 @pytest.fixture

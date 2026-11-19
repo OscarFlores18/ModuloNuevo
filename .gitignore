@@ -22,3 +22,8 @@ debug_log.txt
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+
+# App de escritorio (build_app.ps1 / PyInstaller)
+/build/
+/dist/
+ControlFCT.spec

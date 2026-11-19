@@ -306,6 +306,10 @@ def test_convertir_aux_sin_las_filas_destildadas():
     assert todo[0]["partidas"] == {"Compras": 3}
     menos = convertir_auxiliares([(nombre, _aux("Compras", filas=3))], {nombre: {"30500000000|A-00001-00000011"}})
     assert menos[0]["partidas"] == {"Compras": 2}
+    # La pantalla muestra los mismos comprobantes que van al .zip.
+    filas = menos[0]["filas"]["Compras"]
+    assert len(filas) == 2
+    assert "A-00001-00000011" not in [f["comprobante"] for f in filas]
     nada = convertir_auxiliares(
         [(nombre, _aux("Compras", filas=1))], {nombre: {"30500000000|A-00001-00000010"}},
     )

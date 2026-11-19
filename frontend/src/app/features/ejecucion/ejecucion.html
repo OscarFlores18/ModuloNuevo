@@ -27,12 +27,15 @@
 } @else {
   @let ins = insigniaEjecucion[e.estado];
 
-  <!-- 1. Estado global -->
-  <section class="mf-panel mf-panel-acento" aria-labelledby="t-ejecucion" data-tour="estado">
-    <header class="flex flex-wrap items-center justify-between gap-3">
-      <div class="min-w-0">
-        <h2 id="t-ejecucion" class="m-0 text-xl font-bold first-letter:uppercase">{{ titulo() }}</h2>
-        <p class="mf-sub m-0 mt-0.5">{{ bajada() }}</p>
+  <!-- 1. Encabezado: qué control es, cómo terminó y la acción que corresponde -->
+  <section class="mf-panel ej-cab" aria-labelledby="t-ejecucion" data-tour="estado">
+    <div class="ej-cab-fila">
+      <div class="ej-cab-info">
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <h2 id="t-ejecucion" class="m-0 text-xl font-bold first-letter:uppercase">{{ titulo() }}</h2>
+          @if (!activa()) { <span [class]="ins.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="ins.latido" aria-hidden="true"></span>{{ ins.texto }}</span> }
+        </div>
+        <p class="mf-sub m-0 mt-1">{{ bajada() }}</p>
       </div>
       @if (activa()) {
         <button type="button" class="mf-btn mf-btn-rojo inline-flex items-center gap-2" (click)="detener()" [disabled]="e.cancelar_pedido || !perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">
@@ -41,65 +44,96 @@
           }
           {{ e.cancelar_pedido ? 'Cancelando…' : 'Cancelar control' }}
         </button>
-      } @else {
-        <div class="flex flex-wrap gap-2">
-          @if (perspectiva.canEdit() && reintento(); as r) {
-            <button type="button" class="mf-btn mf-btn-suave" (click)="reintentar()" [disabled]="!perspectiva.canEdit()" [title]="perspectiva.motivoBloqueo() ?? 'Arma un control nuevo con: ' + r.clientes.join(', ')">
-              Reintentar {{ r.clientes.length === 1 ? 'el que falló' : 'los ' + r.clientes.length + ' que fallaron' }}
-            </button>
-          }
-          @if (perspectiva.canEdit()) { <a routerLink="/control" class="mf-btn">Nuevo control</a> }
-        </div>
+      } @else if (perspectiva.canEdit() && reintento()) {
+        @let r = reintento()!;
+        <button type="button" class="mf-btn mf-btn-suave" (click)="reintentar()" [title]="'Arma un control nuevo con: ' + r.clientes.join(', ')">
+          ↻ Reintentar {{ r.clientes.length === 1 ? 'el que falló' : 'los ' + r.clientes.length + ' que fallaron' }}
+        </button>
       }
-    </header>
+    </div>
 
-    <dl class="ej-kpis">
-      <div class="ej-kpi">
-        <dt>Estado</dt>
-        <dd><span [class]="ins.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="ins.latido" aria-hidden="true"></span>{{ ins.texto }}</span></dd>
-      </div>
-      <div class="ej-kpi">
-        <dt>Progreso</dt>
-        <dd>{{ procesados() }} <small>de {{ e.clientes }} {{ e.clientes === 1 ? 'cliente' : 'clientes' }}</small></dd>
-      </div>
-      @if (activa()) {
+    <!-- Mientras corre: las cajas de siempre (estado, avance, qué se está haciendo, errores) y la barra -->
+    @if (activa()) {
+      <dl class="ej-kpis" aria-live="polite">
+        <div class="ej-kpi">
+          <dt>Estado</dt>
+          <dd><span [class]="ins.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="ins.latido" aria-hidden="true"></span>{{ ins.texto }}</span></dd>
+        </div>
+        <div class="ej-kpi">
+          <dt>Progreso</dt>
+          <dd>{{ procesados() }} <small>de {{ e.clientes }} {{ e.clientes === 1 ? 'cliente' : 'clientes' }}</small></dd>
+        </div>
+        <div class="ej-kpi ej-kpi-ahora">
+          <dt>Haciendo ahora</dt>
+          <dd>
+            @if (clienteEnCurso(); as cc) {
+              <span class="min-w-0">
+                <span class="block truncate" [title]="cc">{{ pasoEnCurso() ?? 'Preparando…' }}</span>
+                <small class="block truncate" [title]="cc">{{ cc }}</small>
+              </span>
+            } @else {
+              <small>{{ e.pausa ? 'Pausa entre clientes' : 'Arrancando…' }}</small>
+            }
+          </dd>
+        </div>
         <div class="ej-kpi" [class.ej-kpi-error]="errores() > 0">
           <dt>Pasos con error</dt>
           <dd>{{ errores() }}</dd>
         </div>
-      } @else {
-        <div class="ej-kpi" [class.ej-kpi-error]="pendientes() > 0" [class.ej-kpi-ok]="!pendientes()">
-          <dt>Para hacer<app-ayuda texto="Las tareas que dejó el control. Grave: el control no sirve hasta corregirlo. A revisar: corregir en Xubio o consultar al cliente. Info: es normal, no hay que hacer nada." />@if (conteoErrores().grave) { <span class="ej-kpi-grave">· {{ conteoErrores().grave }} grave{{ conteoErrores().grave === 1 ? '' : 's' }}</span> }</dt>
-          <dd>
-            @if (tareas().length) {
-              <button type="button" class="ej-kpi-link" (click)="irATareas()" title="Ir a la lista de tareas">{{ pendientes() }} <small>{{ pendientes() ? 'de ' + tareas().length + (tareas().length === 1 ? ' tarea' : ' tareas') : 'todo hecho' }}</small></button>
-            } @else {
-              <span>0 <small>todo en orden</small></span>
-            }
-          </dd>
-        </div>
-      }
-      @if (comprobantesControlados()) {
-        <div class="ej-kpi">
-          <dt>Comprobantes</dt>
-          <dd class="tabular-nums">{{ comprobantesControlados() }} <small>controlados</small></dd>
-        </div>
-      }
-    </dl>
+      </dl>
 
-    <div class="mf-barra mt-4" role="progressbar" [attr.aria-valuenow]="progreso()" aria-valuemin="0" aria-valuemax="100" aria-label="Avance del control">
-      <div class="mf-barra-relleno" [style.width.%]="progreso()"
-        [style.background]="e.estado === 'error' ? 'var(--color-error)' : e.estado === 'cancelada' ? 'var(--color-tenue)' : e.estado === 'finalizada' ? (errores() ? 'var(--color-aviso)' : 'var(--color-ok)') : null"></div>
-    </div>
+      <div class="ej-avance-texto mt-4">
+        <span class="mf-tenue">Avance del control</span>
+        <strong class="tabular-nums ml-auto">{{ progreso() }}%</strong>
+      </div>
+      <div class="mf-barra" role="progressbar" [attr.aria-valuenow]="progreso()" aria-valuemin="0" aria-valuemax="100" aria-label="Avance del control">
+        <div class="mf-barra-relleno" [style.width.%]="progreso()"></div>
+      </div>
+    }
   </section>
 
+  <!-- Pausa entre clientes: espera una respuesta -->
+  @if (e.pausa; as p) {
+    <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-4" role="alertdialog" aria-labelledby="t-pausa">
+      <span class="mono flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-aviso text-lg font-bold" aria-hidden="true">{{ segundosPausa() }}</span>
+      <div class="min-w-0 flex-1">
+        <strong id="t-pausa">
+          Terminó {{ p.cliente }}.
+          @if (siguienteCliente(); as s) { Sigue {{ s }} en {{ segundosPausa() }} s. } @else { Sigue en {{ segundosPausa() }} s. }
+        </strong>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="mf-btn" (click)="store.responder('continuar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">Continuar ahora</button>
+        <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('no_preguntar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">No preguntar más</button>
+        <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">Cancelar todo</button>
+      </div>
+    </section>
+  }
+
+  <!-- 2. Pestañas: lo que hay que hacer primero; los clientes y sus Excel al lado -->
+  @if (hayTareas()) {
+    <div class="ej-pestanas" role="tablist" aria-label="Qué ver del control">
+      <button type="button" role="tab" id="tab-tareas" class="ej-pestana" aria-controls="t-tareas" [attr.aria-selected]="vista() === 'tareas'" [attr.tabindex]="vista() === 'tareas' ? 0 : -1" (click)="pestana.set('tareas')" (keydown.arrowRight)="pestana.set('clientes')" data-tour="tareas">
+        Qué hay que hacer
+        @if (pendientes()) {
+          <span class="ej-pestana-num" [class.ej-pestana-num-grave]="conteoErrores().grave">{{ pendientes() }}</span>
+        } @else {
+          <span class="ej-pestana-num ej-pestana-num-ok" aria-label="todo hecho">✓</span>
+        }
+      </button>
+      <button type="button" role="tab" id="tab-clientes" class="ej-pestana" aria-controls="t-clientes" [attr.aria-selected]="vista() === 'clientes'" [attr.tabindex]="vista() === 'clientes' ? 0 : -1" (click)="pestana.set('clientes')" (keydown.arrowLeft)="pestana.set('tareas')" data-tour="clientes-ej">
+        Clientes y archivos <span class="ej-pestana-num ej-pestana-num-tenue">{{ clientes().length }}</span>
+      </button>
+    </div>
+  }
+
   <!-- Qué hay que hacer: los hallazgos como órdenes, en el orden en que conviene hacerlas -->
-  @if (!activa() && (tareas().length || corregidos().length)) {
+  @if (vista() === 'tareas') {
     @let nSel = seleccionados().length;
-    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" aria-labelledby="t-tareas" id="t-tareas" data-tour="tareas" [attr.aria-busy]="aplicando()">
+    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" role="tabpanel" aria-labelledby="tab-tareas" id="t-tareas" [attr.aria-busy]="aplicando()">
       <header class="tr-cab">
         <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientes() ? 'Qué hay que hacer' : corregidos().length ? 'Todo hecho · Excel actualizado' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
+          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientes() ? 'Hacelas en este orden' : corregidos().length ? 'Todo hecho · Excel actualizado' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
           <p class="mf-sub m-0 mt-0.5" aria-live="polite">
             @if (aplicando()) {
               <span class="tr-aplicando"><span class="ej-spinner" aria-hidden="true"></span> Aplicando cambios y generando nuevo Excel...</span>
@@ -132,6 +166,17 @@
         }
         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()" [disabled]="aplicando()">Ver todos los hallazgos</button>
       </header>
+
+      @if (clientesConTareas().length > 1) {
+        <div class="tr-filtro">
+          <label for="tr-filtro-cliente">Mostrar</label>
+          <select id="tr-filtro-cliente" class="mf-input" [value]="filtroCliente() ?? ''" (change)="filtroCliente.set($any($event.target).value || null)">
+            <option value="">Todos los clientes ({{ tareas().length }})</option>
+            @for (n of clientesConTareas(); track n) { <option [value]="n">{{ n }} ({{ pendientesDe(n) }} por hacer)</option> }
+          </select>
+          @if (filtroCliente()) { <button type="button" class="mf-btn-link text-sm" (click)="filtroCliente.set(null)">Ver todos</button> }
+        </div>
+      }
 
       @if (corregidos().length) {
         <div class="tr-actualizado" role="status">
@@ -172,11 +217,10 @@
                     </label>
                     <span class="tr-acciones">
                       @if (puedeSubir(tarea.advertencia)) {
-                        <button type="button" class="mf-btn mf-btn-chico mf-btn-ok" (click)="subirAXubio(tarea.advertencia)"
+                        <button type="button" class="mf-btn mf-btn-ok" (click)="subirAXubio(tarea.advertencia)"
                           [disabled]="!perspectiva.canEdit() || !nTildadas"
-                          [title]="perspectiva.motivoBloqueo() ?? (nTildadas ? 'Lleva los tildados a «Faltantes a Xubio», listos para cargar' : 'Tildá al menos un comprobante')">⬆ Subir a Xubio</button>
-                      }
-                      @if (destinoVisible(tarea); as d) {
+                          [title]="perspectiva.motivoBloqueo() ?? (nTildadas ? 'Lleva los tildados a «Subir a Xubio», listos para cargar' : 'Tildá al menos un comprobante')">⬆ Subir {{ nTildadas }} a Xubio</button>
+                      } @else if (destinoVisible(tarea); as d) {
                         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
                       }
                     </span>
@@ -240,7 +284,7 @@
                     <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)">Ver comprobantes</button>
                   }
                   @if (destinoVisible(tarea); as d) {
-                    <button type="button" class="mf-btn mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
+                    <button type="button" class="mf-btn" (click)="irA(tarea)">{{ d.texto }}</button>
                   }
                 </span>
               </li>
@@ -253,31 +297,15 @@
     </section>
   }
 
-  <!-- Pausa entre clientes: espera una respuesta -->
-  @if (e.pausa; as p) {
-    <section class="mf-aviso mf-aviso-alerta flex flex-wrap items-center gap-4" role="alertdialog" aria-labelledby="t-pausa">
-      <span class="mono flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-aviso text-lg font-bold" aria-hidden="true">{{ segundosPausa() }}</span>
-      <div class="min-w-0 flex-1">
-        <strong id="t-pausa">
-          Terminó {{ p.cliente }}.
-          @if (siguienteCliente(); as s) { Sigue {{ s }} en {{ segundosPausa() }} s. } @else { Sigue en {{ segundosPausa() }} s. }
-        </strong>
-      </div>
-      <div class="flex flex-wrap gap-2">
-        <button type="button" class="mf-btn" (click)="store.responder('continuar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">Continuar ahora</button>
-        <button type="button" class="mf-btn mf-btn-suave" (click)="store.responder('no_preguntar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">No preguntar más</button>
-        <button type="button" class="mf-btn mf-btn-peligro" (click)="store.responder('cancelar')" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()">Cancelar todo</button>
-      </div>
-    </section>
-  }
-
-  <!-- 2. Clientes: una fila por cliente con sus tres etapas; abiertos los que tienen algo para mirar -->
-  <section aria-labelledby="t-clientes-ej" data-tour="clientes-ej">
-    <h2 id="t-clientes-ej" class="m-0 mb-2 text-lg font-bold">Clientes</h2>
+  <!-- Clientes: una fila por cliente con sus tres etapas, sus tareas y sus Excel -->
+  @if (vista() === 'clientes') {
+  <section [attr.aria-labelledby]="hayTareas() ? 'tab-clientes' : 't-clientes-ej'" id="t-clientes" [attr.role]="hayTareas() ? 'tabpanel' : null" [attr.data-tour]="hayTareas() ? null : 'clientes-ej'">
+    @if (!hayTareas()) { <h2 id="t-clientes-ej" class="m-0 mb-2 text-lg font-bold">Clientes</h2> }
+    @if (errorDescarga(); as err) { <app-alerta class="mb-2 block" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
     <ul class="ej-clientes">
       @for (c of clientes(); track c.nombre) {
         <li>
-          <details class="ej-cliente" [open]="c.prioritarias.length > 0 || c.conError || c.hallazgos > 0 || c.origen.estado === 'en_curso'" [class.ej-cliente-error]="c.conError">
+          <details class="ej-cliente" [open]="clientes().length === 1 || c.conError || c.pendientes > 0 || c.origen.estado === 'en_curso'" [class.ej-cliente-error]="c.conError">
             <summary>
               <svg class="ej-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
               <span class="ej-cliente-nombre" [title]="c.nombre">{{ c.nombre }}</span>
@@ -295,79 +323,104 @@
                   </span>
                 }
               </span>
-              @if (c.hallazgos && !activa()) {
-                <span class="mf-badge mf-badge-aviso shrink-0" [title]="'Hallazgos de la auditoría o pasos que fallaron para ' + c.nombre">{{ c.hallazgos }} a revisar</span>
-              }
               <span [class]="c.insignia.clase" class="ej-pildora shrink-0"><span class="mf-punto" [class.mf-latido]="c.insignia.latido" aria-hidden="true"></span>{{ c.insignia.texto }}</span>
             </summary>
 
             <div class="ej-cliente-cuerpo">
-              @if (!c.problemas.length && !c.archivos.length && !c.prioritarias.length) {
-                <p class="mf-tenue m-0 text-sm">{{ c.origen.estado === 'pendiente' ? 'Todavía no empezó.' : c.origen.estado === 'en_curso' ? 'Bajando los archivos…' : 'Sin archivos generados.' }}</p>
-              }
-              @if (!activa()) {
-                @for (a of c.prioritarias; track a.titulo + a.operacion) {
-                  @let filasFalt = faltantesDe(a);
-                  @let nTildadasC = tildadas(a, filasFalt);
-                  <div class="ej-prioritaria mb-2">
-                    <div class="min-w-0 flex-1">
-                      <strong class="block">Faltantes en IVA {{ a.operacion }}</strong>
-                      <span class="mf-tenue block text-sm">
-                        @if (filasFalt.length) {
-                          {{ filasFalt.length }} {{ filasFalt.length === 1 ? 'comprobante' : 'comprobantes' }} en el Excel · {{ nTildadasC }} {{ nTildadasC === 1 ? 'tildado' : 'tildados' }} para subir
-                        } @else {
-                          No hay comprobantes en la hoja del Excel
-                        }
-                      </span>
-                    </div>
-                    @if (filasFalt.length) {
-                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verAdvertencia(a)">Ver comprobantes</button>
+              <!-- Mientras corre: ARCA → Xubio → Auditoría con su estado, el paso de ahora y el avance del cliente -->
+              @if (activa()) {
+                <div class="ej-cli-avance">
+                  <ol class="ej-stepper" [attr.aria-label]="'Pasos de ' + c.nombre">
+                    @for (et of c.etapas; track et.id; let n = $index) {
+                      <li class="ej-etapa" [attr.data-estado]="et.estado">
+                        <span class="ej-etapa-icono" aria-hidden="true">
+                          @switch (et.estado) {
+                            @case ('ok') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7" /></svg> }
+                            @case ('error') { <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg> }
+                            @case ('procesando') { <span class="ej-spinner"></span> }
+                            @case ('aviso') { ! }
+                            @case ('omitido') { – }
+                            @default { {{ n + 1 }} }
+                          }
+                        </span>
+                        <span class="ej-etapa-nombre">{{ et.titulo }}</span>
+                        <span class="ej-etapa-estado">
+                          @if (et.estado === 'procesando') { <span class="mf-punto mf-latido" aria-hidden="true"></span> }
+                          {{ textoEtapa[et.estado] }}
+                        </span>
+                      </li>
                     }
-                    @if (puedeSubir(a)) {
-                      <button type="button" class="mf-btn mf-btn-chico mf-btn-ok" (click)="subirAXubio(a)"
-                        [disabled]="!perspectiva.canEdit() || !nTildadasC"
-                        [title]="perspectiva.motivoBloqueo() ?? (nTildadasC ? 'Lleva los tildados a «Faltantes a Xubio», listos para cargar' : 'Tildá al menos un comprobante')">⬆ Subir a Xubio</button>
-                    }
+                  </ol>
+                  <div class="ej-cli-avance-texto" aria-live="polite">
+                    <span>
+                      @if (c.pasoActual) { Ahora: <strong>{{ c.pasoActual }}</strong> }
+                      @else if (c.origen.estado === 'pendiente') { En espera: arranca cuando termine el cliente anterior. }
+                      @else if (c.origen.estado === 'en_curso') { Preparando el siguiente paso… }
+                      @else { Terminó este cliente. }
+                    </span>
+                    <strong class="tabular-nums">{{ c.avance }}%</strong>
                   </div>
-                }
+                  <div class="mf-barra" role="progressbar" [attr.aria-valuenow]="c.avance" aria-valuemin="0" aria-valuemax="100" [attr.aria-label]="'Avance de ' + c.nombre">
+                    <div class="mf-barra-relleno" [style.width.%]="c.avance"></div>
+                  </div>
+                </div>
               }
-              @for (p of c.problemas; track p.titulo; let primero = $first) {
-                <app-alerta [class.mt-2]="!primero" [nivel]="p.nivel" [titulo]="p.titulo" [mensajes]="[p.mensaje]"
-                  [orden]="p.tarea?.orden ?? ''" [accion]="(p.tarea && destinoVisible(p.tarea)?.texto) ?? ''" (accionar)="p.tarea && irA(p.tarea)" />
+              @if (!activa() && c.pendientes) {
+                <div class="ej-cli-tareas">
+                  <span><strong>{{ c.pendientes }} {{ c.pendientes === 1 ? 'tarea' : 'tareas' }}</strong> por hacer con este cliente</span>
+                  <button type="button" class="mf-btn" (click)="verTareasDe(c.nombre)">Ver sus tareas →</button>
+                </div>
+              }
+              @for (p of c.problemas; track p.titulo) {
+                <app-alerta class="block" [nivel]="p.nivel" [titulo]="p.titulo" [mensajes]="[p.mensaje]" />
               }
 
               @if (c.archivos.length) {
-                <div [class.mt-3]="c.problemas.length">
-                  @if (errorDescarga(); as err) { <app-alerta class="mb-2" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="errorDescarga.set(null)" /> }
-                  <div class="ej-carpeta">
-                    <div class="ej-carpeta-ruta">
-                      <button type="button" class="ej-carpeta-titulo" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
-                        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
-                        Archivos ({{ c.archivos.length }})
-                        <span class="mf-tenue text-xs font-semibold">{{ carpetaAbierta(c.nombre) ? 'Ocultar ▴' : 'Mostrar ▾' }}</span>
-                      </button>
-                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico ml-auto" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'"
-                        [title]="dialogosLocales() ? 'Elegís la carpeta del cliente y adentro se arma mmaaaa / Control de facturas / N° de control. Si cerrás sin elegir, va a Descargas.' : 'Un .zip con las carpetas del cliente, del período y de este control.'">
-                        {{ descargando() === c.indice + '/*' ? 'Descargando…' : dialogosLocales() ? 'Guardar todos en…' : 'Descargar todos (.zip)' }}
+                <div class="ej-carpeta">
+                  @for (a of c.principales; track a.nombre) {
+                    @let claveP = c.indice + '/' + a.nombre;
+                    <div class="ej-principal">
+                      <svg class="ej-principal-icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></svg>
+                      <div class="min-w-0 flex-1">
+                        <strong class="block">Excel del control</strong>
+                        <span class="mf-tenue block truncate text-xs" [title]="a.nombre">{{ a.nombre }} · {{ tamanoLegible(a.tamano) }}</span>
+                      </div>
+                      <button type="button" class="mf-btn" (click)="descargar(c, a)" [disabled]="descargando() === claveP" [attr.aria-label]="'Descargar ' + a.nombre">
+                        {{ descargando() === claveP ? 'Descargando…' : '⬇ Descargar' }}
                       </button>
                     </div>
-                    @if (carpetaAbierta(c.nombre)) {
-                      <ul class="ej-archivos">
-                        @for (a of c.archivos; track a.nombre) {
-                          @let clave = c.indice + '/' + a.nombre;
-                          <li>
-                            <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
-                            <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
-                            <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
-                            <button type="button" class="mf-btn mf-btn-chico" [class.mf-btn-suave]="a.tipo !== 'auditoria'" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
-                              {{ descargando() === clave ? 'Descargando…' : 'Descargar' }}
-                            </button>
-                          </li>
-                        }
-                      </ul>
+                  }
+                  <div class="ej-carpeta-ruta">
+                    @if (c.otros.length) {
+                      <button type="button" class="ej-carpeta-titulo" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
+                        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                        Lo que bajaron de ARCA y Xubio ({{ c.otros.length }})
+                        <span class="mf-tenue text-xs font-semibold" aria-hidden="true">{{ carpetaAbierta(c.nombre) ? '▴' : '▾' }}</span>
+                      </button>
                     }
+                    <button type="button" class="mf-btn mf-btn-suave mf-btn-chico ml-auto" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'"
+                      [title]="dialogosLocales() ? 'Elegís la carpeta del cliente y adentro se arma mmaaaa / Control de facturas / N° de control. Si cerrás sin elegir, va a Descargas.' : 'Un .zip con las carpetas del cliente, del período y de este control.'">
+                      {{ descargando() === c.indice + '/*' ? 'Descargando…' : dialogosLocales() ? 'Guardar todos en…' : 'Descargar todos (.zip)' }}
+                    </button>
                   </div>
+                  @if (carpetaAbierta(c.nombre) && c.otros.length) {
+                    <ul class="ej-archivos">
+                      @for (a of c.otros; track a.nombre) {
+                        @let clave = c.indice + '/' + a.nombre;
+                        <li>
+                          <span class="mf-badge mf-badge-acento">{{ etiquetaArchivo[a.tipo] }}</span>
+                          <span class="min-w-0 flex-1 truncate" [title]="a.nombre">{{ a.nombre }}</span>
+                          <span class="mf-tenue text-xs tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
+                          <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
+                            {{ descargando() === clave ? 'Descargando…' : 'Descargar' }}
+                          </button>
+                        </li>
+                      }
+                    </ul>
+                  }
                 </div>
+              } @else if (!activa() && !c.problemas.length && !c.pendientes) {
+                <p class="mf-tenue m-0 text-sm">{{ c.origen.estado === 'pendiente' ? 'Todavía no empezó.' : c.origen.estado === 'en_curso' ? 'Bajando los archivos…' : 'Sin archivos generados.' }}</p>
               }
             </div>
           </details>
@@ -375,38 +428,50 @@
       }
     </ul>
   </section>
+  }
 
 }
 
 </div>
 
-<!-- Historial: los controles anteriores, como una bandeja (quedan guardados en el servidor) -->
+<!-- Historial: los controles anteriores por día, con sus clientes (quedan guardados en el servidor) -->
 @if (store.historial().length) {
   <aside class="ej-historial" aria-labelledby="t-historial" data-tour="historial">
     <div class="ej-historial-cab">
       <h2 id="t-historial">Historial</h2>
       <span class="mf-sub">{{ store.historial().length }} {{ store.historial().length === 1 ? 'control' : 'controles' }}</span>
     </div>
-    <ul class="ej-historial-lista">
-      @for (h of store.historial(); track h.id) {
-        @let insH = insigniaEjecucion[h.estado];
-        <li>
-          @if (perspectiva.canEdit() && h.estado !== 'en_curso' && h.estado !== 'esperando') {
-            <button type="button" class="ej-hist-borrar" (click)="borrarDelHistorial(h)" [attr.aria-label]="'Borrar del historial el control de ' + periodoLegibleDe(h.periodo)" title="Borrar del historial">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
-            </button>
+    @if (store.historial().length > 4) {
+      <input type="search" class="mf-input ej-hist-buscar" placeholder="Buscar cliente o mes…" aria-label="Buscar en el historial"
+        [value]="busqueda()" (input)="busqueda.set($any($event.target).value)" />
+    }
+    <div class="ej-hist-scroll">
+      @for (g of historialAgrupado(); track g.dia) {
+        <h3 class="ej-hist-dia">{{ g.dia }}</h3>
+        <ul class="ej-historial-lista">
+          @for (h of g.items; track h.id) {
+            @let insH = insigniaEjecucion[h.estado];
+            <li>
+              @if (perspectiva.canEdit() && h.estado !== 'en_curso' && h.estado !== 'esperando') {
+                <button type="button" class="ej-hist-borrar" (click)="borrarDelHistorial(h)" [attr.aria-label]="'Borrar del historial el control de ' + tituloHist(h)" title="Borrar del historial">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
+                </button>
+              }
+              <a [routerLink]="['/ejecuciones', h.id]" class="ej-hist-item" [class.activo]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null" [title]="(h.nombres ?? []).join(', ')">
+                <span class="ej-hist-fila">
+                  <span class="ej-hist-periodo">{{ tituloHist(h) }}</span>
+                  <span class="mf-punto shrink-0" [class]="'ej-hist-punto ej-hist-' + h.estado" [class.mf-latido]="insH.latido" [title]="insH.texto"></span>
+                </span>
+                <span class="ej-hist-meta first-letter:uppercase">@if (h.nombres?.length) { {{ periodoLegibleDe(h.periodo) }} · }{{ horaDe(h.creada) }}</span>
+                <span class="ej-hist-res" [class]="'ej-hist-res ' + claseResultado(h)">{{ textoResultado(h) }}</span>
+              </a>
+            </li>
           }
-          <a [routerLink]="['/ejecuciones', h.id]" class="ej-hist-item" [class.activo]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null">
-            <span class="ej-hist-fila">
-              <span class="ej-hist-periodo first-letter:uppercase" [title]="h.periodo">{{ periodoLegibleDe(h.periodo) }}</span>
-              <span class="mf-punto shrink-0" [class]="'ej-hist-punto ej-hist-' + h.estado" [class.mf-latido]="insH.latido" [title]="insH.texto"></span>
-            </span>
-            <span class="ej-hist-meta">{{ fechaCorta(h.creada) }} · {{ h.clientes }} {{ h.clientes === 1 ? 'cliente' : 'clientes' }}</span>
-            <span class="ej-hist-res" [class.ej-hist-res-mal]="h.totales.con_errores > 0">{{ h.estado === 'cancelada' ? 'Cancelado' : h.estado === 'error' ? 'Se cortó' : resultadoDe(h) }}</span>
-          </a>
-        </li>
+        </ul>
+      } @empty {
+        <p class="mf-tenue m-1 text-sm">Ningún control coincide con «{{ busqueda() }}».</p>
       }
-    </ul>
+    </div>
   </aside>
 }
 </div>

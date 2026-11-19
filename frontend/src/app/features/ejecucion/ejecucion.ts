@@ -39,8 +39,6 @@ interface Problema {
   etiqueta: string;
   titulo: string;
   mensaje: string;
-  /** Qué hacer y adónde ir (de la lista de tareas), cuando el control ya terminó. */
-  tarea?: Tarea;
 }
 
 /** Lo que pinta cada acordeón: el cliente ya resumido en etapas, avance y problemas. */
@@ -50,13 +48,17 @@ interface ClienteVista {
   insignia: Insignia;
   etapas: Etapa[];
   avance: number;
+  /** El paso que corre ahora en este cliente («ARCA · Compras»). */
+  pasoActual: string | null;
   conError: boolean;
   problemas: Problema[];
-  /** Hallazgos de la auditoría y pasos fallidos de este cliente (grave + a corregir). */
-  hallazgos: number;
-  /** Partidas de ARCA no encontradas en el Libro IVA: van arriba y abren el acordeón. */
-  prioritarias: Advertencia[];
+  /** Tareas sin tildar de este cliente (se hacen en la pestaña «Qué hay que hacer»). */
+  pendientes: number;
   carpeta: string;
+  /** El Excel del control (AUX): lo que se abre siempre. */
+  principales: ArchivoGenerado[];
+  /** Lo que bajaron los bots de ARCA y Xubio: plegado de entrada. */
+  otros: ArchivoGenerado[];
   archivos: ArchivoGenerado[];
   origen: ClienteEjecucion;
 }
@@ -117,11 +119,41 @@ export class EjecucionPantalla {
   /** true: backend en esta PC, se guarda con ventanas de Windows. false (servidor): por el navegador. */
   protected readonly dialogosLocales = signal(false);
   protected readonly errorDescarga = signal<string | null>(null);
-  /** Clientes con la lista de archivos plegada (por nombre): de entrada se ven todos. */
-  private readonly carpetasPlegadas = signal<ReadonlySet<string>>(new Set());
+  /** Clientes con los archivos de ARCA y Xubio a la vista (por nombre): de entrada, plegados. */
+  private readonly carpetasAbiertas = signal<ReadonlySet<string>>(new Set());
 
   protected readonly ej = this.store.actual;
   protected readonly activa = computed(() => estaActiva(this.ej()?.estado));
+
+  // --- Pestañas: «Qué hay que hacer» y «Clientes y archivos» ----------------------------
+
+  /** Lo que eligió el usuario; null = la que conviene (las tareas, si hay). */
+  protected readonly pestana = signal<'tareas' | 'clientes' | null>(null);
+  /** Las tareas de un solo cliente (null = todos). */
+  protected readonly filtroCliente = signal<string | null>(null);
+
+  /** Terminado y con algo para hacer o ya corregido: hay pestañas. */
+  protected readonly hayTareas = computed(() => !this.activa() && (this.tareas().length > 0 || this.corregidos().length > 0));
+  protected readonly vista = computed(() => (this.hayTareas() ? (this.pestana() ?? 'tareas') : 'clientes'));
+
+  /** «Ver sus tareas» desde un cliente: la pestaña de tareas con solo las de él. */
+  protected verTareasDe(cliente: string): void {
+    this.filtroCliente.set(this.clientes().length > 1 ? cliente : null);
+    this.pestana.set('tareas');
+    this.alInicio();
+  }
+
+  protected pendientesDe(cliente: string): number {
+    return this.tareas().filter((t) => t.cliente === cliente && !this.estaHecha(t)).length;
+  }
+
+  /** El cliente que se está procesando ahora (mientras corre). */
+  protected readonly clienteEnCurso = computed(() => this.ej()?.detalle_clientes.find((c) => c.estado === 'en_curso')?.nombre ?? null);
+
+  /** El paso que corre ahora («ARCA · Compras»), para saber qué está haciendo el bot. */
+  protected readonly pasoEnCurso = computed(
+    () => this.ej()?.detalle_clientes.find((c) => c.estado === 'en_curso')?.pasos.find((p) => p.estado === 'en_curso')?.etiqueta ?? null,
+  );
 
   // --- Encabezado ---------------------------------------------------------------------
 
@@ -131,12 +163,20 @@ export class EjecucionPantalla {
     return p ? `Control de ${periodoLegible(p.desde, p.hasta)}` : '';
   });
 
-  /** «Iniciado el 17/11/26 18:05 · Ventas y Compras». */
+  /** «Iniciado el 17/11/26 18:05 · Ventas y Compras · 3 clientes · 43 comprobantes controlados». */
   protected readonly bajada = computed(() => {
     const e = this.ej();
     if (!e) return '';
     const ops = [e.parametros.ventas && 'Ventas', e.parametros.compras && 'Compras'].filter(Boolean).join(' y ');
-    return [`Iniciado el ${this.fechaCorta(e.creada)}`, ops].filter(Boolean).join(' · ');
+    const n = this.comprobantesControlados();
+    return [
+      `Iniciado el ${this.fechaCorta(e.creada)}`,
+      ops,
+      `${e.clientes} ${e.clientes === 1 ? 'cliente' : 'clientes'}`,
+      n && `${n} ${n === 1 ? 'comprobante controlado' : 'comprobantes controlados'}`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
   });
 
   /** Comprobantes de ARCA que pasaron por el control (todas las operaciones de todos los clientes). */
@@ -146,13 +186,18 @@ export class EjecucionPantalla {
 
   // --- Qué hay que hacer: los hallazgos como tareas para tildar --------------------------
 
-  protected readonly tareas = computed(() => (this.activa() ? [] : tareasDe(this.ej()?.advertencias ?? [])));
+  /** Los hallazgos y, si la hoja del Excel tiene faltantes sin hallazgo, uno armado desde la hoja. */
+  protected readonly tareas = computed(() => (this.activa() ? [] : tareasDe([...(this.ej()?.advertencias ?? []), ...this.faltantesSoloEnHoja()])));
   /** Tildadas por el usuario (se guardan en este navegador, por control). */
   protected readonly hechas = signal<ReadonlySet<string>>(new Set());
   protected readonly pendientes = computed(() => this.tareas().filter((t) => !this.estaHecha(t)).length);
-  protected readonly gruposTareas = computed(() =>
-    GRUPOS.map((g) => ({ ...g, tareas: this.tareas().filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length),
-  );
+  protected readonly gruposTareas = computed(() => {
+    const solo = this.filtroCliente();
+    const visibles = solo ? this.tareas().filter((t) => t.cliente === solo) : this.tareas();
+    return GRUPOS.map((g) => ({ ...g, tareas: visibles.filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length);
+  });
+  /** Para el filtro: los clientes que tienen tareas. */
+  protected readonly clientesConTareas = computed(() => [...new Set(this.tareas().map((t) => t.cliente))]);
 
   /**
    * Hecha a mano (tilde). Las correcciones (letra, tipo, importe, CUIT) no: su checkbox
@@ -208,12 +253,28 @@ export class EjecucionPantalla {
     this.aplicando.set(true);
     try {
       const r = await this.api.aplicarCambios(e.id, elegidos.map((c) => c.datos));
-      elegirParaAplicar(e.id, elegidos.map((c) => c.clave), false);
+      const conError = r.resultados.filter((x) => x.error);
+      // Los de una operación que falló (por ejemplo, Excel abierto) quedan tildados
+      // para reintentar; los demás ya se aplicaron.
+      const fallaron = new Set(conError.map((x) => `${x.cliente}|${x.operacion}`));
+      elegirParaAplicar(
+        e.id,
+        elegidos.filter((c) => !fallaron.has(`${c.datos.cliente}|${c.datos.operacion}`)).map((c) => c.clave),
+        false,
+      );
       this.store.reemplazar(r.ejecucion);
       void this.cargarHojas(e.id);
       const aplicados = r.resultados.reduce((n, x) => n + x.aplicados, 0);
       const fallidos = r.resultados.flatMap((x) => x.no_aplicados);
-      this.toast.ok('Excel actualizado', `${aplicados} ${aplicados === 1 ? 'cambio aplicado' : 'cambios aplicados'} y control re-chequeado.`);
+      if (aplicados) {
+        this.toast.ok(
+          'Excel actualizado',
+          `Se ${aplicados === 1 ? 'actualizó 1 comprobante' : `actualizaron ${aplicados} comprobantes`} en el Libro IVA y se re-chequeó el control.`,
+        );
+      } else {
+        this.toast.aviso('No se aplicó ningún cambio', 'Ningún comprobante elegido se pudo corregir: mirá el motivo de cada uno.');
+      }
+      for (const x of conError) this.toast.aviso(`${x.cliente} · ${x.operacion}: no se aplicó`, x.error ?? '');
       if (fallidos.length) {
         this.toast.aviso(
           `${fallidos.length} ${fallidos.length === 1 ? 'cambio no se aplicó' : 'cambios no se aplicaron'}`,
@@ -287,7 +348,7 @@ export class EjecucionPantalla {
     if (!this.perspectiva.canEdit() || !e || !c || !a.operacion) return;
     const aux = auxDe(c.origen, a.operacion);
     if (!aux) {
-      this.toast.error('No se encontró el AUX de este control.', `${c.nombre} · ${a.operacion}: usá «Faltantes a Xubio» con el archivo.`);
+      this.toast.error('No se encontró el AUX de este control.', `${c.nombre} · ${a.operacion}: usá «Subir a Xubio» con el archivo.`);
       return;
     }
     const filas = this.faltantesDe(a);
@@ -334,15 +395,12 @@ export class EjecucionPantalla {
   /** Para la ventana de hallazgos (función suelta: se pasa como callback). */
   private readonly alSubir = (a: Advertencia) => this.subirAXubio(a);
 
-  /** La ventana de hallazgos con una advertencia (las prioritarias del acordeón del cliente). */
-  protected verAdvertencia(a: Advertencia): void {
-    const reales = a.comprobantes.length || a.tipo !== 'faltante_en_xubio' ? [a] : [];
-    void mostrarVentanaDeErrores(reales, [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojaDe(a), this.aplicarDesdeVentana);
-  }
-
   /** La ventana de hallazgos solo con esa tarea: los comprobantes tal cual están en el Excel. */
   protected verDetalle(t: Tarea): void {
-    void mostrarVentanaDeErrores([t.advertencia], [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojaDe(t.advertencia), this.aplicarDesdeVentana, this.contextoVentana());
+    const a = t.advertencia;
+    // El armado desde la hoja no trae comprobantes: la ventana los toma del Excel.
+    const reales = a.comprobantes.length || a.tipo !== 'faltante_en_xubio' ? [a] : [];
+    void mostrarVentanaDeErrores(reales, [],this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojaDe(t.advertencia), this.aplicarDesdeVentana, this.contextoVentana());
   }
 
   // --- Lo que no cruzó, tal como está en los AUX ---------------------------------------
@@ -395,8 +453,9 @@ export class EjecucionPantalla {
     if (this.claveHojas() === id) this.hojas.set({ sinLibro, sinArca });
   }
 
-  protected irATareas(): void {
-    document.getElementById('t-tareas')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  /** Lleva la vista al principio del control (al cambiar de pestaña desde abajo). */
+  private alInicio(): void {
+    document.getElementById('t-ejecucion')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   // --- Reintentar e historial ----------------------------------------------------------
@@ -441,11 +500,22 @@ export class EjecucionPantalla {
     return isNaN(d.getTime()) ? iso : this.formatoFecha.format(d).replace(',', '');
   }
 
-  /** Una línea por control para la tabla del historial. */
-  protected resultadoDe(h: ResumenEjecucion): string {
+  /** La etiqueta de cada control en el historial: cómo terminó, en pocas palabras. */
+  protected textoResultado(h: ResumenEjecucion): string {
+    if (h.estado === 'en_curso') return 'En curso…';
+    if (h.estado === 'esperando') return 'Esperando tu respuesta';
+    if (h.estado === 'cancelada') return 'Cancelado';
+    if (h.estado === 'error') return 'Se cortó';
     const t = h.totales;
-    const partes = [t.ok && `${t.ok} OK`, t.con_errores && `${t.con_errores} con errores`, t.pendientes && `${t.pendientes} sin hacer`].filter(Boolean);
+    const partes = [t.con_errores && `${t.con_errores} con errores`, t.ok && `${t.ok} OK`, t.pendientes && `${t.pendientes} sin hacer`].filter(Boolean);
     return partes.join(' · ') || '—';
+  }
+
+  protected claseResultado(h: ResumenEjecucion): string {
+    if (h.estado === 'en_curso' || h.estado === 'esperando') return 'ej-hist-res-curso';
+    if (h.estado === 'cancelada') return 'ej-hist-res-gris';
+    if (h.estado === 'error') return 'ej-hist-res-error';
+    return h.totales.con_errores > 0 ? 'ej-hist-res-mal' : '';
   }
 
   // --- Reloj (cuenta regresiva de la pausa entre clientes) ---------------------------
@@ -467,40 +537,69 @@ export class EjecucionPantalla {
   protected readonly progreso = computed(() => avanceDe(this.ej()?.detalle_clientes.flatMap((c) => c.pasos) ?? []));
 
   protected readonly clientes = computed<ClienteVista[]>(() =>
-    (this.ej()?.detalle_clientes ?? []).map((c, indice) => ({
-      indice,
-      nombre: c.nombre,
-      insignia: INSIGNIA_CLIENTE[c.estado],
-      etapas: etapasDe(c.pasos),
-      avance: avanceDe(c.pasos),
-      conError: c.estado === 'con_errores',
-      problemas: problemasDe(c.pasos).map((p) => ({
-        ...p,
-        tarea: this.tareas().find(
-          (t) => t.cliente === c.nombre && t.advertencia.tipo === 'paso_error' && t.advertencia.titulo.startsWith(p.etiqueta + ':'),
-        ),
-      })),
-      hallazgos: (this.ej()?.advertencias ?? []).filter((a) => a.cliente === c.nombre && a.gravedad !== 'info').length,
-      prioritarias: this.prioritariasDe(c.nombre),
-      carpeta: c.carpeta,
-      archivos: ordenarArchivos(c.archivos),
-      origen: c,
-    })),
+    (this.ej()?.detalle_clientes ?? []).map((c, indice) => {
+      const archivos = ordenarArchivos(c.archivos);
+      return {
+        indice,
+        nombre: c.nombre,
+        insignia: INSIGNIA_CLIENTE[c.estado],
+        etapas: etapasDe(c.pasos),
+        avance: avanceDe(c.pasos),
+        pasoActual: c.pasos.find((p) => p.estado === 'en_curso')?.etiqueta ?? null,
+        conError: c.estado === 'con_errores',
+        problemas: problemasDe(c.pasos),
+        pendientes: this.pendientesDe(c.nombre),
+        carpeta: c.carpeta,
+        principales: archivos.filter((a) => a.tipo === 'auditoria'),
+        otros: archivos.filter((a) => a.tipo !== 'auditoria'),
+        archivos,
+        origen: c,
+      };
+    }),
   );
 
   /**
-   * Faltantes en IVA del cliente: los hallazgos «faltante_en_xubio» y, si la hoja del
-   * Excel tiene partidas de una operación sin hallazgo (el control las pasó a «Error»),
-   * uno armado desde la hoja, para que se vean igual que en el Excel.
+   * Faltantes en IVA que están en la hoja del Excel pero sin hallazgo (el control las
+   * pasó a «Error»): uno armado desde la hoja, para que también sean una tarea.
    */
-  private prioritariasDe(cliente: string): Advertencia[] {
-    const reales = (this.ej()?.advertencias ?? []).filter((a) => a.cliente === cliente && esPrioridad(a));
-    const desdeHoja = (['Ventas', 'Compras'] as const)
-      .filter((op) => !reales.some((a) => a.operacion === op))
-      .map((op) => [op, this.hojas().sinLibro.get(claveExcel(cliente, op))?.length ?? 0] as const)
-      .filter(([, n]) => n > 0)
-      .map(([op, n]) => faltanteDesdeExcel(cliente, op, n));
-    return [...reales, ...desdeHoja];
+  private readonly faltantesSoloEnHoja = computed<Advertencia[]>(() => {
+    const reales = (this.ej()?.advertencias ?? []).filter(esPrioridad);
+    return (this.ej()?.detalle_clientes ?? []).flatMap((c) =>
+      (['Ventas', 'Compras'] as const)
+        .filter((op) => !reales.some((a) => a.cliente === c.nombre && a.operacion === op))
+        .map((op) => [op, this.hojas().sinLibro.get(claveExcel(c.nombre, op))?.length ?? 0] as const)
+        .filter(([, n]) => n > 0)
+        .map(([op, n]) => faltanteDesdeExcel(c.nombre, op, n)),
+    );
+  });
+
+  // --- Historial: por día, con los clientes de cada control ----------------------------
+
+  protected readonly busqueda = signal('');
+
+  protected readonly historialAgrupado = computed(() => {
+    const q = normalizarBusqueda(this.busqueda());
+    const grupos: { dia: string; items: ResumenEjecucion[] }[] = [];
+    for (const h of this.store.historial()) {
+      if (q && !normalizarBusqueda([...(h.nombres ?? []), periodoLegibleDe(h.periodo)].join(' ')).includes(q)) continue;
+      const dia = diaDe(h.creada);
+      const ultimo = grupos.at(-1);
+      if (ultimo?.dia === dia) ultimo.items.push(h);
+      else grupos.push({ dia, items: [h] });
+    }
+    return grupos;
+  });
+
+  /** «PICCININI y ASOCIADOS S.A.» o «PICCININI… y 2 más»; sin nombres (control viejo), el período. */
+  protected tituloHist(h: ResumenEjecucion): string {
+    const n = h.nombres ?? [];
+    if (!n.length) return periodoLegibleDe(h.periodo);
+    return n.length === 1 ? n[0] : `${n[0]} y ${n.length - 1} más`;
+  }
+
+  protected horaDe(iso: string): string {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
   // --- Pausa entre clientes ----------------------------------------------------------
@@ -571,7 +670,9 @@ export class EjecucionPantalla {
   }
 
   private async abrir(id: string | undefined): Promise<void> {
-    this.carpetasPlegadas.set(new Set());
+    this.carpetasAbiertas.set(new Set());
+    this.pestana.set(null);
+    this.filtroCliente.set(null);
     this.errorDescarga.set(null);
     if (id) {
       this.store.seguir(id);
@@ -612,12 +713,12 @@ export class EjecucionPantalla {
   // --- Archivos ----------------------------------------------------------------------
 
   protected carpetaAbierta(nombre: string): boolean {
-    return !this.carpetasPlegadas().has(nombre);
+    return this.carpetasAbiertas().has(nombre);
   }
 
   protected alternarCarpeta(nombre: string): void {
-    this.carpetasPlegadas.update((plegadas) => {
-      const s = new Set(plegadas);
+    this.carpetasAbiertas.update((abiertas) => {
+      const s = new Set(abiertas);
       if (!s.delete(nombre)) s.add(nombre);
       return s;
     });
@@ -675,6 +776,23 @@ export class EjecucionPantalla {
 }
 
 const ORDEN_ARCHIVO: Record<string, number> = { auditoria: 0, arca: 1, xubio: 2, otro: 3 };
+
+/** Sin mayúsculas ni tildes: «piccinini» encuentra «PICCININI», «noviembre» a «Noviembre». */
+function normalizarBusqueda(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+const DIA_SEMANA = new Intl.DateTimeFormat('es-AR', { weekday: 'long', day: '2-digit', month: '2-digit' });
+
+/** «Hoy», «Ayer» o «lunes 17/11»: el encabezado de cada día del historial. */
+function diaDe(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const dias = Math.round((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 86_400_000);
+  if (dias === 0) return 'Hoy';
+  if (dias === 1) return 'Ayer';
+  return DIA_SEMANA.format(d).replace(',', '');
+}
 
 /** Qué campo corrige cada tipo de error (para encontrar los pares de una tarea). */
 const TIPO_CAMPO: Partial<Record<Advertencia['tipo'], string>> = {

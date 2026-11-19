@@ -74,6 +74,8 @@ export interface ResumenEjecucion {
   mensaje: string;
   periodo: string;
   clientes: number;
+  /** Los clientes del control, en orden (para reconocerlo en el historial). */
+  nombres?: string[];
   totales: { ok: number; con_errores: number; pendientes: number };
 }
 
@@ -99,6 +101,8 @@ export interface ResultadoConversion {
   periodo: string;
   archivos: string[];
   partidas: Partial<Record<'Ventas' | 'Compras', number>>;
+  /** Los comprobantes de cada .zip, para mostrarlos antes de subir. */
+  filas?: Partial<Record<'Ventas' | 'Compras', { fecha: string; tipo: string; comprobante: string; cuit: string; razon: string; total: string | number }[]>>;
   /** Un .zip por operación con partidas, cada uno con un solo CSV (lo que pide Xubio). */
   zips: Partial<Record<'Ventas' | 'Compras', { nombre: string; contenido: string }>>;
   /** Copia para mirar en Excel: CAE y CUIT como texto. */
@@ -152,7 +156,17 @@ export interface CambioElegido {
 }
 
 export interface ResultadoAplicar {
-  resultados: { cliente: string; indice: number; operacion: string; aplicados: number; no_aplicados: (CambioElegido & { motivo: string })[]; libro: string; aux: string }[];
+  resultados: {
+    cliente: string;
+    indice: number;
+    operacion: string;
+    aplicados: number;
+    no_aplicados: (CambioElegido & { motivo: string })[];
+    libro: string | null;
+    aux: string | null;
+    /** Esa operación no se pudo aplicar (las demás sí). */
+    error?: string;
+  }[];
   ejecucion: DetalleEjecucion;
 }
 

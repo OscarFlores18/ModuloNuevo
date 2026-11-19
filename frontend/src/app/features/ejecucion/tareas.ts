@@ -87,7 +87,7 @@ export function ordenDe(a: Advertencia): { grupo: GrupoTarea; orden: string; des
       return {
         grupo: 'prioridad',
         orden: `Cargá en Xubio ${n === 1 ? 'el comprobante que falta' : `los ${n} comprobantes que faltan`}`,
-        destino: { texto: 'Ir a Faltantes a Xubio', ruta: '/convertir-aux' },
+        destino: { texto: 'Ir a Subir a Xubio', ruta: '/convertir-aux' },
       };
     case 'faltante_en_arca':
       return { grupo: 'cliente', orden: `Preguntale al cliente por ${comprobantes(n)} que están en Xubio y no en ARCA` };
@@ -98,6 +98,9 @@ export function ordenDe(a: Advertencia): { grupo: GrupoTarea; orden: string; des
     case 'paso_error': {
       const accion = (a.acciones[0] ?? '').toLowerCase();
       const grupo: GrupoTarea = a.gravedad === 'grave' ? 'primero' : 'xubio';
+      if (accion === 'volver a correr' && a.acciones.some((x) => x.toLowerCase().includes('clave de arca'))) {
+        return { grupo, orden: 'Volvé a correr el control; si ARCA vuelve a fallar, revisá el CUIT de ingreso y la clave fiscal', destino: REINTENTAR };
+      }
       if (accion.includes('clave de arca')) return { grupo, orden: 'Corregí el CUIT de ingreso o la clave fiscal de ARCA y volvé a correrlo', destino: CLIENTES };
       if (accion.includes('clave de xubio')) return { grupo, orden: 'Revisá el usuario y la clave de Xubio y volvé a correrlo', destino: REINTENTAR };
       if (accion.includes('empresa')) return { grupo, orden: 'Revisá que la empresa exista en Xubio con el mismo nombre y volvé a correrlo', destino: REINTENTAR };

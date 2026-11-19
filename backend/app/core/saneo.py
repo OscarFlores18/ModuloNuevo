@@ -61,8 +61,14 @@ class FiltroSaneado(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            record.msg = sanear(record.getMessage())
-            record.args = None
+            completo = record.getMessage()
+            saneado = sanear(completo)
+            # Sin nada que tapar, ``args`` queda como estaba: el formatter de
+            # acceso de uvicorn los desarma uno por uno (cliente, método, ruta…) y
+            # con ``args = None`` cada pedido tiraba «Logging error».
+            if saneado != completo:
+                record.msg = saneado
+                record.args = None
         except Exception:
             pass
         return True

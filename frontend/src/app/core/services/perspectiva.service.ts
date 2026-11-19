@@ -24,6 +24,13 @@ export const NOMBRE_PERSPECTIVA: Record<Perspectiva, string> = {
 
 const CLAVE = 'control-fct.perspectiva';
 
+/**
+ * Elegir vista («¿Cómo deseas ingresar?», «Vista: …», «Cambiar perfil»). Apagado por
+ * ahora: quien puede Acceso Total entra directo con todo. El empleado real de
+ * ContadorWeb sigue restringido igual (eso no depende de este interruptor).
+ */
+export const VISTAS_ACTIVAS = false;
+
 function guardada(): Perspectiva | null {
   const v = leerTexto('session', CLAVE);
   return v === 'empleado' || v === 'total' ? v : null;
@@ -39,8 +46,14 @@ export class PerspectivaService {
   /** Los roles reales permiten «Acceso Total» (supervisor de ContadorWeb o modo local). */
   readonly puedeAccesoTotal = computed(() => this.sesion.esSupervisor());
 
+  /** Se muestran la elección de vista y «Cambiar perfil». */
+  readonly vistasActivas = VISTAS_ACTIVAS;
+
   /** La perspectiva con la que se pinta todo. */
-  readonly perspectiva = computed<Perspectiva | null>(() => (this.puedeAccesoTotal() ? this.elegida() : 'empleado'));
+  readonly perspectiva = computed<Perspectiva | null>(() => {
+    if (!this.puedeAccesoTotal()) return 'empleado';
+    return VISTAS_ACTIVAS ? this.elegida() : 'total';
+  });
 
   /** Hay que mostrar la pantalla «¿Cómo deseas ingresar?». */
   readonly necesitaElegir = computed(() => this.perspectiva() === null);

@@ -285,31 +285,31 @@ def detectar_faltantes(fuente) -> list[tuple[str, pd.DataFrame]]:
     No depende de nombres fijos: busca las hojas con «faltante» en el nombre, el
     encabezado dentro de la hoja y la operación por el nombre de la hoja o, si no
     lo dice, por las columnas (Emisor = Compras)."""
-    libro = pd.ExcelFile(fuente)
     encontradas: list[tuple[str, pd.DataFrame]] = []
-    for hoja in libro.sheet_names:
-        if "faltante" not in _norm(hoja):
-            continue
-        tabla = _tabla(pd.read_excel(libro, sheet_name=hoja, header=None))
-        if tabla is None:
-            continue
-        encontradas.append((_operacion_por_texto(hoja) or _operacion_por_columnas(tabla), tabla))
+    with pd.ExcelFile(fuente) as libro:
+        for hoja in libro.sheet_names:
+            if "faltante" not in _norm(hoja):
+                continue
+            tabla = _tabla(pd.read_excel(libro, sheet_name=hoja, header=None))
+            if tabla is None:
+                continue
+            encontradas.append((_operacion_por_texto(hoja) or _operacion_por_columnas(tabla), tabla))
     return encontradas
 
 
 def detectar_periodo(fuente) -> str:
     """«MM-AA» del mes que más se repite en las fechas del Excel ("" si no hay)."""
-    libro = pd.ExcelFile(fuente)
     meses: Counter[str] = Counter()
-    for hoja in libro.sheet_names:
-        tabla = _tabla(pd.read_excel(libro, sheet_name=hoja, header=None))
-        if tabla is None:
-            continue
-        columna = next(c for c in tabla.columns if _norm(c) == "fecha")
-        for v in tabla[columna]:
-            f = _fecha(v)
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f):
-                meses[f"{f[5:7]}-{f[2:4]}"] += 1
+    with pd.ExcelFile(fuente) as libro:
+        for hoja in libro.sheet_names:
+            tabla = _tabla(pd.read_excel(libro, sheet_name=hoja, header=None))
+            if tabla is None:
+                continue
+            columna = next(c for c in tabla.columns if _norm(c) == "fecha")
+            for v in tabla[columna]:
+                f = _fecha(v)
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", f):
+                    meses[f"{f[5:7]}-{f[2:4]}"] += 1
     return meses.most_common(1)[0][0] if meses else ""
 
 
@@ -343,25 +343,27 @@ def filas_para_mostrar(fuente) -> dict[str, list[dict]]:
     """Las partidas de ARCA no encontradas en el Libro IVA tal como están en la hoja
     «Faltantes en Libro IVA …» del Excel, listas para la pantalla:
     {«Compras»: [{fecha, tipo, comprobante, cuit, razon, total}, …]}."""
-    salida: dict[str, list[dict]] = {}
-    for op, tabla in detectar_faltantes(fuente):
-        parte = "Emisor" if op == "Compras" else "Receptor"
-        filas = []
-        for _, fila in tabla.iterrows():
-            fecha = _fecha(_columna(fila, "Fecha", "Fecha de Emisión"))
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha):
-                fecha = f"{fecha[8:10]}/{fecha[5:7]}/{fecha[0:4]}"
-            razon = _columna(fila, f"Denominación {parte}")
-            filas.append({
-                "fecha": fecha,
-                "tipo": "" if _vacio(_columna(fila, "Tipo")) else str(_columna(fila, "Tipo")).strip(),
-                "comprobante": _comprobante(fila),
-                "cuit": _entero(_columna(fila, f"Nro. Doc. {parte}")),
-                "razon": "" if _vacio(razon) else str(razon).strip(),
-                "total": _numero(_columna(fila, "Imp. Total", "Importe Total")),
-            })
-        salida[op] = filas
-    return salida
+    return {op: filas_de_tabla(tabla, op) for op, tabla in detectar_faltantes(fuente)}
+
+
+def filas_de_tabla(tabla: pd.DataFrame, op: str) -> list[dict]:
+    """Una tabla de faltantes como filas para la pantalla."""
+    parte = "Emisor" if op == "Compras" else "Receptor"
+    filas = []
+    for _, fila in tabla.iterrows():
+        fecha = _fecha(_columna(fila, "Fecha", "Fecha de Emisión"))
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", fecha):
+            fecha = f"{fecha[8:10]}/{fecha[5:7]}/{fecha[0:4]}"
+        razon = _columna(fila, f"Denominación {parte}")
+        filas.append({
+            "fecha": fecha,
+            "tipo": "" if _vacio(_columna(fila, "Tipo")) else str(_columna(fila, "Tipo")).strip(),
+            "comprobante": _comprobante(fila),
+            "cuit": _entero(_columna(fila, f"Nro. Doc. {parte}")),
+            "razon": "" if _vacio(razon) else str(razon).strip(),
+            "total": _numero(_columna(fila, "Imp. Total", "Importe Total")),
+        })
+    return filas
 
 
 _SUMA = re.compile(r"^=SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)$", re.IGNORECASE)
@@ -373,10 +375,18 @@ def libro_sin_arca(fuente, operacion: str) -> list[dict]:
     hoja (columnas de ARCA, el comprobante en la columna A). El total es una fórmula
     =SUM(…) que openpyxl no calcula: se suma acá."""
     from openpyxl import load_workbook
+
+    wb = load_workbook(fuente)
+    try:
+        return _filas_sin_arca(wb.worksheets[0], operacion)
+    finally:
+        wb.close()
+
+
+def _filas_sin_arca(ws, operacion: str) -> list[dict]:
     from openpyxl.utils import column_index_from_string
 
-    ws = load_workbook(fuente).worksheets[0]
-    indice = {_norm(c.value): i for i, c in enumerate(ws[1]) if not _vacio(c.value)}
+    indice ={_norm(c.value): i for i, c in enumerate(ws[1]) if not _vacio(c.value)}
 
     def col(*nombres: str) -> int | None:
         return next((indice[_norm(n)] for n in nombres if _norm(n) in indice), None)
@@ -551,7 +561,7 @@ def convertir_auxiliares(archivos: list[tuple[str, bytes]], excluir: dict[str, s
             tablas = []
         if not tablas:
             sueltos.append({
-                "cliente": cliente, "periodo": periodo, "archivos": [nombre], "partidas": {}, "zips": {}, "excel": None, "avisos": [],
+                "cliente": cliente, "periodo": periodo, "archivos": [nombre], "partidas": {}, "filas": {}, "zips": {}, "excel": None, "avisos": [],
                 "error": f"«{nombre}» no tiene una hoja de partidas faltantes («Faltantes en Libro IVA …»).",
             })
             continue
@@ -570,7 +580,7 @@ def convertir_auxiliares(archivos: list[tuple[str, bytes]], excluir: dict[str, s
     resultados: list[dict] = []
     for grupo in grupos.values():
         item = {k: grupo[k] for k in ("cliente", "periodo", "archivos", "error")}
-        item.update(partidas={}, zips={}, excel=None, avisos=[])
+        item.update(partidas={}, filas={}, zips={}, excel=None, avisos=[])
         resultados.append(item)
         if item["error"]:
             continue
@@ -603,6 +613,7 @@ def convertir_auxiliares(archivos: list[tuple[str, bytes]], excluir: dict[str, s
             item["error"] = f"No se pudo convertir: {exc}"
             continue
         item["zips"] = zips
+        item["filas"] = {op: filas_de_tabla(con_partidas[op], op) for op in zips}
         item["excel"] = {"nombre": f"{PREFIJO_CSV} - {item['cliente']}{sufijo}.xlsx", "contenido": excel}
     return resultados + sueltos
 

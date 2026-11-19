@@ -76,6 +76,18 @@ class ArchivoNoEncontrado(BotError):
     code = "archivo_no_encontrado"
 
 
+class ArchivoEnUso(BotError):
+    """Windows no deja reemplazar un archivo abierto (típico: el Excel abierto)."""
+
+    code = "archivo_en_uso"
+
+
+class ArchivoIlegible(BotError):
+    """El archivo está, pero no tiene las columnas que el control necesita."""
+
+    code = "archivo_ilegible"
+
+
 class SinDatos(BotError):
     """No es un fallo: el período no tiene comprobantes."""
 

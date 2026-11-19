@@ -74,7 +74,9 @@ function esFaltante(e: Advertencia): boolean {
 /** Columnas comunes a ARCA y Xubio (cada planilla las llama distinto). */
 const COLUMNAS = ['Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', 'Total'] as const;
 type Columna = (typeof COLUMNAS)[number];
-const ALIAS: Record<string, Columna> = {
+/** Además de las columnas que se ven: el total de ARCA ya en pesos (facturas en otra moneda). */
+type Dato = Columna | 'TotalPesos';
+const ALIAS: Record<string, Dato> = {
   Fecha: 'Fecha',
   Tipo: 'Tipo',
   Comprobante: 'Comprobante',
@@ -85,6 +87,7 @@ const ALIAS: Record<string, Columna> = {
   Cliente: 'Razón social',
   'Imp. Total': 'Total',
   Total: 'Total',
+  'Total en pesos': 'TotalPesos',
 };
 
 function esc(texto: unknown): string {
@@ -142,8 +145,8 @@ export function abreviarTipo(tipo: string): string {
   return sinCodigo;
 }
 
-function normalizar(fila: CeldaVista[]): Partial<Record<Columna, CeldaVista['valor']>> {
-  const salida: Partial<Record<Columna, CeldaVista['valor']>> = {};
+function normalizar(fila: CeldaVista[]): Partial<Record<Dato, CeldaVista['valor']>> {
+  const salida: Partial<Record<Dato, CeldaVista['valor']>> = {};
   for (const c of fila) {
     const col = ALIAS[c.columna];
     if (col && salida[col] === undefined) salida[col] = c.valor;
@@ -314,7 +317,7 @@ interface FilaVista {
   origen: 'ARCA' | 'Xubio';
   /** Ventas / Compras: se muestra solo si la tabla mezcla las dos. */
   op?: string;
-  datos: Partial<Record<Columna, CeldaVista['valor']>>;
+  datos: Partial<Record<Dato, CeldaVista['valor']>>;
   /** HTML ya armado para la celda Comprobante (con la letra marcada). */
   comprobante?: string;
   marca?: 'error' | 'ok' | 'aviso';
@@ -579,7 +582,8 @@ function gruposError(e: Advertencia): Grupo[] {
       correccion = cambio('CUIT', esc(cuit(xubio['CUIT'])), esc(cuit(arca['CUIT'])));
     } else {
       const nx = aNumero(xubio['Total']);
-      const na = aNumero(arca['Total']);
+      // En otra moneda se compara (y se corrige) con el total en pesos.
+      const na = aNumero(arca['TotalPesos']) ?? aNumero(arca['Total']);
       const dif = nx !== null && na !== null ? ` <span class="ve-diferencia">(${esc(pesos(Math.abs(na) - Math.abs(nx)))})</span>` : '';
       correccion = cambio(
         'Importe',
@@ -640,7 +644,7 @@ function cambioDe(e: Advertencia, g: Grupo): CambioPar | null {
   const valorArca =
     campo === 'letra' ? compArca.trim().charAt(0).toUpperCase()
     : campo === 'tipo' ? texto(arca['Tipo'])
-    : campo === 'importe' ? (aNumero(arca['Total']) ?? texto(arca['Total']))
+    : campo === 'importe' ? (aNumero(arca['TotalPesos']) ?? aNumero(arca['Total']) ?? texto(arca['Total']))
     : texto(arca['CUIT']).replace(/\D/g, '');
   if (valorArca === '') return null;
   return {
@@ -855,7 +859,7 @@ function botonSubir(e: Advertencia, indice: number, canEdit: boolean, conOp: boo
   const texto = `⬆ Subir${conOp && e.operacion ? ` ${e.operacion}` : ''} a Xubio`;
   const op = esc(e.operacion ?? '');
   if (!canEdit) return `<button type="button" class="ve-boton ve-boton-chico" disabled title="${BLOQUEADO}">${esc(texto)}</button>`;
-  return `<button type="button" class="ve-boton ve-boton-chico" data-subir="${indice}" data-subir-op="${op}"${tildadas ? '' : ' disabled'} title="Lleva los comprobantes tildados a «Faltantes a Xubio», listos para cargar">${esc(texto)}</button>`;
+  return `<button type="button" class="ve-boton ve-boton-chico" data-subir="${indice}" data-subir-op="${op}"${tildadas ? '' : ' disabled'} title="Lleva los comprobantes tildados a «Subir a Xubio», listos para cargar">${esc(texto)}</button>`;
 }
 
 // --- Los bloques ---------------------------------------------------------------------
@@ -964,7 +968,7 @@ function bloqueSubir(
         <span class="ve-insignias"><span class="ve-insignia">Subir a Xubio</span></span>
         <span class="ve-cab">
           <span class="ve-titulo">Partidas de ARCA no encontradas en el ${esc(libroDe(ops))}${cantidadTexto(n)}</span>
-          <span class="ve-que-hacer">→ Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).</span>
+          <span class="ve-que-hacer">Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).</span>
         </span>
         <span class="ve-derecha">${meta}${botones.length ? `<span class="ve-acciones">${botones.join('')}</span>` : ''}</span>
       </summary>
@@ -987,8 +991,8 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
     .join('');
   const queHacer =
     n > explicadas
-      ? '→ Consultalas con el cliente: pueden ser facturas manuales (CAI), tiques o errores de tipeo.'
-      : '→ Ya están explicadas: mirá la observación de cada una.';
+      ? 'Consultalas con el cliente: pueden ser facturas manuales (CAI), tiques o errores de tipeo.'
+      : 'Ya están explicadas: mirá la observación de cada una.';
   return `
     <details class="ve-error ve-aviso ve-bloque" data-bloque="revisar" open>
       <summary>
@@ -1027,8 +1031,8 @@ function bloqueError(items: readonly Advertencia[], marcado: Marcado): string {
           <span class="ve-titulo">Comprobantes con diferencias en Xubio${cantidadTexto(n)}</span>
           <span class="ve-que-hacer">${
             marcado.conAplicar && grupos.some((g) => g.aplicar)
-              ? '→ Tildá los que querés corregir con el dato de ARCA y tocá «Aplicar cambios»: se corrige el Libro IVA, se vuelve a cruzar y queda un Excel nuevo.'
-              : '→ Corregilos en Xubio con el dato de ARCA.'
+              ? 'Tildá los que querés corregir con el dato de ARCA y tocá «Aplicar cambios»: se corrige el Libro IVA, se vuelve a cruzar y queda un Excel nuevo.'
+              : 'Corregilos en Xubio con el dato de ARCA.'
           }</span>
         </span>
         <span class="ve-derecha">${metaOperacion(errores)}${plegar(n)}</span>
@@ -1082,7 +1086,7 @@ function tarjeta(e: Advertencia, canEdit: boolean): string {
         <span class="ve-insignias"><span class="ve-insignia">${clase === 'grave' ? 'Grave' : clase === 'aviso' ? 'A revisar' : 'Error'}</span></span>
         <span class="ve-cab">
           <span class="ve-titulo">${esc(e.titulo)}${n ? cantidadTexto(n) : ''}</span>
-          ${orden ? `<span class="ve-que-hacer">→ ${esc(orden.orden)}</span>` : ''}
+          ${orden ? `<span class="ve-que-hacer">${esc(orden.orden)}</span>` : ''}
           ${etiquetas ? `<span class="ve-etiquetas">${etiquetas}</span>` : ''}
         </span>
         <span class="ve-derecha">${e.operacion && !e.titulo.includes(e.operacion) ? `<span class="ve-meta">${esc(e.operacion)}</span>` : ''}${botones}${plegar(n)}</span>
@@ -1101,111 +1105,133 @@ function esSuelta(e: Advertencia): boolean {
 const ESTILOS = `
   <style>
     /* El popup es una grilla: título, contenido y pie. El contenido toma el alto que
-       queda (minmax(0, 1fr)) y scrollea; «Entendido» nunca se va de la pantalla. */
-    .ve-popup { max-height: 94vh; grid-template-rows: auto auto minmax(0, 1fr) auto; padding: 0 0 4px; }
-    .ve-popup .swal2-title { padding: 18px 24px 0; font-size: 1.35em; text-align: left; }
-    .ve-popup .swal2-html-container { margin: 12px 0 0; padding: 0 24px 16px; min-height: 0; max-height: none; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
-    .ve-popup .swal2-actions { margin: 0; padding: 12px 0 14px; width: 100%; border-top: 1px solid #e2e8f0; background: #fff; }
-    .ve { text-align: left; color: #1f2a37; font-size: 13.5px; }
+       queda (minmax(0, 1fr)) y scrollea; «Cerrar» nunca se va de la pantalla. */
+    .ve-popup { max-height: 94vh; grid-template-rows: auto minmax(0, 1fr) auto; padding: 0; border-radius: 16px; overflow: hidden; }
+    .ve-popup .swal2-title { padding: 22px 72px 16px 28px; font-size: 1.5em; font-weight: 800; text-align: left; color: #0f172a; border-bottom: 1px solid #e2e8f0; }
+    .ve-popup .swal2-close { position: absolute; top: 14px; right: 14px; width: 44px; height: 44px; margin: 0; border-radius: 10px; font-size: 2rem; color: #64748b; }
+    .ve-popup .swal2-close:hover { background: #f1f5f9; color: #0f172a; }
+    .ve-popup .swal2-close:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; box-shadow: none; }
+    .ve-popup .swal2-html-container { margin: 0; padding: 16px 28px 20px; min-height: 0; max-height: none; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; background: #f4f7fb; }
+    .ve-popup .swal2-actions { margin: 0; padding: 14px 28px; width: 100%; justify-content: flex-end; border-top: 1px solid #e2e8f0; background: #fff; box-sizing: border-box; }
+    .ve-popup .swal2-confirm { min-height: 44px; min-width: 140px; margin: 0; padding: 10px 28px; border-radius: 10px; font-size: 1rem; font-weight: 700; }
+    .ve { text-align: left; color: #1f2a37; font-size: 14px; }
+
+    /* Debajo del título: cliente y período. */
+    .ve-sub { margin: 0 0 14px; color: #64748b; font-size: 14.5px; font-weight: 600; }
 
     /* Solo si hay errores graves: el resultado no es confiable. */
-    .ve-grave-aviso { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: #fde2e2; color: #9b2c2c; font-weight: 700; }
+    .ve-grave-aviso { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 16px; border: 1px solid #fecaca; border-radius: 12px; background: #fef2f2; color: #7f1d1d; font-size: 14.5px; line-height: 1.4; }
+    .ve-grave-icono { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: #dc2626; color: #fff; font-weight: 900; }
 
-    /* KPI strip: una tarjeta por operación, lado a lado. */
-    .ve-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; margin: 0 0 14px; padding: 0; list-style: none; }
-    .ve-kpi { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+    /* Resumen: una tarjeta por operación, con cuánto coincide y una barra. */
+    .ve-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; margin: 0 0 18px; padding: 0; list-style: none; }
+    .ve-kpi { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
     .ve-kpi-cab { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .ve-kpi-op { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+    .ve-kpi-op { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
     .ve-kpi-cliente { font-weight: 700; color: #334155; text-transform: none; letter-spacing: 0; }
-    .ve-kpi-num { font-size: 15px; color: #1f2a37; }
-    .ve-kpi-num b { font-size: 20px; font-variant-numeric: tabular-nums; }
-    .ve-kpi-estado { display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+    .ve-kpi-num { font-size: 14px; color: #475569; }
+    .ve-kpi-num b { margin-right: 2px; font-size: 24px; color: #0f172a; font-variant-numeric: tabular-nums; }
+    .ve-kpi-barra { display: block; height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+    .ve-kpi-barra > span { display: block; height: 100%; border-radius: inherit; background: #16a34a; }
+    .ve-kpi-mal .ve-kpi-barra > span { background: #f59e0b; }
+    .ve-kpi-estado { display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; white-space: nowrap; }
     .ve-kpi-ok .ve-kpi-estado { background: #e7f5ec; color: #166534; }
-    .ve-kpi-mal { border-color: #fcd9a0; background: #fffdf7; }
+    .ve-kpi-mal { border-color: #fcd9a0; }
     .ve-kpi-mal .ve-kpi-estado { background: #fdf0d9; color: #7a4f0f; }
 
-    /* Empresa + filtros globales (Todos | Error | Subir a Xubio | A revisar). */
-    .ve-barra { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 0 0 12px; }
+    /* Filtros (Todos | Error | Subir a Xubio | A revisar): pestañas grandes, una por tipo. */
+    .ve-barra { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 -28px 14px; padding: 10px 28px; background: rgba(244, 247, 251, 0.96); border-bottom: 1px solid #e2e8f0; backdrop-filter: blur(4px); }
     .ve-empresa { margin: 0; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #334155; }
-    .ve-filtros, .ve-pills { display: flex; flex-wrap: wrap; gap: 6px; }
-    .ve-pills { margin: 0 0 10px; }
-    .ve-chip, .ve-pill { border: 1px solid #dbe3ee; background: #fff; color: #334155; font: inherit; font-size: 12.5px; font-weight: 700; padding: 4px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
-    .ve-chip:hover:not(:disabled), .ve-pill:hover { border-color: #93a8c9; }
+    .ve-filtros, .ve-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ve-pills { margin: 0 0 12px; }
+    .ve-chip, .ve-pill { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; border: 1px solid #cbd5e1; background: #fff; color: #334155; font: inherit; font-size: 14px; font-weight: 700; padding: 6px 16px; border-radius: 999px; cursor: pointer; white-space: nowrap; transition: background-color .15s, border-color .15s; }
+    .ve-pill { min-height: 36px; font-size: 13.5px; padding: 5px 14px; }
+    .ve-chip:hover:not(:disabled), .ve-pill:hover { border-color: #2563eb; background: #eff6ff; }
+    .ve-chip:focus-visible, .ve-pill:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
     .ve-chip[aria-pressed='true'], .ve-pill[aria-pressed='true'] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
-    .ve-chip:disabled { opacity: .45; cursor: default; }
-    .ve-chip-num { font-weight: 600; opacity: .8; }
+    .ve-chip:disabled { opacity: .45; cursor: not-allowed; }
+    .ve-chip-num { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: #eef2f7; color: #334155; font-size: 12.5px; font-weight: 800; }
+    .ve-chip[aria-pressed='true'] .ve-chip-num { background: rgba(255, 255, 255, 0.22); color: #fff; }
 
-    .ve-grupo + .ve-grupo { margin-top: 18px; }
+    .ve-grupo + .ve-grupo { margin-top: 24px; }
     .ve-grupo[hidden], .ve-bloque[hidden] { display: none; }
-    .ve-cliente { margin: 0 0 8px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #64748b; }
+    .ve-cliente { margin: 0 0 10px; font-size: 14px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #334155; }
 
-    /* Tarjetas / bloques */
-    .ve-error { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 12px; overflow: hidden; }
-    .ve-error summary { cursor: pointer; display: flex; align-items: flex-start; gap: 12px; padding: 12px 16px; list-style: none; }
+    /* Tarjetas / bloques: título, qué hacer y acciones a la derecha. */
+    .ve-error { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; margin-bottom: 14px; overflow: hidden; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
+    .ve-error summary { cursor: pointer; display: flex; align-items: flex-start; gap: 14px; padding: 16px 18px; list-style: none; }
+    .ve-error summary:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }
     .ve-error summary::-webkit-details-marker { display: none; }
-    .ve-insignias { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 1px; }
-    .ve-insignia { font-size: 11px; font-weight: 800; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap; }
-    .ve-cab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
-    .ve-titulo { font-weight: 700; font-size: 15px; line-height: 1.3; }
+    .ve-insignias { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 2px; }
+    .ve-insignia { font-size: 12px; font-weight: 800; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+    .ve-cab { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+    .ve-titulo { font-weight: 800; font-size: 16.5px; line-height: 1.3; color: #0f172a; }
     .ve-cantidad { font-weight: 600; color: #64748b; }
-    .ve-que-hacer { font-size: 14px; font-weight: 700; color: #1d4ed8; }
+    .ve-que-hacer { display: block; padding: 8px 12px; border-radius: 8px; background: #f1f5ff; color: #1e3a8a; font-size: 14px; font-weight: 600; line-height: 1.45; }
+    .ve-que-hacer::before { content: 'Qué hacer'; display: inline-block; margin-right: 8px; padding: 1px 8px; border-radius: 999px; background: #1d4ed8; color: #fff; font-size: 11.5px; font-weight: 800; letter-spacing: .03em; text-transform: uppercase; vertical-align: 1px; }
     .ve-etiquetas { display: flex; flex-wrap: wrap; gap: 6px; }
-    .ve-etiqueta { display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 600; padding: 2px 10px; border-radius: 999px; background: #eef2f7; color: #334155; }
-    .ve-sin-accion { display: inline-flex; align-items: center; font-size: 12.5px; font-weight: 700; padding: 2px 10px; border-radius: 999px; background: #e8eef9; color: #3b5b9a; }
-    .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-    .ve-meta { font-size: 12px; color: #64748b; white-space: nowrap; }
-    .ve-acciones { display: inline-flex; flex-wrap: wrap; gap: 6px; }
-    .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 6px 12px; border-radius: 8px; background: #2563eb; color: #fff !important; text-decoration: none; white-space: nowrap; }
+    .ve-etiqueta { display: inline-flex; align-items: center; font-size: 13px; font-weight: 600; padding: 3px 12px; border-radius: 999px; background: #eef2f7; color: #334155; }
+    .ve-sin-accion { display: inline-flex; align-items: center; font-size: 13px; font-weight: 700; padding: 3px 12px; border-radius: 999px; background: #e8eef9; color: #3b5b9a; }
+    .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: 46%; }
+    .ve-meta { font-size: 13px; font-weight: 600; color: #64748b; white-space: nowrap; }
+    .ve-acciones { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+    .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; font-size: 14.5px; font-weight: 700; padding: 8px 18px; border-radius: 10px; background: #2563eb; color: #fff !important; text-decoration: none; white-space: nowrap; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25); }
     .ve-boton:hover:not(:disabled) { background: #1d4ed8; }
     .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
-    .ve-boton-chico { font-size: 12px; padding: 4px 10px; background: #15803d; }
+    .ve-boton-chico { background: #15803d; box-shadow: 0 2px 8px rgba(21, 128, 61, 0.25); }
     .ve-boton-chico:hover:not(:disabled) { background: #166534; }
-    .ve-boton:disabled { background: #cbd5e1; color: #f8fafc !important; cursor: not-allowed; }
-    .ve-plegar { font-size: 12.5px; font-weight: 700; color: #2563eb; white-space: nowrap; }
+    .ve-boton:disabled { background: #cbd5e1; color: #f8fafc !important; cursor: not-allowed; box-shadow: none; }
+    .ve-plegar { display: inline-flex; align-items: center; min-height: 36px; padding: 4px 12px; border: 1px solid #dbe3ee; border-radius: 8px; background: #fff; font-size: 13.5px; font-weight: 700; color: #1d4ed8; white-space: nowrap; }
+    .ve-error summary:hover .ve-plegar { border-color: #2563eb; background: #eff6ff; }
     .ve-plegar::after { content: attr(data-cerrado); }
     details[open] > summary .ve-plegar::after { content: attr(data-abierto); }
-    .ve-cuerpo { padding: 0 16px 14px; }
+    .ve-cuerpo { padding: 0 18px 18px; }
 
     /* Jerarquía: color solo en lo que pide acción; lo informativo, neutro. */
-    .ve-grave { border-left: 4px solid #c53030; }
-    .ve-mal { border-left: 4px solid #dc2626; }
-    .ve-aviso { border-left: 4px solid #d97706; }
-    .ve-subir { border-left: 4px solid #2563eb; }
+    .ve-grave { border-left: 5px solid #c53030; }
+    .ve-mal { border-left: 5px solid #dc2626; }
+    .ve-aviso { border-left: 5px solid #d97706; }
+    .ve-subir { border-left: 5px solid #2563eb; }
     .ve-subir .ve-insignia { background: #dbeafe; color: #1d4ed8; }
-    .ve-info { border-left: 4px solid #cbd5e1; background: #fbfcfe; }
+    .ve-info { border-left: 5px solid #cbd5e1; background: #fbfcfe; }
     .ve-info .ve-titulo { color: #334155; font-weight: 600; }
     .ve-grave .ve-insignia { background: #c53030; color: #fff; }
     .ve-mal .ve-insignia { background: #fde2e2; color: #9b2c2c; }
     .ve-aviso .ve-insignia { background: #fdf0d9; color: #7a4f0f; }
     .ve-info .ve-insignia { background: #eef2f7; color: #475569; }
+    .ve-grave .ve-que-hacer, .ve-mal .ve-que-hacer { background: #fef2f2; color: #7f1d1d; }
+    .ve-grave .ve-que-hacer::before, .ve-mal .ve-que-hacer::before { background: #c53030; }
+    .ve-aviso .ve-que-hacer { background: #fffbeb; color: #78350f; }
+    .ve-aviso .ve-que-hacer::before { background: #b45309; }
     /* Partidas de ARCA que hay que cargar: arriba y siempre abierta (no se pliega). */
     .ve-prioridad > summary { cursor: default; }
 
-    .ve-vacio { margin: 0; padding: 10px 12px; border-radius: 8px; background: #f8fafc; color: #475569; }
+    .ve-vacio { margin: 0; padding: 12px 14px; border-radius: 10px; background: #fff; color: #475569; }
     .ve-resumen-info { margin: 0 0 10px; color: #334155; font-weight: 600; }
 
-    .ve-detalle { margin: 0 0 10px; color: #475569; font-size: 14px; line-height: 1.5; }
-    .ve-mas { margin: 6px 0 0; font-size: 12px; color: #64748b; }
+    .ve-detalle { margin: 0 0 12px; color: #475569; font-size: 14.5px; line-height: 1.55; }
+    .ve-mas { margin: 8px 0 0; font-size: 13px; color: #64748b; }
 
     /* Grilla de ancho fijo: entra en la ventana, la razón social se corta con «…». */
-    .ve-grilla { border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
-    .ve-grilla table { border-collapse: collapse; width: 100%; table-layout: fixed; font: 12.5px 'Segoe UI', Arial, sans-serif; }
-    .ve-grilla col.c-hecho { width: 34px; }
+    .ve-grilla { border: 1px solid #e2e8f0; border-radius: 10px; overflow: hidden; background: #fff; }
+    .ve-grilla tbody:not(.ve-par) tr:hover td { background: #f8fafc; }
+    .ve-grilla table { border-collapse: collapse; width: 100%; table-layout: fixed; font: 13.5px 'Segoe UI', Arial, sans-serif; }
+    .ve-grilla col.c-hecho { width: 42px; }
     .ve-grilla th.h-hecho, .ve-grilla td.hecho { text-align: center; padding-left: 0; padding-right: 0; vertical-align: middle; }
-    .ve-grilla td.hecho input { width: 16px; height: 16px; margin: 0; cursor: pointer; accent-color: #15803d; }
+    .ve-grilla td.hecho input { width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: #15803d; }
     .ve-grilla td.hecho input:disabled { cursor: not-allowed; }
     /* Lo ya cargado / resuelto queda apagado (sigue a la vista). */
     .ve-grilla tbody.ve-hecha td:not(.hecho) { opacity: .45; text-decoration: line-through; text-decoration-color: #94a3b8; }
     /* Destildada: no va a Xubio (sigue a la vista, apagada). */
     .ve-grilla tbody.ve-excluida td:not(.hecho) { opacity: .4; }
-    .ve-grilla th.h-hecho input { width: 15px; height: 15px; margin: 0; cursor: pointer; accent-color: #2563eb; vertical-align: middle; }
+    .ve-grilla th.h-hecho input { width: 18px; height: 18px; margin: 0; cursor: pointer; accent-color: #2563eb; vertical-align: middle; }
     .ve-subir .ve-grilla td.hecho input { accent-color: #2563eb; }
     /* «Usar dato ARCA» / «Mantener Xubio», debajo de la corrección. */
     .ve-grilla tbody.ve-elegido td { background: #f0fdf4; }
     .ve-mal .ve-grilla td.hecho input { accent-color: #15803d; }
     .ve-aplicar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #fecaca; }
-    .ve-aplicar-estado { font-size: 13px; font-weight: 600; color: #475569; }
-    .ve-boton-aplicar { border: 0; border-radius: 8px; background: #15803d; color: #fff; font: inherit; font-size: 13.5px; font-weight: 700; padding: 7px 16px; cursor: pointer; }
+    .ve-aplicar-estado { font-size: 14px; font-weight: 600; color: #475569; }
+    .ve-boton-aplicar { min-height: 42px; border: 0; border-radius: 10px; background: #15803d; color: #fff; font: inherit; font-size: 15px; font-weight: 700; padding: 8px 22px; cursor: pointer; box-shadow: 0 2px 8px rgba(21, 128, 61, 0.25); }
     .ve-boton-aplicar:hover:not(:disabled) { background: #166534; }
     .ve-boton-aplicar:disabled { background: #94a3b8; cursor: not-allowed; }
     .ve-grilla td.copiable { cursor: copy; }
@@ -1213,18 +1239,18 @@ const ESTILOS = `
     .ve-grilla td.ve-copiado { background: #dcfce7 !important; }
     .ve-grilla col.c-origen { width: 56px; }
     .ve-grilla col.c-op { width: 68px; }
-    .ve-grilla col.c-fecha { width: 82px; }
+    .ve-grilla col.c-fecha { width: 94px; }
     .ve-grilla col.c-tipo { width: 70px; }
-    .ve-grilla col.c-comp { width: 140px; }
-    .ve-grilla col.c-cuit { width: 108px; }
+    .ve-grilla col.c-comp { width: 160px; }
+    .ve-grilla col.c-cuit { width: 122px; }
     .ve-grilla col.c-nota { width: 162px; }
-    .ve-grilla col.c-total { width: 104px; }
+    .ve-grilla col.c-total { width: 118px; }
     .ve-grilla col.c-corr { width: 200px; }
     .ve-grilla col.c-corr-ancha { width: 312px; }
-    .ve-grilla th { background: #f8fafc; color: #64748b; font-size: 11.5px; font-weight: 700; text-align: left; padding: 6px 8px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ve-grilla th { background: #f8fafc; color: #475569; font-size: 12.5px; font-weight: 700; text-align: left; padding: 9px 10px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ve-grilla th.num { text-align: right; }
     .ve-grilla th.h-corr { color: #9b2c2c; border-left: 1px solid #e2e8f0; }
-    .ve-grilla td { padding: 5px 8px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ve-grilla td { padding: 8px 10px; border-bottom: 1px solid #eef2f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ve-grilla tbody:last-child tr:last-child td { border-bottom: 0; }
     /* Cada par ARCA/Xubio es un mini-bloque: línea fina punteada adentro y
        borde marcado (con aire debajo de Xubio) entre un par y el siguiente. */
@@ -1235,7 +1261,7 @@ const ESTILOS = `
     .ve-grilla tbody.ve-par + tbody.ve-par tr:first-child td { border-top: 2px solid #cbd5e1; }
     .ve-grilla tbody[hidden] { display: none; }
     .ve-grilla td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ve-grilla td.cuit, .ve-grilla td.comp { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .ve-grilla td.cuit, .ve-grilla td.comp { font-family: Consolas, 'Cascadia Mono', monospace; font-size: 13px; font-variant-numeric: tabular-nums; }
     .ve-grilla td.origen, .ve-grilla td.op { font-size: 11px; font-weight: 700; }
     .ve-grilla td.op { color: #64748b; }
     .ve-grilla td.origen-arca { color: #1b2f57; }
@@ -1251,7 +1277,7 @@ const ESTILOS = `
     .ve-valor-ok { background: #15803d; }
     .ve-flecha { font-weight: 800; color: #475569; }
     .ve-diferencia { color: #64748b; font-weight: 600; white-space: nowrap; }
-    .ve-nota { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; font-size: 11.5px; font-weight: 700; padding: 1px 8px; border-radius: 999px; }
+    .ve-nota { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; font-size: 12.5px; font-weight: 700; padding: 2px 10px; border-radius: 999px; }
     .ve-nota-neutro { background: #eef2f7; color: #475569; }
     .ve-nota-azul { background: #e8eef9; color: #1d4ed8; }
     .letra { display: inline-block; min-width: 16px; text-align: center; border-radius: 3px; color: #fff; font-weight: 700; padding: 0 3px; }
@@ -1266,7 +1292,13 @@ const ESTILOS = `
     }
 
     @media (max-width: 720px) {
-      .ve-popup .swal2-html-container { padding: 0 12px 12px; }
+      .ve-popup .swal2-html-container { padding: 12px 12px 14px; }
+      .ve-popup .swal2-title { padding: 18px 64px 12px 16px; font-size: 1.25em; }
+      .ve-popup .swal2-actions { padding: 12px 16px; }
+      .ve-popup .swal2-confirm { width: 100%; }
+      .ve-barra { margin: 0 -12px 12px; padding: 8px 12px; }
+      .ve-chip { min-height: 44px; }
+      .ve-derecha { max-width: none; }
       .ve-error summary { flex-wrap: wrap; }
       .ve-insignias { flex-direction: row; }
       .ve-cab { flex-basis: 100%; }
@@ -1309,21 +1341,28 @@ function bloqueResumen(resumenes: readonly ResumenOperacion[], varios: boolean, 
     .map((r) => {
       const pendientes = pendientesDe(errores, r.cliente, r.operacion, hojas);
       const ok = pendientes === 0;
-      const estado = ok ? '✓ Sin pendientes' : `${pendientes} hallazgo${pendientes === 1 ? '' : 's'} a gestionar`;
+      const estado = ok ? '✓ Sin pendientes' : `${pendientes} a gestionar`;
       const quien = varios ? `<span class="ve-kpi-cliente">${esc(r.cliente)} · </span>` : '';
+      const pct = r.arca ? Math.round((r.coinciden / r.arca) * 100) : 100;
       return `<li class="ve-kpi ${ok ? 've-kpi-ok' : 've-kpi-mal'}">
         <span class="ve-kpi-cab"><span class="ve-kpi-op">${quien}${esc(r.operacion)}</span><span class="ve-kpi-estado">${estado}</span></span>
-        <span class="ve-kpi-num"><b>${r.coinciden}</b> de ${r.arca} coinciden</span>
+        <span class="ve-kpi-num"><b>${r.coinciden}</b> de ${r.arca} comprobantes de ARCA coinciden con Xubio</span>
+        <span class="ve-kpi-barra" role="img" aria-label="${pct}% coincide"><span style="width:${pct}%"></span></span>
       </li>`;
     })
     .join('');
   return `<ul class="ve-kpis" aria-label="Resumen por operación">${tarjetas}</ul>`;
 }
 
-/** Filtros globales, por gravedad. Los que no tienen nada quedan deshabilitados. */
-function filtrosGlobales(n: ConteoBloques): string {
+/**
+ * Filtros globales, por gravedad. Los que no tienen nada quedan deshabilitados.
+ * `sueltas`: los hallazgos fuera de los bloques (un paso que falló, por ejemplo), que
+ * se ven con cualquier filtro: entran en «Todos» para que el número coincida con lo
+ * que hay en la lista.
+ */
+function filtrosGlobales(n: ConteoBloques, sueltas: number): string {
   const chips: [string, string, number][] = [
-    ['', 'Todos', n.error + n.soloArca + n.soloXubio],
+    ['', 'Todos', sueltas + n.error + n.soloArca + n.soloXubio],
     ['error', 'Error', n.error],
     ['subir', 'Subir a Xubio', n.soloArca],
     ['revisar', 'A revisar', n.soloXubio],
@@ -1331,7 +1370,7 @@ function filtrosGlobales(n: ConteoBloques): string {
   return `<div class="ve-filtros" role="group" aria-label="Filtrar hallazgos">${chips
     .map(
       ([id, nombre, k]) =>
-        `<button type="button" class="ve-chip" data-ver="${id}" aria-pressed="${id === ''}"${id && !k ? ' disabled' : ''}>${nombre} <span class="ve-chip-num">(${k})</span></button>`,
+        `<button type="button" class="ve-chip" data-ver="${id}" aria-pressed="${id === ''}"${id && !k ? ' disabled' : ''}>${nombre} <span class="ve-chip-num">${k}</span></button>`,
     )
     .join('')}</div>`;
 }
@@ -1385,12 +1424,17 @@ export function mostrarVentanaDeErrores(
   const registrar = (a: Advertencia) => subibles.push(a) - 1;
 
   const hayAlgo = errores.length > 0 || porCliente.size > 0;
-  const filtros = hayAlgo ? filtrosGlobales(conteo) : '';
-  const barra = unSoloCliente
-    ? `<div class="ve-barra"><p class="ve-empresa">${esc([...porCliente.keys()][0])}</p>${filtros}</div>`
-    : filtros
-      ? `<div class="ve-barra">${filtros}</div>`
-      : '';
+  // Los filtros solo separan comprobantes (Error / Subir a Xubio / A revisar). Si no
+  // hay ninguno (por ejemplo, solo fallaron los bots) no hay nada que filtrar: antes
+  // aparecía «Todos (0)» al lado de tres errores graves.
+  const hayComprobantes = conteo.error + conteo.soloArca + conteo.soloXubio > 0;
+  const filtros = hayAlgo && hayComprobantes ? filtrosGlobales(conteo, errores.filter(esSuelta).length) : '';
+  const barra = filtros ? `<div class="ve-barra">${filtros}</div>` : '';
+  // Debajo del título: de quién y de qué período (con un solo cliente, su nombre).
+  const sub = [unSoloCliente ? [...porCliente.keys()][0] : porCliente.size ? `${porCliente.size} clientes` : '', ctx.periodo && `Período ${ctx.periodo}`]
+    .filter(Boolean)
+    .map((t) => esc(t))
+    .join(' · ');
   const lista = [...porCliente.entries()]
     .map(
       ([cliente, items]) => {
@@ -1410,14 +1454,21 @@ export function mostrarVentanaDeErrores(
     title: hayAlgo ? 'Hallazgos del control' : 'Control sin hallazgos',
     html: `${ESTILOS}
       <div class="ve">
-        ${graves ? '<p class="ve-grave-aviso">El control terminó con errores graves: el resultado no es confiable.</p>' : ''}
+        ${sub ? `<p class="ve-sub">${sub}</p>` : ''}
+        ${
+          graves
+            ? `<div class="ve-grave-aviso" role="alert"><span class="ve-grave-icono" aria-hidden="true">!</span><span><strong>El control terminó con ${graves === 1 ? 'un error grave' : `${graves} errores graves`}.</strong> Hasta corregirlo, el resultado no es confiable.</span></div>`
+            : ''
+        }
         ${bloqueResumen(resumenes, new Set(resumenes.map((r) => r.cliente)).size > 1, errores, hojas)}
         ${barra}
         ${lista}
       </div>`,
     width: 'min(1080px, 96vw)',
     customClass: { popup: 've-popup' },
-    confirmButtonText: 'Entendido',
+    confirmButtonText: 'Cerrar',
+    showCloseButton: true,
+    closeButtonAriaLabel: 'Cerrar los hallazgos',
     confirmButtonColor: '#2563eb',
     focusConfirm: true,
     didOpen: (popup) => {

@@ -37,10 +37,11 @@ from ..auditor.corregir_libro import LibroIlegible, corregir_libro
 from ..bots.arca import FiltroNoDisponible
 from ..bots.sesiones import GestorSesiones
 from ..core import config
-from ..core.errors import BotError, SesionVencida
+from ..core.errors import ArchivoEnUso, BotError, SesionVencida
 from ..bots.xubio_common import es_url_de_xubio
 from ..core.controles import descartar_si_vacia, nueva_carpeta_control, numero_de_carpeta
 from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente, nombre_carpeta
+from ..core.mensajes_bot import mensaje_legible, portal_de_paso
 from ..core.saneo import sanear
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from .credenciales import ServicioCredenciales
@@ -190,6 +191,7 @@ class Ejecucion:
             "mensaje": self.mensaje,
             "periodo": f"{self.parametros['desde']} al {self.parametros['hasta']}",
             "clientes": len(self.clientes),
+            "nombres": [c.nombre for c in self.clientes],
             "totales": totales,
         }
 
@@ -257,7 +259,12 @@ class Ejecucion:
             clientes=[
                 ClienteEnCurso(
                     nombre=c["nombre"],
-                    pasos=[Paso(**p) for p in c.get("pasos") or []],
+                    # Los controles guardados antes de traducir los errores de los bots
+                    # se ven igual de claros que los nuevos.
+                    pasos=[
+                        Paso(**{**p, "mensaje": mensaje_legible(p.get("mensaje") or "", portal_de_paso(p.get("id") or ""))})
+                        for p in c.get("pasos") or []
+                    ],
                     estado=c.get("estado") or "pendiente",
                     carpeta=c.get("carpeta") or "",
                     archivos=list(c.get("archivos") or []),
@@ -272,9 +279,17 @@ class Ejecucion:
             preguntar=False,
             mensaje=datos.get("mensaje") or "",
             log=list(datos.get("log") or []),
-            advertencias=list(datos.get("advertencias") or []),
+            advertencias=[_advertencia_legible(a) for a in datos.get("advertencias") or []],
             resumenes=list(datos.get("resumenes") or []),
         )
+        # Los pasos que fallaron se vuelven a diagnosticar con las reglas de hoy: un
+        # control viejo no sigue mandando a «Corregí el CUIT» si ARCA solo estaba lenta.
+        pasos = {(c.nombre, p.etiqueta): p for c in ej.clientes for p in c.pasos}
+        for i, a in enumerate(ej.advertencias):
+            paso = pasos.get((a.get("cliente"), str(a.get("titulo") or "").rsplit(":", 1)[0]))
+            if a.get("tipo") == "paso_error" and paso is not None and paso.mensaje:
+                detalle, acciones = _acciones_de_paso(paso)
+                ej.advertencias[i] = {**a, "detalle": detalle, "acciones": acciones}
         if ej.estado not in ESTADOS_FINALES:
             # Quedó a medias (se apagó el servidor): no puede seguir corriendo.
             ej.estado = "error"
@@ -604,14 +619,16 @@ def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> BaseException | None:
     except Exception as exc:  # los bots tiran Exception genérica
         error = exc
         paso.estado = "error"
-        paso.mensaje = " ".join(str(exc).split())[:400] or type(exc).__name__
+        crudo = " ".join(str(exc).split())[:400] or type(exc).__name__
+        # En pantalla, en criollo; el texto técnico queda en el registro.
+        paso.mensaje = mensaje_legible(crudo, portal_de_paso(paso.id))
         ej.registrar(f" [ERROR] {paso.etiqueta}: {exc}", "error")
     else:
         # Algunos bots atrapan su propio error y solo lo registran.
         errores_despues, ultimo = ej._errores_hilo.get(hilo, (0, ""))
         if errores_despues > errores_antes:
             paso.estado = "aviso"
-            paso.mensaje = ultimo[:300]
+            paso.mensaje = mensaje_legible(ultimo[:300], portal_de_paso(paso.id))
         else:
             paso.estado = "ok"
     paso.fin = _ahora()
@@ -622,6 +639,15 @@ def _acciones_de_paso(paso: Paso) -> tuple[str, list[str]]:
     """Qué pasó (en criollo) y qué hacer, según el paso que falló."""
     m = (paso.mensaje or "").lower()
     portal = "ARCA" if paso.id.startswith("arca_") else "Xubio"
+    # «No apareció el campo de la clave en 45 s (… o ARCA muy lenta)»: no se sabe
+    # si fue el CUIT o ARCA caída. Mandar a «Corregí el CUIT» confundía cuando ARCA
+    # estaba lenta: primero se reintenta y, si se repite, se revisan los datos.
+    if portal == "ARCA" and "no apareció" in m and "muy lenta" in m:
+        return (
+            "ARCA no mostró a tiempo la pantalla de la clave: puede estar lenta, "
+            "o el CUIT de ingreso o la clave fiscal no son correctos.",
+            ["Volver a correr", "Revisar clave de ARCA"],
+        )
     if "clave" in m or "login" in m or "contraseña" in m or "credencial" in m or "iniciar sesión" in m:
         return f"No se pudo entrar a {portal}.", [f"Corregir clave de {portal}"]
     if "empresa" in m or "compañ" in m:
@@ -631,6 +657,13 @@ def _acciones_de_paso(paso: Paso) -> tuple[str, list[str]]:
     if "tiempo" in m or "timeout" in m or "vencid" in m:
         return f"{portal} no respondió a tiempo.", ["Volver a correr"]
     return paso.mensaje, ["Volver a correr"]
+
+
+def _advertencia_legible(a: dict) -> dict:
+    """Un hallazgo guardado de un paso que falló, con el detalle traducido."""
+    if a.get("tipo") != "paso_error" or not a.get("detalle"):
+        return a
+    return {**a, "detalle": mensaje_legible(a["detalle"], portal_de_paso(a.get("titulo") or ""))}
 
 
 def _error_de_paso(cliente: str, paso: Paso) -> dict:
@@ -942,7 +975,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
             ej.registrar("[OK] PROCESO DE CONTROL DE FACTURAS FINALIZADO.", "ok")
     except Exception as exc:
         ej.estado = "error"
-        ej.mensaje = f"El control se cortó: {exc}"
+        ej.mensaje = f"El control se cortó: {mensaje_legible(str(exc))}"
         ej.registrar(f"[ERROR] El control se cortó: {exc}", "error")
     finally:
         hilo_arca.cerrar()
@@ -1124,17 +1157,35 @@ def aplicar_cambios(ej: Ejecucion, cambios: list[dict]) -> dict:
 
     if not _lock_aplicar.acquire(blocking=False):
         raise ErrorEjecucion("Ya se están aplicando cambios. Esperá a que termine.", 409)
+    resultados: list[dict] = []
+    fallas: list[ErrorEjecucion] = []
     try:
-        resultados = []
+        # Cada cliente y operación por su cuenta: si uno falla (por ejemplo, su
+        # Excel está abierto), los demás se aplican igual y se informa cuál no.
         for (nombre, operacion), lista in por_operacion.items():
             indice = next((i for i, c in enumerate(ej.clientes) if c.nombre == nombre), None)
-            if indice is None:
-                raise ErrorEjecucion(f"«{nombre}» no es un cliente de este control.", 404)
-            resultados.append(_aplicar_en(ej, indice, operacion, lista))
-        _guardar(ej)
+            try:
+                if indice is None:
+                    raise ErrorEjecucion(f"«{nombre}» no es un cliente de este control.", 404)
+                resultados.append(_aplicar_en(ej, indice, operacion, lista))
+            except ErrorEjecucion as exc:
+                fallas.append(exc)
+                resultados.append({
+                    "cliente": nombre, "indice": indice if indice is not None else -1, "operacion": operacion,
+                    "aplicados": 0, "no_aplicados": [], "libro": None, "aux": None, "error": exc.mensaje,
+                })
+        if fallas and len(fallas) == len(resultados):
+            raise fallas[0] if len(fallas) == 1 else ErrorEjecucion(
+                " ".join(r["error"] for r in resultados), fallas[0].estado
+            )
         return {"resultados": resultados, "ejecucion": ej.detalle()}
     finally:
-        _lock_aplicar.release()
+        try:
+            # Lo que sí se aplicó queda guardado aunque otra operación haya fallado.
+            if len(fallas) < len(resultados):
+                _guardar(ej)
+        finally:
+            _lock_aplicar.release()
 
 
 def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict]) -> dict:
@@ -1155,10 +1206,24 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
     aux_corr = carpeta / _con_sufijo(aux)
     # Se corrige sobre lo ya corregido: los cambios anteriores no se pierden.
     origen = libro_corr if libro_corr.is_file() else carpeta / libro
+    # Si el re-cruce falla, el Libro IVA corregido vuelve a como estaba: así el
+    # archivo y los hallazgos guardados nunca quedan desparejos.
+    previo_libro = libro_corr.read_bytes() if libro_corr.is_file() else None
     try:
         hecho = corregir_libro(origen, libro_corr, [{k: v for k, v in c.items() if k not in ("cliente", "operacion")} for c in cambios])
+    except ArchivoEnUso as exc:
+        raise ErrorEjecucion(f"{cli.nombre} · {operacion}: {exc}", 409) from exc
     except (LibroIlegible, OSError) as exc:
         raise ErrorEjecucion(f"No se pudo corregir el Libro IVA de {cli.nombre}: {exc}", 422) from exc
+
+    def deshacer_libro() -> None:
+        try:
+            if previo_libro is None:
+                libro_corr.unlink(missing_ok=True)
+            else:
+                libro_corr.write_bytes(previo_libro)
+        except OSError:
+            pass
 
     errores: list[dict] = []
     resumenes: list[dict] = []
@@ -1177,8 +1242,19 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
             avisar_errores=errores.extend,
             avisar_resumen=resumenes.append,
         )
+    except ArchivoEnUso as exc:
+        deshacer_libro()
+        raise ErrorEjecucion(f"{cli.nombre} · {operacion}: {exc} No se aplicó ningún cambio.", 409) from exc
+    except BotError as exc:
+        deshacer_libro()
+        raise ErrorEjecucion(f"No se pudo volver a cruzar {cli.nombre} · {operacion}: {exc}", 422) from exc
     except Exception as exc:
-        raise ErrorEjecucion(f"No se pudo volver a cruzar {cli.nombre} · {operacion}: {exc}", 500) from exc
+        deshacer_libro()
+        raise ErrorEjecucion(
+            f"No se pudo volver a cruzar {cli.nombre} · {operacion}: {mensaje_legible(str(exc))} "
+            "No se aplicó ningún cambio.",
+            500,
+        ) from exc
 
     # Los hallazgos de esa operación pasan a ser los del cruce nuevo (los pasos que
     # fallaron, sin operación, quedan).

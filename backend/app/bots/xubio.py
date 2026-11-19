@@ -56,6 +56,21 @@ def procesar_informe_individual(
     page.wait_for_selector(f"{selector_iframe} iframe", timeout=20000)
     iframe = page.frame_locator(f"{selector_iframe} iframe")
 
+    # A veces el iframe del libro aparece pero su formulario no se carga (pasaba
+    # sobre todo al ir de Ventas a Compras). Se espera el campo y, si no llega,
+    # se recarga el libro por URL una vez antes de rendirse.
+    campo_desde = iframe.locator("input[formcontrolname='fechaDesdeControl']")
+    try:
+        campo_desde.wait_for(state="visible", timeout=25000)
+    except Exception:
+        log(f"      [INFO]: El formulario del Libro {tipo_reporte} no cargó; se recarga la página.")
+        page.goto(urljoin(page.url, url_menu))
+        page.wait_for_selector(f"{selector_iframe} iframe", timeout=30000)
+        iframe = page.frame_locator(f"{selector_iframe} iframe")
+        iframe.locator("input[formcontrolname='fechaDesdeControl']").wait_for(
+            state="visible", timeout=45000
+        )
+
     def escribir_fecha(input_locator, valor):
         input_locator.click()
         input_locator.evaluate(

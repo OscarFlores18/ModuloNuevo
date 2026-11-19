@@ -22,7 +22,6 @@ import { ClienteForm } from './cliente-form';
         <button type="button" class="mf-btn mf-btn-suave" (click)="precargar()" [disabled]="precargando() || !perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">
           {{ precargando() ? 'Precargando…' : 'Precargar clientes del estudio' }}
         </button>
-        <button type="button" class="mf-btn" (click)="abrir(null)" data-tour="nuevo-cliente" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">+ Nuevo cliente</button>
       }
     </app-encabezado>
 
@@ -164,7 +163,7 @@ import { ClienteForm } from './cliente-form';
                 <div><dt>Sin clave fiscal</dt><dd [class.cl-mal]="sinClave() > 0">{{ sinClave() }}</dd></div>
               </dl>
               <p class="mf-tenue m-0 text-sm">Tocá un cliente de la lista para ver y editar sus datos acá.</p>
-              <button type="button" class="mf-btn w-full" (click)="abrir(null)" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">+ Nuevo cliente</button>
+              <button type="button" class="mf-btn w-full" (click)="abrir(null)" data-tour="nuevo-cliente" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">+ Nuevo cliente</button>
             </section>
           }
         </aside>

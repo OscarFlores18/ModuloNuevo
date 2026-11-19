@@ -30,7 +30,7 @@
             <span class="cf-tab-badge !bg-emerald-600" title="Hay un control en curso"><span class="mf-punto mf-latido" aria-hidden="true"></span>En curso</span>
           }
         </a>
-        <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Faltantes a Xubio</a>
+        <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Subir a Xubio</a>
         <a routerLink="/clientes" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
           Clientes
           @if (clientes.lista().length) {
@@ -44,12 +44,14 @@
         @if (sesion.conectado() && sesion.usuario(); as u) {
           <span class="cf-control inline-flex items-center" [title]="rolesDe(u)">{{ u.nombre }}</span>
         }
-        <span class="cf-vista" [class.cf-vista-total]="perspectiva.canEdit()"
-          [title]="perspectiva.canEdit() ? 'Puede usar todas las acciones' : 'Ve todo y descarga; el resto de las acciones está bloqueado'">
-          Vista: {{ perspectiva.nombre() }}
-        </span>
-        @if (perspectiva.puedeAccesoTotal()) {
-          <button type="button" class="cf-control cf-control-gris" (click)="cambiarPerfil()">Cambiar perfil</button>
+        @if (perspectiva.vistasActivas) {
+          <span class="cf-vista" [class.cf-vista-total]="perspectiva.canEdit()"
+            [title]="perspectiva.canEdit() ? 'Puede usar todas las acciones' : 'Ve todo y descarga; el resto de las acciones está bloqueado'">
+            Vista: {{ perspectiva.nombre() }}
+          </span>
+          @if (perspectiva.puedeAccesoTotal()) {
+            <button type="button" class="cf-control cf-control-gris" (click)="cambiarPerfil()">Cambiar perfil</button>
+          }
         }
       </div>
     </div>
