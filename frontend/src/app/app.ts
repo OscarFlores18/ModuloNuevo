@@ -60,10 +60,11 @@ export class App {
       },
       () => undefined,
     );
-    // El recorrido solo se abre con el «?»; al cambiar de pantalla se cierra.
+    // El recorrido sale solo la primera vez que se abre la app en esta PC; después, con el «?».
+    // Al cambiar de pantalla se cierra.
     this.router.events
       .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd), takeUntilDestroyed())
-      .subscribe(() => this.recorrido.alNavegar());
+      .subscribe((e) => this.recorrido.alNavegar(e.urlAfterRedirects));
     // El alto de la página cambia al navegar o cuando crece el contenido (registro, tablas).
     if (typeof ResizeObserver !== 'undefined') {
       const observador = new ResizeObserver(() => this.medirScroll());

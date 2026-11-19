@@ -32,14 +32,20 @@ const RECORRIDOS: Record<string, PasoRecorrido[]> = {
   ],
 };
 
+/** Ya se mostró solo una vez en esta computadora. */
+const CLAVE_VISTO = 'cf-recorrido-inicial-visto';
+
 /**
- * Recorrido guiado: señala las partes de una pantalla una por una. Nunca arranca
- * solo (molestaba en cada visita): solo con el «?» del encabezado.
+ * Recorrido guiado: señala las partes de una pantalla una por una. Se abre solo una
+ * única vez en cada computadora (la primera vez que se abre la app, en la primera
+ * pantalla); después, solo con el «?» del encabezado.
  */
 @Injectable({ providedIn: 'root' })
 export class RecorridoService {
   /** El recorrido en curso: los pasos que tienen algo en pantalla y cuál se muestra. */
   readonly actual = signal<{ pantalla: string; pasos: PasoRecorrido[]; indice: number } | null>(null);
+
+  private espera: ReturnType<typeof setTimeout> | null = null;
 
   pantallaDe(url: string): string {
     return url.split(/[/?#]/).filter(Boolean)[0] ?? 'control';
@@ -50,8 +56,48 @@ export class RecorridoService {
   }
 
   /** Al cambiar de pantalla, el recorrido abierto (de la anterior) se cierra. */
-  alNavegar(): void {
+  alNavegar(url: string): void {
     this.cerrar();
+    if (this.espera) clearTimeout(this.espera);
+    this.espera = null;
+    if (!this.yaVisto()) this.esperarPrimeraVez(this.pantallaDe(url), 0);
+  }
+
+  /**
+   * Primera vez en esta computadora: espera a que la pantalla termine de dibujarse
+   * (los clientes vienen del servidor) y abre el recorrido. Apenas aparece queda
+   * visto, aunque se cierre o se cambie de pantalla: no vuelve a salir solo.
+   */
+  private esperarPrimeraVez(pantalla: string, intento: number): void {
+    if (!this.hayRecorrido(pantalla) || intento > 12) return;
+    this.espera = setTimeout(() => {
+      this.espera = null;
+      const pasos = RECORRIDOS[pantalla].filter((p) => this.elemento(p));
+      // Con una ventana abierta (aviso, formulario) o la pantalla a medio cargar, espera un poco más.
+      const ocupado = !!document.querySelector('.swal2-container, dialog[open]');
+      if (ocupado || pasos.length < Math.min(2, RECORRIDOS[pantalla].length)) {
+        this.esperarPrimeraVez(pantalla, intento + 1);
+        return;
+      }
+      this.marcarVisto();
+      this.actual.set({ pantalla, pasos, indice: 0 });
+    }, intento ? 500 : 900);
+  }
+
+  private yaVisto(): boolean {
+    try {
+      return localStorage.getItem(CLAVE_VISTO) === '1';
+    } catch {
+      return true; // sin almacenamiento no se puede recordar: mejor no abrirlo en cada visita
+    }
+  }
+
+  private marcarVisto(): void {
+    try {
+      localStorage.setItem(CLAVE_VISTO, '1');
+    } catch {
+      /* sin almacenamiento: queda como estaba */
+    }
   }
 
   iniciar(pantalla: string): void {
