@@ -7,8 +7,8 @@ menú Inicio.
 | | |
 |---|---|
 | Versión | 1.0.0 |
-| Tamaño | 67,6 MB |
-| SHA-256 | `E6BAB66D783FEEA0E0957299C6FEFEB91A26E097BE0E59E3E489A6B3BAEB9C56` |
+| Tamaño | 67,5 MB |
+| SHA-256 | `3FDCCDE6F02C4605F8916CA1BC41A39E9A086E3708AE8A987B2A6B3FEEEB9CDC` |
 
 ---
 
@@ -52,7 +52,9 @@ No hace falta instalar Python, Node ni nada más, ni tener permisos de administr
 La primera vez la app arranca vacía:
 
 1. Entrá a **Clientes**. La primera vez te pide **elegir una contraseña** (mínimo
-   8 caracteres) que protege esa sección; guardala, se pide cada vez que entrás.
+   8 caracteres) que protege esa sección. Se pide **una sola vez en cada
+   computadora**: después entra directo, aunque cierres la app. Se vuelve a pedir
+   solo si tocás **Bloquear** o si cambia la contraseña.
 2. Cargá los clientes con sus datos de ARCA.
 3. En **Nuevo control**, cargá tu usuario y contraseña de Xubio.
 
