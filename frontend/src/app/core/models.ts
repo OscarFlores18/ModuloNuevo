@@ -32,6 +32,8 @@ export interface Ajustes {
   pausa_segundos: number;
   /** true: el backend corre en esta PC y guarda con ventanas de Windows. false (servidor): se baja por el navegador. */
   dialogos_locales: boolean;
+  /** false: los bots usan Google Chrome y la PC donde corre el backend no lo tiene. */
+  chrome_instalado: boolean;
   xubio: { usuario: string; tiene_clave: boolean; recordar: boolean; del_servidor: boolean };
 }
 

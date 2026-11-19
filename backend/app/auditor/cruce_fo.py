@@ -702,7 +702,9 @@ def diagnosticar(
         partes = []
         if falta_a:
             partes.append(
-                f"{len(falta_a)} a revisar: están en Xubio y ARCA no los informa en este período."
+                "1 a revisar: está en Xubio y ARCA no lo informa en este período."
+                if len(falta_a) == 1
+                else f"{len(falta_a)} a revisar: están en Xubio y ARCA no los informa en este período."
             )
         if tiques:
             partes.append(
