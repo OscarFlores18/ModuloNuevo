@@ -132,7 +132,7 @@ export interface ClienteEjecucion {
   corregidos?: Partial<Record<'Ventas' | 'Compras', Corregido>>;
 }
 
-/** Lo que dejó «Aplicar cambios» en una operación (el AUX nuevo es el activo). */
+/** Lo que dejó «Aplicar cambios» en una operación (corrige el mismo Libro IVA y AUX del control). */
 export interface Corregido {
   libro: string;
   aux: string;

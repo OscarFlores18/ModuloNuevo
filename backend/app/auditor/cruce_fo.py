@@ -824,7 +824,8 @@ def _columnas(ws) -> dict[str, int]:
 
 
 def marcar_errores(wb, errores: list[dict], operacion: str) -> None:
-    """Pone en negrita, en «Mis Comprobantes» y «Libro Iva», las filas con error."""
+    """Pinta de rojo claro y pone en negrita, en «Mis Comprobantes» y «Libro Iva»,
+    las filas con error. Las columnas amarillas (totales y ajustes) quedan como están."""
     a_marcar = [e for e in errores if e["tipo"] in ERRORES_EN_NEGRITA and e.get("gravedad") != "info"]
     if not a_marcar:
         return
@@ -833,10 +834,14 @@ def marcar_errores(wb, errores: list[dict], operacion: str) -> None:
         for e in a_marcar
     }
     negrita = Font(bold=True)
+    rojo_claro = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
 
     def resaltar(ws, fila, hasta):
         for c in range(1, hasta + 1):
-            ws.cell(row=fila, column=c).font = negrita
+            celda = ws.cell(row=fila, column=c)
+            celda.font = negrita
+            if not str(celda.fill.start_color.rgb or "").endswith("FFFF00"):
+                celda.fill = rojo_claro
 
     if "Mis Comprobantes" in wb.sheetnames:
         ws = wb["Mis Comprobantes"]
@@ -1072,7 +1077,7 @@ def procesar_cruce(
     ruta_control, numero_control, previos = ruta_siguiente_control(
         directorio_guardado, operacion, fecha_desde, empresa
     )
-    # Al re-chequear con el Libro IVA corregido, el AUX nuevo no pisa el original.
+    # Al re-chequear con el Libro IVA corregido se reescribe el mismo AUX del control.
     ruta_salida = str(ruta_salida_manual) if ruta_salida_manual else str(ruta_control)
 
     if not os.path.exists(ruta_arca):

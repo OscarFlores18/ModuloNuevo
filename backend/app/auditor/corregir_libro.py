@@ -1,11 +1,10 @@
 """Corrige el Libro IVA bajado de Xubio con los datos de ARCA que se eligieron.
 
 El control encuentra pares ARCA / Xubio del mismo comprobante con la letra, el tipo,
-el importe o la CUIT distintos. Quien controla elige cuáles corregir ("Aplicar
-cambios" en Ejecuciones) y acá se reescriben esas celdas en una copia del Libro
-IVA. Con esa copia se vuelve a correr el cruce: lo corregido deja de ser un error.
-
-El archivo original de Xubio no se toca.
+el importe o la CUIT distintos. Al terminar el cruce se corrigen solos con el dato
+de ARCA (``cambios_de_errores``): acá se reescriben esas celdas en el Libro IVA de la
+carpeta del control. Con ese libro se vuelve a correr el cruce sobre el mismo AUX:
+lo corregido deja de ser un error (y de estar en rojo). En Xubio no se toca nada.
 """
 from __future__ import annotations
 
@@ -174,3 +173,82 @@ def corregir_libro(origen: Path | str, destino: Path | str, cambios: list[dict])
 
     guardar_excel(wb, destino)
     return {"aplicados": aplicados, "no_aplicados": no_aplicados}
+
+
+# --- Qué se corrige solo: los pares de «Error» que el cruce encontró ---------------------
+
+_CAMPO_DE_ERROR = {
+    "letra_distinta": "letra",
+    "tipo_distinto": "tipo",
+    "importe_distinto": "importe",
+    "cuit_distinto": "cuit",
+}
+_ALIAS = {
+    "Tipo": "Tipo",
+    "Comprobante": "Comprobante",
+    "CUIT": "CUIT",
+    "Nro. Doc.": "CUIT",
+    "Imp. Total": "Total",
+    "Total": "Total",
+    "Total en pesos": "TotalPesos",
+}
+
+
+def _fila(celdas) -> dict:
+    salida: dict = {}
+    for c in celdas or []:
+        clave = _ALIAS.get(c.get("columna"))
+        if clave and clave not in salida:
+            salida[clave] = c.get("valor")
+    return salida
+
+
+def _cuit(valor) -> str:
+    if isinstance(valor, float) and valor.is_integer():
+        valor = int(valor)
+    return _digitos(valor)
+
+
+def cambios_de_errores(errores: list[dict]) -> list[dict]:
+    """Los cambios para ``corregir_libro`` que salen de los hallazgos del cruce: cada par
+    ARCA / Libro IVA con la letra, el tipo, el importe o la CUIT distintos se corrige con
+    el dato de ARCA. Los duplicados y los faltantes no (no hay un dato que copiar)."""
+    cambios: list[dict] = []
+    for e in errores:
+        campo = _CAMPO_DE_ERROR.get(e.get("tipo"))
+        if not campo:
+            continue
+        if campo == "letra":
+            pares = [(_fila(c.get("fila_arca")), _fila(c.get("fila_xubio"))) for c in e.get("comprobantes") or []]
+        else:
+            filas = e.get("comprobantes") or []
+            arca = [_fila(f.get("fila")) for f in filas if f.get("origen") == "arca"]
+            xubio = [_fila(f.get("fila")) for f in filas if f.get("origen") == "xubio"]
+            pares = list(zip(arca, xubio))
+        for arca, xubio in pares:
+            comprobante = str(xubio.get("Comprobante") or "").strip()
+            partes = _partes(comprobante)
+            if not partes:
+                continue
+            if campo == "letra":
+                valor = str(arca.get("Comprobante") or "").strip()[:1].upper()
+            elif campo == "tipo":
+                valor = str(arca.get("Tipo") or "").strip()
+            elif campo == "importe":
+                # En otra moneda se compara (y se corrige) con el total en pesos.
+                valor = _numero(arca.get("TotalPesos"))
+                if valor is None:
+                    valor = _numero(arca.get("Total"))
+            else:
+                valor = _cuit(arca.get("CUIT"))
+            if valor in (None, ""):
+                continue
+            cambios.append({
+                "campo": campo,
+                "cuit": _cuit(xubio.get("CUIT")),
+                "pv": partes[1],
+                "numero": partes[2],
+                "comprobante": comprobante,
+                "valor_arca": valor,
+            })
+    return cambios

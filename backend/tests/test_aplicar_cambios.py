@@ -1,5 +1,5 @@
-"""«Aplicar cambios»: el dato de ARCA elegido se escribe en una copia del Libro IVA
-y el control se vuelve a cruzar con esa copia."""
+"""«Aplicar cambios»: el dato de ARCA elegido se escribe en el Libro IVA del control
+y el mismo AUX se vuelve a cruzar (no quedan copias aparte)."""
 
 from __future__ import annotations
 
@@ -87,12 +87,23 @@ def test_corrige_las_celdas_en_una_copia(tmp_path: Path):
     assert openpyxl.load_workbook(original).active.cell(2, 3).value == "A-0002-00000006"
 
 
+def _filas_rojas(ruta: Path) -> int:
+    ws = openpyxl.load_workbook(ruta)["Libro Iva"]
+    return sum(
+        1 for fila in ws.iter_rows(min_row=2)
+        if any(c.fill.fill_type == "solid" and str(c.fill.start_color.rgb).endswith("FFCCCC") for c in fila)
+    )
+
+
 def test_aplicar_corrige_y_vuelve_a_cruzar(entorno, tmp_path: Path):
     client, _ = entorno
     carpeta = _carpeta(tmp_path)
     ej = _ejecucion(carpeta)
     antes = {a["tipo"] for a in ej.advertencias}
     assert {"letra_distinta", "tipo_distinto", "importe_distinto"} <= antes
+    [aux] = [a["nombre"] for a in ej.clientes[0].archivos if a["nombre"].startswith("AUX - ")]
+    # Los tres pares mal cargados se ven en rojo claro en el Excel.
+    assert _filas_rojas(carpeta / aux) == 3
 
     r = client.post("/api/ejecuciones/apl123/aplicar-cambios", json={"cambios": CAMBIOS})
 
@@ -100,8 +111,8 @@ def test_aplicar_corrige_y_vuelve_a_cruzar(entorno, tmp_path: Path):
     datos = r.json()
     [res] = datos["resultados"]
     assert res["aplicados"] == 3 and res["no_aplicados"] == []
-    assert res["libro"] == "IVA COMPRAS - PICCININI - 01-04-2026 al 30-04-2026 - corregido.xlsx"
-    assert res["aux"].startswith("AUX - Control de facturas Compras") and res["aux"].endswith(" - corregido.xlsx")
+    assert res["libro"] == "IVA COMPRAS - PICCININI - 01-04-2026 al 30-04-2026.xlsx"
+    assert res["aux"].startswith("AUX - Control de facturas Compras") and "corregido" not in res["aux"]
     # Re-chequeado: los tres pares ya no son errores.
     tipos = {a["tipo"] for a in datos["ejecucion"]["advertencias"]}
     assert not tipos & {"letra_distinta", "tipo_distinto", "importe_distinto", "faltante_en_xubio", "faltante_en_arca"}
@@ -111,9 +122,14 @@ def test_aplicar_corrige_y_vuelve_a_cruzar(entorno, tmp_path: Path):
     nombres = {a["nombre"] for a in cli["archivos"]}
     assert {res["libro"], res["aux"]} <= nombres
     assert len(cli["corregidos"]["Compras"]["cambios"]) == 3
-    # El AUX nuevo se baja y no pisa el original.
+    # El AUX del control se reemplaza: sigue habiendo uno solo, sin copias.
     assert client.get(f"/api/ejecuciones/apl123/clientes/0/archivos/{res['aux']}").status_code == 200
-    assert len([n for n in nombres if n.startswith("AUX - Control de facturas Compras")]) == 2
+    assert len([n for n in nombres if n.startswith("AUX - Control de facturas Compras")]) == 1
+    assert not any("corregido" in p.name for p in carpeta.iterdir())
+    libro = [c.value for fila in openpyxl.load_workbook(carpeta / res["libro"]).active.iter_rows() for c in fila]
+    assert "C-0002-00000006" in libro and "A-0002-00000006" not in libro
+    # Corregidos: en el mismo AUX ya no están en rojo.
+    assert _filas_rojas(carpeta / res["aux"]) == 0
 
 
 def test_no_aplica_con_el_control_corriendo(entorno, tmp_path: Path):
@@ -151,6 +167,7 @@ def test_si_el_recruce_falla_el_libro_corregido_vuelve_a_como_estaba(entorno, tm
     carpeta = _carpeta(tmp_path)
     ej = _ejecucion(carpeta)
     antes = list(ej.advertencias)
+    previos = {p.name: p.read_bytes() for p in carpeta.iterdir()}
 
     def falla(*_a, **_k):
         raise RuntimeError("Page.click: Target page, context or browser has been closed")
@@ -161,6 +178,7 @@ def test_si_el_recruce_falla_el_libro_corregido_vuelve_a_como_estaba(entorno, tm
     assert r.status_code == 500
     assert "No se aplicó ningún cambio" in r.json()["detail"]["mensaje"]
     assert not any(p.name.endswith(" - corregido.xlsx") for p in carpeta.iterdir())
+    assert {p.name: p.read_bytes() for p in carpeta.iterdir()} == previos
     assert ej.advertencias == antes
 
 
@@ -188,3 +206,23 @@ def test_consumidor_final_sin_cuit_se_puede_aplicar(tmp_path: Path):
         {"campo": "importe", "cuit": "", "pv": 2, "numero": 6, "valor_arca": 1000},
     ])
     assert len(r["aplicados"]) == 1 and r["no_aplicados"] == []
+
+
+def test_los_errores_se_arreglan_solos_al_terminar_el_cruce(tmp_path: Path):
+    carpeta = _carpeta(tmp_path)
+    ej = _ejecucion(carpeta)
+    # Los cambios salen de los hallazgos, sin elegir nada a mano.
+    cambios = srv.cambios_de_errores(ej.advertencias)
+    assert sorted((c["campo"], c["numero"], c["valor_arca"]) for c in cambios) == [
+        ("importe", 8, 3000.0), ("letra", 6, "C"), ("tipo", 7, "11 - Factura C"),
+    ]
+
+    assert srv.arreglar_solo(ej, 0, "Compras") == 3
+
+    assert not {a["tipo"] for a in ej.advertencias} & {"letra_distinta", "tipo_distinto", "importe_distinto"}
+    hechos = ej.clientes[0].corregidos["Compras"]["cambios"]
+    assert sorted((c["campo"], c["antes"], c["despues"]) for c in hechos)[1] == ("letra", "A-0002-00000006", "C-0002-00000006")
+    [aux] = [a["nombre"] for a in ej.clientes[0].archivos if a["nombre"].startswith("AUX - ")]
+    assert _filas_rojas(carpeta / aux) == 0
+    # Una segunda vez no hay nada para arreglar.
+    assert srv.arreglar_solo(ej, 0, "Compras") == 0

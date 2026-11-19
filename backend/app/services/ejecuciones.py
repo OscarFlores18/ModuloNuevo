@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..auditor import procesar_cruce
-from ..auditor.corregir_libro import LibroIlegible, corregir_libro
+from ..auditor.corregir_libro import LibroIlegible, cambios_de_errores, corregir_libro
 from ..bots.arca import FiltroNoDisponible
 from ..bots.sesiones import GestorSesiones
 from ..core import config
@@ -923,6 +923,11 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                 # (ventana de errores en la web).
                 for e in errores_auditoria:
                     ej.advertencias.append({**e, "cliente": cli.nombre})
+                # Letra, tipo, importe o CUIT distintos de ARCA: se corrigen solos en
+                # el Libro IVA del control y se vuelve a cruzar sobre el mismo AUX.
+                if paso.estado == "ok" and cambios_de_errores(errores_auditoria):
+                    cli.archivos = listar_archivos(carpeta, inicio_cliente)
+                    arreglar_solo(ej, indice, operacion)
 
             # Pasos que fallaron (login, empresa de Xubio, descargas...): también
             # van a la ventana de errores, con qué revisar.
@@ -1139,13 +1144,12 @@ def _archivo_de(cli: ClienteEnCurso, patron: str) -> str | None:
 
 
 def aplicar_cambios(ej: Ejecucion, cambios: list[dict]) -> dict:
-    """Corrige en una copia del Libro IVA las celdas elegidas (letra, tipo, importe o
-    CUIT con el dato de ARCA) y vuelve a correr el cruce con esa copia.
+    """Corrige en el Libro IVA del control las celdas elegidas (letra, tipo, importe o
+    CUIT con el dato de ARCA) y vuelve a correr el cruce sobre el mismo AUX.
 
-    Por cliente y operación queda «IVA … - corregido.xlsx» (cada vez se corrige sobre el
-    último corregido) y «AUX … - corregido.xlsx», que pasa a ser el activo para bajar y
-    para «Faltantes a Xubio». Los hallazgos y el resumen de esa operación se reemplazan
-    por los del cruce nuevo.
+    No quedan copias aparte: el Libro IVA y el «AUX … N° control.xlsx» de la carpeta
+    del control se reemplazan por los corregidos (lo arreglado deja de estar en rojo).
+    Los hallazgos y el resumen de esa operación se reemplazan por los del cruce nuevo.
     """
     if ej.estado not in ESTADOS_FINALES:
         raise ErrorEjecucion("El control todavía está corriendo.", 409)
@@ -1188,6 +1192,34 @@ def aplicar_cambios(ej: Ejecucion, cambios: list[dict]) -> dict:
             _lock_aplicar.release()
 
 
+def arreglar_solo(ej: Ejecucion, indice: int, operacion: str, pasadas: int = 3) -> int:
+    """Corrige con el dato de ARCA lo que el cruce encontró distinto (letra, tipo,
+    importe, CUIT) y vuelve a cruzar. Si al re-cruzar aparece otro par para corregir
+    (por ejemplo, la letra ya está bien pero el importe no) se repite, hasta ``pasadas``
+    veces. Lo que no se pudo corregir sigue como hallazgo. Devuelve cuántos arregló."""
+    cli = ej.clientes[indice]
+    intentados: set[tuple] = set()
+    total = 0
+    for _ in range(pasadas):
+        errores = [a for a in ej.advertencias if a.get("cliente") == cli.nombre and a.get("operacion") == operacion]
+        cambios = [
+            c for c in cambios_de_errores(errores)
+            if (c["campo"], c["cuit"], c["pv"], c["numero"]) not in intentados
+        ]
+        if not cambios:
+            break
+        intentados.update((c["campo"], c["cuit"], c["pv"], c["numero"]) for c in cambios)
+        try:
+            r = _aplicar_en(ej, indice, operacion, cambios)
+        except ErrorEjecucion as exc:
+            ej.registrar(f" -> No se pudo corregir solo {cli.nombre} · {operacion}: {exc.mensaje}", "aviso")
+            break
+        total += r["aplicados"]
+        if not r["aplicados"]:
+            break
+    return total
+
+
 def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict]) -> dict:
     cli = ej.clientes[indice]
     if not cli.carpeta or not Path(cli.carpeta).is_dir():
@@ -1202,28 +1234,35 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
         raise ErrorEjecucion(
             f"{cli.nombre} · {operacion}: falta {', '.join(faltan)} en la carpeta del control.", 422
         )
-    libro_corr = carpeta / _con_sufijo(libro)
-    aux_corr = carpeta / _con_sufijo(aux)
-    # Se corrige sobre lo ya corregido: los cambios anteriores no se pierden.
-    origen = libro_corr if libro_corr.is_file() else carpeta / libro
-    # Si el re-cruce falla, el Libro IVA corregido vuelve a como estaba: así el
-    # archivo y los hallazgos guardados nunca quedan desparejos.
-    previo_libro = libro_corr.read_bytes() if libro_corr.is_file() else None
+    ruta_libro = carpeta / libro
+    ruta_aux = carpeta / aux
+    # Controles viejos dejaban copias «… - corregido»: si están, se parte de esa
+    # (tiene los cambios anteriores) y después se borran.
+    viejos = [p for p in (carpeta / _con_sufijo(libro), carpeta / _con_sufijo(aux)) if p.is_file()]
+    origen = viejos[0] if viejos and viejos[0].name == _con_sufijo(libro) else ruta_libro
+    # Si algo falla, el Libro IVA y el AUX vuelven a como estaban: así los archivos
+    # y los hallazgos guardados nunca quedan desparejos.
     try:
-        hecho = corregir_libro(origen, libro_corr, [{k: v for k, v in c.items() if k not in ("cliente", "operacion")} for c in cambios])
+        previo_libro = ruta_libro.read_bytes()
+        previo_aux = ruta_aux.read_bytes() if ruta_aux.is_file() else None
+    except OSError as exc:
+        raise ErrorEjecucion(f"No se pudo leer el Libro IVA de {cli.nombre}: {exc}", 422) from exc
+    try:
+        hecho = corregir_libro(origen, ruta_libro, [{k: v for k, v in c.items() if k not in ("cliente", "operacion")} for c in cambios])
     except ArchivoEnUso as exc:
         raise ErrorEjecucion(f"{cli.nombre} · {operacion}: {exc}", 409) from exc
     except (LibroIlegible, OSError) as exc:
         raise ErrorEjecucion(f"No se pudo corregir el Libro IVA de {cli.nombre}: {exc}", 422) from exc
 
     def deshacer_libro() -> None:
-        try:
-            if previo_libro is None:
-                libro_corr.unlink(missing_ok=True)
-            else:
-                libro_corr.write_bytes(previo_libro)
-        except OSError:
-            pass
+        for ruta, previo in ((ruta_libro, previo_libro), (ruta_aux, previo_aux)):
+            try:
+                if previo is None:
+                    ruta.unlink(missing_ok=True)
+                else:
+                    ruta.write_bytes(previo)
+            except OSError:
+                pass
 
     errores: list[dict] = []
     resumenes: list[dict] = []
@@ -1236,8 +1275,8 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
             ej.parametros["hasta"],
             str(carpeta),
             ruta_arca_manual=str(carpeta / arca),
-            ruta_xubio_manual=str(libro_corr),
-            ruta_salida_manual=str(aux_corr),
+            ruta_xubio_manual=str(ruta_libro),
+            ruta_salida_manual=str(ruta_aux),
             log=log.append,
             avisar_errores=errores.extend,
             avisar_resumen=resumenes.append,
@@ -1266,12 +1305,17 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
         r for r in ej.resumenes if not (r.get("cliente") == cli.nombre and r.get("operacion") == operacion)
     ] + [{**r, "cliente": cli.nombre} for r in resumenes]
 
-    nombres = {a["nombre"] for a in cli.archivos} | {libro_corr.name, aux_corr.name}
+    for p in viejos:
+        try:
+            p.unlink()
+        except OSError:
+            pass
+    nombres = {a["nombre"] for a in cli.archivos if not es_corregido(a["nombre"])}
     cli.archivos = [a for a in listar_archivos(carpeta) if a["nombre"] in nombres]
     previo = cli.corregidos.get(operacion) or {}
     cli.corregidos[operacion] = {
-        "libro": libro_corr.name,
-        "aux": aux_corr.name,
+        "libro": ruta_libro.name,
+        "aux": ruta_aux.name,
         "fecha": _ahora(),
         "cambios": list(previo.get("cambios") or []) + [
             {k: v for k, v in c.items() if k in ("campo", "cuit", "pv", "numero", "comprobante", "valor_arca", "antes", "despues")}
@@ -1279,8 +1323,8 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
         ],
     }
     ej.registrar(
-        f"[CAMBIOS] {cli.nombre} · {operacion}: {len(hecho['aplicados'])} aplicado(s) en "
-        f"«{libro_corr.name}»; nuevo control «{aux_corr.name}».",
+        f"[ARREGLADO] {cli.nombre} · {operacion}: {len(hecho['aplicados'])} error(es) corregido(s) "
+        f"con el dato de ARCA en «{ruta_libro.name}»; control actualizado «{ruta_aux.name}».",
         "ok",
     )
     return {
@@ -1289,6 +1333,6 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
         "operacion": operacion,
         "aplicados": len(hecho["aplicados"]),
         "no_aplicados": hecho["no_aplicados"],
-        "libro": libro_corr.name,
-        "aux": aux_corr.name,
+        "libro": ruta_libro.name,
+        "aux": ruta_aux.name,
     }
