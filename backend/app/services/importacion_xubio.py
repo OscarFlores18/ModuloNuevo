@@ -92,7 +92,8 @@ def preparar(
 
     def trabajar() -> None:
         try:
-            with SesionXubio(cred.usuario, cred.clave, log=anotar) as sesion:
+            # Siempre a la vista: la persona revisa y aprieta «Importar».
+            with SesionXubio(cred.usuario, cred.clave, log=anotar, visible=True) as sesion:
                 sesion.cambiar_empresa(cliente)
                 salida.update(sesion.preparar_importacion_arca(operacion, str(ruta_zip)))
                 listo.set()

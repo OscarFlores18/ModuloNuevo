@@ -34,7 +34,7 @@ from playwright.sync_api import Page, sync_playwright
 from ..core import config
 from ..core.errors import BotError, LoginError, SesionVencida, TimeoutDescarga
 from ..core.models import BotResult
-from .navegador import capturas_permitidas, como_fuente, inyectar, lanzar, nuevo_contexto
+from .navegador import capturas_permitidas, como_fuente, inyectar, lanzar, nuevo_contexto, oculto
 
 # Marcas con las que ARCA contesta cuando la sesión ya no vale.
 MARCAS_SESION_VENCIDA = ("MISSING_AUTHENTICATION_INFO", "HTTP Status 401", "F1:username")
@@ -357,6 +357,13 @@ class SesionArca:
                 )
             texto = (pantalla.get("texto") or "").lower()
             pide = bool(pantalla.get("captcha")) or any(p in texto for p in _PALABRAS_PIDE_PERSONA)
+            if pide and oculto():
+                raise LoginError(
+                    "ARCA pidió un captcha o un paso extra y el navegador corre oculto. "
+                    "Volvé a intentar en unos minutos; si sigue pidiéndolo, abrí la app con "
+                    "MODULONUEVO_HEADLESS=0 para completarlo en la ventana de Chrome.",
+                    detalle={"pantalla": pantalla.get("url"), "esperaba": que},
+                )
             if pide and not avisado:
                 avisado = True
                 que_pide = "un captcha" if pantalla.get("captcha") else "un paso extra"

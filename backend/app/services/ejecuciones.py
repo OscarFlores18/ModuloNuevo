@@ -12,8 +12,8 @@ Las sesiones de ARCA y Xubio se comparten entre clientes y pasos: un solo login
 por credencial. ARCA se mantiene viva con pings al portal y se renueva sola si
 vence por inactividad (ver `bots/sesiones.py` y `bots/arca.py`).
 
-Hay una sola ejecución a la vez: los bots abren Chrome visible en la
-computadora del servidor (doble factor de ARCA, captcha de Xubio).
+Hay una sola ejecución a la vez: los bots usan Chrome (oculto por defecto) en la
+computadora del servidor; con MODULONUEVO_HEADLESS=0 se ve la ventana.
 """
 
 from __future__ import annotations

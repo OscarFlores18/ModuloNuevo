@@ -3170,3 +3170,59 @@ app-root > app-elegir-perfil {
   width: 100%;
   overflow-y: auto;
 }
+
+/* --- Subir a Xubio: los dos cuadros ocupan todo el alto libre ------------------ */
+@media (min-width: 1024px) {
+  app-convertir > .fx-grilla {
+    flex: 1 0 auto;
+  }
+
+  /* Textos del área vacía un poco más grandes para acompañar el cuadro. */
+  app-convertir .zona:not(.con-archivos) {
+    gap: 12px;
+    font-size: 1.1rem;
+  }
+
+  app-convertir .fx-vacio {
+    gap: 10px;
+    font-size: 1.05rem;
+  }
+
+  app-convertir .fx-vacio strong,
+  app-convertir .fx-vacio .font-semibold {
+    font-size: 1.2rem;
+  }
+}
+
+/* --- Sin franjas vacías: el contenido arranca arriba y la pantalla de cada
+       ruta ocupa el alto libre (en vez de quedar centrada con aire arriba). -- */
+app-root > .mf-main {
+  justify-content: flex-start;
+}
+
+.mf-main > router-outlet + * {
+  flex: 1 0 auto;
+}
+
+/* Clientes bloqueado: el cuadro de la contraseña, más grande y al centro del espacio libre. */
+app-clientes > section:has(#t-candado) {
+  margin-block: auto;
+  width: 100%;
+  max-width: 440px;
+  padding: 28px 32px !important;
+}
+
+app-clientes #t-candado {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+app-clientes section:has(#t-candado) .mf-ayuda {
+  font-size: 0.95rem;
+}
+
+app-clientes section:has(#t-candado) .mf-input,
+app-clientes section:has(#t-candado) .mf-btn {
+  height: 44px;
+  font-size: 1rem;
+}
