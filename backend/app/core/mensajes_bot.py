@@ -26,6 +26,9 @@ _SIN_RED = (
     "net::err_timed_out",
     "net::err_address_unreachable",
 )
+# Playwright con channel="chrome" y la PC sin Google Chrome:
+# «Chromium distribution 'chrome' is not found at C:\...\chrome.exe».
+_SIN_CHROME = ("distribution 'chrome' is not found",)
 _SIN_NAVEGADOR = ("executable doesn't exist", "playwright install")
 _TIMEOUT = re.compile(r"timeout (\d+)\s*ms exceeded", re.IGNORECASE)
 # «Page.click: …», «Locator.fill: …»: una llamada de Playwright que falló.
@@ -50,6 +53,11 @@ def mensaje_legible(texto: str, portal: str | None = None) -> str:
         return (
             f"No hubo conexión con {sitio}: revisá internet en la PC del servidor "
             "y volvé a correr el control."
+        )
+    if any(c in m for c in _SIN_CHROME):
+        return (
+            "Esta PC no tiene Google Chrome instalado y los bots lo necesitan. "
+            "Instalalo desde google.com/chrome y volvé a correr el control."
         )
     if any(c in m for c in _SIN_NAVEGADOR):
         return (

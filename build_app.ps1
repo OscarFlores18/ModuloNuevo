@@ -6,8 +6,14 @@
   1. Compila Angular en modo producción (la API queda en /api, relativa).
   2. Instala/verifica pywebview y PyInstaller en el entorno de Python (.venv).
   3. Empaqueta desktop.py con PyInstaller (--onedir, --noconsole) incluyendo el build de Angular.
+  4. Si está Inno Setup 6, arma además dist\ControlFCT-Setup.exe (un solo archivo
+     para instalar en otra PC, ver installer\ControlFCT.iss).
 
   Los datos del programa empaquetado viven en Documentos\ControlFCT (no en la carpeta del .exe).
+
+.PARAMETER Instalar
+  Al terminar, la instala en esta PC como un solo ícono (Escritorio y menú
+  Inicio, atajo Ctrl+Alt+F): corre instalar_app.ps1.
 
 .PARAMETER CopiarDatos
   Copia backend\data (clientes, credenciales cifradas, claves e historial) a
@@ -19,7 +25,8 @@
   .\build_app.ps1 -CopiarDatos
 #>
 param(
-    [switch]$CopiarDatos
+    [switch]$CopiarDatos,
+    [switch]$Instalar
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,7 +49,7 @@ if (-not (Test-Path $python)) {
 }
 
 # --- 1. Angular -----------------------------------------------------------------
-Paso '1/3 Compilando Angular (producción)'
+Paso '1/4 Compilando Angular (producción)'
 Push-Location (Join-Path $raiz 'frontend')
 try {
     if (-not (Test-Path 'node_modules')) {
@@ -58,12 +65,12 @@ $front = Join-Path $raiz 'frontend\dist\control-fct-frontend\browser'
 if (-not (Test-Path (Join-Path $front 'index.html'))) { throw "No está el build de Angular en $front" }
 
 # --- 2. Dependencias de escritorio ----------------------------------------------
-Paso '2/3 Verificando pywebview y PyInstaller'
+Paso '2/4 Verificando pywebview y PyInstaller'
 & $python -m pip install --disable-pip-version-check -q -r (Join-Path $raiz 'backend\requirements-desktop.txt')
 if ($LASTEXITCODE -ne 0) { throw 'pip install falló.' }
 
 # --- 3. PyInstaller -------------------------------------------------------------
-Paso '3/3 Empaquetando con PyInstaller'
+Paso '3/4 Empaquetando con PyInstaller'
 $argumentos = @(
     '-m', 'PyInstaller', 'desktop.py',
     '--noconfirm', '--clean',
@@ -102,6 +109,33 @@ if ($CopiarDatos) {
     }
 }
 
+# --- 4. Instalador (opcional) ---------------------------------------------------
+# Inno Setup 6 es gratis (https://jrsoftware.org/isdl.php). Sin él se saltea este paso.
+$iscc = @(
+    (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+    (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe')
+) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+$setup = Join-Path $raiz 'dist\ControlFCT-Setup.exe'
+# Uno viejo de otro build no puede pasar por el de esta versión.
+if (Test-Path $setup) { Remove-Item $setup -Force }
+if ($iscc) {
+    Paso '4/4 Armando el instalador (Inno Setup)'
+    & $iscc /Q (Join-Path $raiz 'installer\ControlFCT.iss')
+    if ($LASTEXITCODE -ne 0) { throw 'Inno Setup falló.' }
+} else {
+    Write-Host "`nSin Inno Setup 6: no se arma ControlFCT-Setup.exe (opcional)." -ForegroundColor Yellow
+}
+
 Write-Host "`nListo: $exe" -ForegroundColor Green
-Write-Host 'Para instalar en otra PC copiá la carpeta dist\ControlFCT entera (no solo el .exe).'
+if (Test-Path $setup) {
+    Write-Host "Instalador para otra PC: $setup (un solo archivo, sin administrador)."
+} else {
+    Write-Host 'Para otra PC: copiá la carpeta dist\ControlFCT entera e instalar_app.ps1, y corré el script allá.'
+}
 Write-Host "Los datos de la app quedan en $(Split-Path $destinoDatos)."
+
+if ($Instalar) {
+    Paso 'Instalando en esta PC (ícono + atajo)'
+    & (Join-Path $raiz 'instalar_app.ps1') -Origen (Join-Path $raiz 'dist\ControlFCT')
+}

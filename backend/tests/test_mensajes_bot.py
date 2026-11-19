@@ -16,6 +16,11 @@ from backend.app.services.ejecuciones import Ejecucion, _acciones_de_paso, Paso
         ("Page.goto: net::ERR_INTERNET_DISCONNECTED at https://xubio.com", "No hubo conexión con Xubio"),
         ("Page.wait_for_selector: Timeout 30000ms exceeded.", "Xubio no respondió a tiempo (se esperó 30 s)"),
         ("BrowserType.launch: Executable doesn't exist at C:\\x\\chrome.exe", "No se encontró el navegador"),
+        (
+            "BrowserType.launch: Chromium distribution 'chrome' is not found at C:\\x\\chrome.exe\n"
+            'Run "npx playwright install chrome"',
+            "no tiene Google Chrome instalado",
+        ),
         ("Locator.click: Element is not visible", "El bot no encontró en Xubio lo que esperaba"),
     ],
 )

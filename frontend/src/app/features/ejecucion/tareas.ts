@@ -90,7 +90,7 @@ export function ordenDe(a: Advertencia): { grupo: GrupoTarea; orden: string; des
         destino: { texto: 'Ir a Subir a Xubio', ruta: '/convertir-aux' },
       };
     case 'faltante_en_arca':
-      return { grupo: 'cliente', orden: `Preguntale al cliente por ${comprobantes(n)} que están en Xubio y no en ARCA` };
+      return { grupo: 'cliente', orden: `Preguntale al cliente por ${n === 1 ? 'el comprobante que está' : `los ${n} comprobantes que están`} en Xubio y no en ARCA` };
     case 'arca_vacio':
       return { grupo: 'primero', orden: 'Revisá el CUIT representado del cliente y volvé a correr el control', destino: CLIENTES };
     case 'xubio_vacio':

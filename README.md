@@ -313,6 +313,33 @@ Advertencias para el testeo en Render:
 
 ---
 
+## App de Windows (un solo ícono)
+
+La web empaquetada como programa: `desktop.py` levanta el backend y abre una
+ventana propia (WebView2, ya viene en Windows 10/11). No hace falta Python ni
+Node en la PC donde se usa; sí **Google Chrome** (los bots lo abren).
+
+```powershell
+.\build_app.ps1 -Instalar
+```
+
+- Arma `dist\ControlFCT\` (PyInstaller) y la instala en
+  `%LOCALAPPDATA%\Programs\ControlFCT`, con ícono en el Escritorio y en el menú
+  Inicio. **Ctrl+Alt+F** la abre desde cualquier lado o la trae al frente.
+- Si está [Inno Setup 6](https://jrsoftware.org/isdl.php), arma además
+  `dist\ControlFCT-Setup.exe`: un solo archivo para otra PC, sin pedir
+  administrador y con desinstalador en «Aplicaciones instaladas».
+- Sin Inno Setup, para otra PC: copiar `dist\ControlFCT` y `instalar_app.ps1`
+  y correr `powershell -ExecutionPolicy Bypass -File .\instalar_app.ps1`.
+- Desinstalar: `.\instalar_app.ps1 -Desinstalar`. Los datos
+  (`Documentos\ControlFCT`) no se borran nunca.
+
+El `.exe` no está firmado: si llega por internet (mail, Drive), SmartScreen
+puede mostrar «Windows protegió su PC» → «Más información» → «Ejecutar de
+todas formas». Con un certificado de firma de código deja de pasar.
+
+---
+
 ## Ejecutar la app de escritorio (legacy)
 
 ```powershell

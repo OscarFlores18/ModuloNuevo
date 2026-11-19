@@ -22,6 +22,7 @@ from typing import Callable, Iterator
 from urllib.parse import urlsplit
 
 from ..core import config
+from ..core.logging import get_logger
 from ..core.secreto import Secreto
 
 FuenteSecreto = Callable[[], Secreto]
@@ -67,6 +68,27 @@ def opciones_lanzamiento(*, maximizado: bool = False) -> dict[str, object]:
     if config.PLAYWRIGHT_CHANNEL:
         opciones["channel"] = config.PLAYWRIGHT_CHANNEL
     return opciones
+
+
+def chrome_disponible() -> bool:
+    """False si los bots usan Google Chrome (channel="chrome") y esta PC no lo
+    tiene: así la app avisa antes de correr un control que va a fallar."""
+    if config.PLAYWRIGHT_CHANNEL != "chrome":
+        return True
+    if os.name != "nt":
+        import shutil
+
+        return any(shutil.which(n) for n in ("google-chrome", "google-chrome-stable"))
+    bases = (
+        os.environ.get("PROGRAMFILES"),
+        os.environ.get("PROGRAMFILES(X86)"),
+        os.environ.get("LOCALAPPDATA"),
+    )
+    return any(
+        os.path.isfile(os.path.join(b, "Google", "Chrome", "Application", "chrome.exe"))
+        for b in bases
+        if b
+    )
 
 
 def lanzar(pw, *, maximizado: bool = False):
@@ -147,10 +169,13 @@ def _instalar_filtro_salida(context, log: Callable[[str], None]) -> None:
             nuevo = host not in avisados
             avisados.add(host)
         if nuevo:
+            # Solo al log técnico: son trackers y widgets de las páginas
+            # (googletagmanager, facebook...) y en el registro del control eran ruido.
             accion = "bloqueó" if modo == "bloquear" else "detectó"
-            log(
-                f"      [AVISO]: El filtro de salida {accion} una conexión a «{host}» "
-                "(no está en la lista blanca)."
+            get_logger("modulonuevo.filtro").info(
+                "El filtro de salida %s una conexión a «%s» (no está en la lista blanca).",
+                accion,
+                host,
             )
         if modo == "bloquear":
             route.abort("blockedbyclient")

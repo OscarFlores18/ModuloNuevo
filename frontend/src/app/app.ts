@@ -3,6 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { filter } from 'rxjs';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { Usuario } from './core/models';
+import { ApiService } from './core/services/api.service';
 import { ClientesStore } from './core/services/clientes.store';
 import { EjecucionStore } from './core/services/ejecucion.store';
 import { PerspectivaService } from './core/services/perspectiva.service';
@@ -27,6 +28,12 @@ export class App {
   private readonly recorrido = inject(RecorridoService);
   protected readonly perspectiva = inject(PerspectivaService);
   private readonly router = inject(Router);
+  private readonly api = inject(ApiService);
+
+  /** El backend corre en esta PC (app de escritorio o local), no en un servidor. */
+  protected readonly enEstaPc = signal(true);
+  /** Los bots necesitan Google Chrome y no está instalado donde corre el backend. */
+  protected readonly faltaChrome = signal(false);
 
   /** Cuándo se trajeron por última vez los clientes y las ejecuciones del servidor. */
   protected readonly ultimaActualizacion = signal<Date | null>(null);
@@ -47,6 +54,13 @@ export class App {
   constructor() {
     // Para el contador de clientes en la pestaña.
     void this.actualizar();
+    this.api.ajustes().then(
+      (a) => {
+        this.enEstaPc.set(a.dialogos_locales);
+        this.faltaChrome.set(a.chrome_instalado === false);
+      },
+      () => undefined,
+    );
     // El recorrido solo se abre con el «?»; al cambiar de pantalla se cierra.
     this.router.events
       .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd), takeUntilDestroyed())

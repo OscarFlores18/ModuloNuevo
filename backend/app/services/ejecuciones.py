@@ -42,6 +42,7 @@ from ..bots.xubio_common import es_url_de_xubio
 from ..core.controles import descartar_si_vacia, nueva_carpeta_control, numero_de_carpeta
 from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente, nombre_carpeta
 from ..core.mensajes_bot import mensaje_legible, portal_de_paso
+from ..core.logging import get_logger
 from ..core.saneo import sanear
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from .credenciales import ServicioCredenciales
@@ -51,6 +52,11 @@ MAX_HISTORIAL = 100
 # Del registro técnico se guarda en disco solo el final (alcanza para ver qué falló).
 MAX_LINEAS_LOG_GUARDADAS = 500
 MAX_LINEAS_LOG = 5000
+# debug_log.txt de la carpeta de salidas: al pasar este tamaño se renombra a
+# debug_log.anterior.txt (se pisa el anterior) y se empieza uno nuevo.
+MAX_BYTES_DEBUG_LOG = 2_000_000
+
+_log_tecnico = get_logger("modulonuevo.ejecucion")
 
 ESTADOS_FINALES = {"finalizada", "cancelada", "error"}
 
@@ -161,14 +167,23 @@ class Ejecucion:
         self._a_disco(texto)
 
     def _a_disco(self, texto: str) -> None:
+        # También al log técnico (logs/backend.log, rota solo): ahí queda qué
+        # pasó en cada control aunque se borre la carpeta de salidas.
+        _log_tecnico.info("[%s] %s", self.id, texto.strip())
         # Como la app de escritorio: debug_log.txt en la carpeta elegida.
         try:
             carpeta = Path(self.parametros["carpeta"])
         except (KeyError, TypeError):
             return
         if carpeta.is_dir():
+            archivo = carpeta / "debug_log.txt"
             try:
-                with open(carpeta / "debug_log.txt", "a", encoding="utf-8") as f:
+                if archivo.is_file() and archivo.stat().st_size > MAX_BYTES_DEBUG_LOG:
+                    archivo.replace(carpeta / "debug_log.anterior.txt")
+            except OSError:
+                pass
+            try:
+                with open(archivo, "a", encoding="utf-8") as f:
                     f.write(f"[{datetime.now():%H:%M:%S}] {texto}\n")
             except OSError:
                 pass
