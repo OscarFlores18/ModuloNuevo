@@ -15,7 +15,6 @@ CLAVE_FISCAL = "Clave-Fiscal-Compartida-9"
 @pytest.fixture(autouse=True)
 def _limpio(monkeypatch):
     monkeypatch.delenv("MODULONUEVO_CLIENTES_CLAVE", raising=False)
-    acceso_clientes._tokens.clear()
     acceso_clientes._fallos.update(cantidad=0, hasta=0.0, bloqueos=0)
 
 
@@ -184,3 +183,22 @@ def test_cuenta_de_xubio_y_api_de_jobs_piden_la_contrasena(entorno):
     assert client.get("/api/jobs", headers=con).status_code == 200
     # Leer sigue abierto y nunca devuelve la contraseña.
     assert "pass" not in client.get("/api/xubio/credenciales").json()
+
+
+def test_la_contrasena_se_pide_una_sola_vez(entorno, tmp_path):
+    """El token no vence, sobrevive a un reinicio del servidor y solo «Bloquear» lo corta."""
+    client, _ = entorno
+    r = client.post("/api/clientes/acceso", json={"clave": "estudio2026"}).json()
+    token = r["token"]
+    assert r["expira"] > __import__("time").time() + 5 * 365 * 24 * 3600
+    # Lo guardado es el hash, nunca el token.
+    texto = (tmp_path / "data" / "acceso_clientes_sesiones.json").read_text(encoding="utf-8")
+    assert token not in texto
+
+    # «Reinicio»: no queda nada en memoria y el token sigue valiendo.
+    import importlib
+    importlib.reload(acceso_clientes)
+    assert _alta(client, {"X-Clientes-Token": token}).status_code == 201
+
+    client.delete("/api/clientes/acceso", headers={"X-Clientes-Token": token})
+    assert client.get("/api/clientes/acceso", headers={"X-Clientes-Token": token}).json()["desbloqueado"] is False

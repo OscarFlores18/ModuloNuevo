@@ -44,7 +44,8 @@ def test_endpoint_corre_el_bot_sin_importar(cliente_demo, monkeypatch):
     llamadas = []
 
     class SesionFalsa:
-        def __init__(self, usuario, clave, log=print):
+        def __init__(self, usuario, clave, log=print, visible=None):
+            assert visible is True  # «Cargar en Xubio» siempre muestra la ventana
             self._page = None
 
         def __enter__(self):
@@ -62,6 +63,7 @@ def test_endpoint_corre_el_bot_sin_importar(cliente_demo, monkeypatch):
             return {"archivo_cargado": True, "boton_importar_habilitado": True}
 
     monkeypatch.setattr(srv, "SesionXubio", SesionFalsa)
+    monkeypatch.setattr(srv, "hay_pantalla", lambda: True)
 
     class Cred:
         usuario, clave = "u", "c"
@@ -75,3 +77,21 @@ def test_endpoint_corre_el_bot_sin_importar(cliente_demo, monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json()["boton_importar_habilitado"] is True
     assert llamadas == [("empresa", cliente), ("zip", "Compras", [f"{PREFIJO_CSV} Compras - X.csv"])]
+
+
+def test_en_un_servidor_sin_pantalla_pide_descargar(cliente_demo, monkeypatch):
+    """En la página (Render, sin pantalla) no se abre Chrome: se pide bajar el archivo."""
+
+    def no_abrir(*a, **k):
+        raise AssertionError("no tenía que abrir Chrome")
+
+    monkeypatch.setattr(srv, "SesionXubio", no_abrir)
+    monkeypatch.setattr(srv, "hay_pantalla", lambda: False)
+    cliente = next(iter(cliente_demo.get("/api/clientes").json()))["nombre"]
+    r = cliente_demo.post("/api/convertir-aux/xubio", json={
+        "cliente": cliente, "operacion": "Compras",
+        "zip": base64.b64encode(_zip(f"{PREFIJO_CSV} Compras - X.csv")).decode(),
+    })
+    assert r.status_code == 409
+    assert "Descargar archivo" in r.json()["detail"]["mensaje"]
+    assert cliente_demo.get("/api/ajustes").json()["ventana_xubio"] in (True, False)

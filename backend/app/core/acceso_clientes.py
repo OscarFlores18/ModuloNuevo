@@ -8,8 +8,11 @@ claves fiscales). «Nuevo control» sigue funcionando sin pedirla.
   en ``DATA_DIR/acceso_clientes.json``.
 - Si se define ``MODULONUEVO_CLIENTES_CLAVE`` (servidor), esa manda y no se
   puede crear otra desde la página.
-- Entrar devuelve un token de sesión (8 h, en memoria del backend) que el
-  front manda en ``X-Clientes-Token``.
+- Entrar devuelve un token que el front guarda y manda en ``X-Clientes-Token``.
+  Se pide **una sola vez** en cada computadora: el token no vence y sobrevive a
+  reinicios del servidor (se guarda solo su hash en
+  ``DATA_DIR/acceso_clientes_sesiones.json``). Deja de valer con «Bloquear» o si
+  cambia la contraseña.
 - Tras 5 intentos fallidos se bloquea 30 s; cada bloqueo seguido duplica la
   espera (30 s, 1 min, 2 min...) hasta 1 h. Entrar bien lo reinicia.
 - Mientras no haya contraseña configurada, la sección queda abierta.
@@ -29,14 +32,14 @@ from pathlib import Path
 
 from . import config
 
-DURACION_S = 8 * 3600
+# Sin vencimiento práctico: la contraseña se pide una vez y no se vuelve a pedir.
+DURACION_S = 10 * 365 * 24 * 3600
 MIN_LARGO = 8
 MAX_FALLOS = 5
 ESPERA_FALLOS_S = 30
 ESPERA_MAXIMA_S = 3600
 
 _lock = threading.Lock()
-_tokens: dict[str, float] = {}
 _fallos = {"cantidad": 0, "hasta": 0.0, "bloqueos": 0}
 
 
@@ -49,6 +52,10 @@ class AccesoDenegado(Exception):
 
 def _ruta() -> Path:
     return Path(config.DATA_DIR) / "acceso_clientes.json"
+
+
+def _ruta_sesiones() -> Path:
+    return Path(config.DATA_DIR) / "acceso_clientes_sesiones.json"
 
 
 def _clave_env() -> str:
@@ -96,13 +103,50 @@ def _crear(clave: str) -> None:
     temporal.replace(ruta)
 
 
+# --- Tokens guardados (solo su hash) -------------------------------------------
+
+
+def _huella() -> str:
+    """Identifica la contraseña vigente: si cambia, los tokens viejos dejan de valer."""
+    env = _clave_env()
+    base = "env:" + env if env else "archivo:" + ((_guardado() or {}).get("hash") or "")
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _leer_tokens() -> dict[str, float]:
+    try:
+        datos = json.loads(_ruta_sesiones().read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(datos, dict) or datos.get("de") != _huella():
+        return {}
+    tokens = datos.get("tokens")
+    return tokens if isinstance(tokens, dict) else {}
+
+
+def _guardar_tokens(tokens: dict[str, float]) -> None:
+    ruta = _ruta_sesiones()
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    temporal = ruta.with_suffix(".tmp")
+    temporal.write_text(json.dumps({"de": _huella(), "tokens": tokens}), encoding="utf-8")
+    try:
+        os.chmod(temporal, stat.S_IRUSR | stat.S_IWUSR)
+    except OSError:
+        pass
+    temporal.replace(ruta)
+
+
 def _nuevo_token() -> tuple[str, float]:
     token = secrets.token_urlsafe(32)
-    vence = time.time() + DURACION_S
-    _tokens[token] = vence
-    # Limpieza de vencidos.
-    for viejo in [t for t, v in _tokens.items() if v < time.time()]:
-        _tokens.pop(viejo, None)
+    ahora = time.time()
+    vence = ahora + DURACION_S
+    tokens = {h: v for h, v in _leer_tokens().items() if v >= ahora}
+    tokens[_hash_token(token)] = vence
+    _guardar_tokens(tokens)
     return token, vence
 
 
@@ -142,18 +186,18 @@ def token_valido(token: str | None) -> bool:
     if not token:
         return False
     with _lock:
-        vence = _tokens.get(token)
-        if vence is None:
-            return False
-        if vence < time.time():
-            _tokens.pop(token, None)
-            return False
-        return True
+        vence = _leer_tokens().get(_hash_token(token))
+        return isinstance(vence, (int, float)) and vence >= time.time()
 
 
 def salir(token: str | None) -> None:
+    """«Bloquear»: ese token deja de valer (en esta computadora se vuelve a pedir)."""
+    if not token:
+        return
     with _lock:
-        _tokens.pop(token or "", None)
+        tokens = _leer_tokens()
+        if tokens.pop(_hash_token(token), None) is not None:
+            _guardar_tokens(tokens)
 
 
 def autorizado(token: str | None) -> bool:

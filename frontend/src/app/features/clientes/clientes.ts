@@ -37,7 +37,7 @@ import { ClienteForm } from './cliente-form';
             @if (acceso.configurada()) {
               Escribí la contraseña para ver y editar los clientes.
             } @else {
-              Se va a pedir cada vez que se abra esta sección. Mínimo 8 caracteres.
+              Se pide una sola vez en esta computadora. Mínimo 8 caracteres.
             }
           </p>
           <input

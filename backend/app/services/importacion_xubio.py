@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path
 
 from ..auditor.csv_arca import PREFIJO_CSV
+from ..bots.navegador import hay_pantalla
 from ..bots.xubio import SesionXubio
 from ..core.storage import ClientesRepository, CredencialesXubioRepository
 from . import ejecuciones as ejecuciones_srv
@@ -68,6 +69,14 @@ def preparar(
     ErrorImportacion. La ventana de Chrome queda abierta en otro hilo."""
     if operacion not in ("Ventas", "Compras"):
         raise ErrorImportacion("Operación inválida: Ventas o Compras.")
+    if not hay_pantalla():
+        # En la página (Render) Chrome corre en el servidor: nadie vería la ventana
+        # para apretar «Importar», y abrirla visible falla sin pantalla.
+        raise ErrorImportacion(
+            "En la página web Xubio no se puede abrir en tu pantalla: tocá «Descargar "
+            "archivo» e importalo a mano en Xubio (Importar > Desde Mis Comprobantes).",
+            409,
+        )
     if cliente not in clientes.listar_publico():
         raise ErrorImportacion(f"«{cliente}» no está en Clientes.", 404)
     if ejecuciones_srv.activa() is not None:
@@ -92,7 +101,8 @@ def preparar(
 
     def trabajar() -> None:
         try:
-            with SesionXubio(cred.usuario, cred.clave, log=anotar) as sesion:
+            # Siempre a la vista: la persona revisa y aprieta «Importar».
+            with SesionXubio(cred.usuario, cred.clave, log=anotar, visible=True) as sesion:
                 sesion.cambiar_empresa(cliente)
                 salida.update(sesion.preparar_importacion_arca(operacion, str(ruta_zip)))
                 listo.set()

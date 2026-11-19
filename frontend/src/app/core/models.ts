@@ -34,6 +34,8 @@ export interface Ajustes {
   dialogos_locales: boolean;
   /** false: los bots usan Google Chrome y la PC donde corre el backend no lo tiene. */
   chrome_instalado: boolean;
+  /** false en la página (servidor sin pantalla): «Cargar en Xubio» no se puede usar, se descarga el archivo. */
+  ventana_xubio?: boolean;
   xubio: { usuario: string; tiene_clave: boolean; recordar: boolean; del_servidor: boolean };
 }
 

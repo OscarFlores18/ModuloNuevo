@@ -258,8 +258,11 @@ class SesionXubio:
         password: str,
         log: Callable[[str], None] = print,
         playwright=None,
+        visible: bool | None = None,
     ) -> None:
         self.usuario = usuario or ""
+        # None = lo que diga la configuración (oculto por defecto).
+        self._visible = visible
         self._fuente_pass, self._pass_jit = como_fuente(password)
         self.log = log
         # Playwright sync admite uno solo por hilo: si viene de afuera, no es nuestro.
@@ -276,7 +279,7 @@ class SesionXubio:
             return self
         self._pw = self._pw_ajeno or sync_playwright().start()
         try:
-            self._browser = lanzar(self._pw)
+            self._browser = lanzar(self._pw, visible=self._visible)
             self._context = nuevo_contexto(self._browser, self.log, accept_downloads=True)
             self._page = self._context.new_page()
             self._matar_popup = crear_matar_popup(self._page)

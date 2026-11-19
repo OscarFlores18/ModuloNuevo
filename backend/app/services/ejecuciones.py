@@ -12,8 +12,8 @@ Las sesiones de ARCA y Xubio se comparten entre clientes y pasos: un solo login
 por credencial. ARCA se mantiene viva con pings al portal y se renueva sola si
 vence por inactividad (ver `bots/sesiones.py` y `bots/arca.py`).
 
-Hay una sola ejecución a la vez: los bots abren Chrome visible en la
-computadora del servidor (doble factor de ARCA, captcha de Xubio).
+Hay una sola ejecución a la vez: los bots usan Chrome (oculto por defecto) en la
+computadora del servidor; con MODULONUEVO_HEADLESS=0 se ve la ventana.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from datetime import datetime
 from pathlib import Path
 
 from ..auditor import procesar_cruce
-from ..auditor.corregir_libro import LibroIlegible, cambios_de_errores, corregir_libro
+from ..auditor.corregir_libro import LibroIlegible, corregir_libro
 from ..bots.arca import FiltroNoDisponible
 from ..bots.sesiones import GestorSesiones
 from ..core import config
@@ -938,11 +938,6 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                 # (ventana de errores en la web).
                 for e in errores_auditoria:
                     ej.advertencias.append({**e, "cliente": cli.nombre})
-                # Letra, tipo, importe o CUIT distintos de ARCA: se corrigen solos en
-                # el Libro IVA del control y se vuelve a cruzar sobre el mismo AUX.
-                if paso.estado == "ok" and cambios_de_errores(errores_auditoria):
-                    cli.archivos = listar_archivos(carpeta, inicio_cliente)
-                    arreglar_solo(ej, indice, operacion)
 
             # Pasos que fallaron (login, empresa de Xubio, descargas...): también
             # van a la ventana de errores, con qué revisar.
@@ -1207,34 +1202,6 @@ def aplicar_cambios(ej: Ejecucion, cambios: list[dict]) -> dict:
             _lock_aplicar.release()
 
 
-def arreglar_solo(ej: Ejecucion, indice: int, operacion: str, pasadas: int = 3) -> int:
-    """Corrige con el dato de ARCA lo que el cruce encontró distinto (letra, tipo,
-    importe, CUIT) y vuelve a cruzar. Si al re-cruzar aparece otro par para corregir
-    (por ejemplo, la letra ya está bien pero el importe no) se repite, hasta ``pasadas``
-    veces. Lo que no se pudo corregir sigue como hallazgo. Devuelve cuántos arregló."""
-    cli = ej.clientes[indice]
-    intentados: set[tuple] = set()
-    total = 0
-    for _ in range(pasadas):
-        errores = [a for a in ej.advertencias if a.get("cliente") == cli.nombre and a.get("operacion") == operacion]
-        cambios = [
-            c for c in cambios_de_errores(errores)
-            if (c["campo"], c["cuit"], c["pv"], c["numero"]) not in intentados
-        ]
-        if not cambios:
-            break
-        intentados.update((c["campo"], c["cuit"], c["pv"], c["numero"]) for c in cambios)
-        try:
-            r = _aplicar_en(ej, indice, operacion, cambios)
-        except ErrorEjecucion as exc:
-            ej.registrar(f" -> No se pudo corregir solo {cli.nombre} · {operacion}: {exc.mensaje}", "aviso")
-            break
-        total += r["aplicados"]
-        if not r["aplicados"]:
-            break
-    return total
-
-
 def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict]) -> dict:
     cli = ej.clientes[indice]
     if not cli.carpeta or not Path(cli.carpeta).is_dir():
@@ -1338,8 +1305,8 @@ def _aplicar_en(ej: Ejecucion, indice: int, operacion: str, cambios: list[dict])
         ],
     }
     ej.registrar(
-        f"[ARREGLADO] {cli.nombre} · {operacion}: {len(hecho['aplicados'])} error(es) corregido(s) "
-        f"con el dato de ARCA en «{ruta_libro.name}»; control actualizado «{ruta_aux.name}».",
+        f"[CAMBIOS] {cli.nombre} · {operacion}: {len(hecho['aplicados'])} aplicado(s) con el dato "
+        f"de ARCA en «{ruta_libro.name}»; control actualizado «{ruta_aux.name}».",
         "ok",
     )
     return {

@@ -2331,7 +2331,29 @@ details[open] > summary .ej-chevron {
   text-decoration: line-through;
 }
 
-/* Errores que el control arregló solo: qué se cambió en el Excel */
+/* Aplicar cambios: elegido (todavía no hecho), en curso y confirmado por el servidor */
+.tr-elegida {
+  background: #f0fdf4;
+  border-radius: 8px;
+}
+
+.tr-check-aplicar {
+  accent-color: #15803d;
+}
+
+.tr-pendiente-aplicar {
+  color: #15803d;
+}
+
+.tr-aplicando {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  color: var(--color-acento);
+}
+
+/* Lo que ya se aplicó: qué se cambió en el Excel */
 .tr-actualizado {
   display: flex;
   flex-wrap: wrap;
@@ -2965,3 +2987,242 @@ details[open] > summary .ej-chevron {
   font-size: 10.5px;
 }
 
+
+/* --- Vista compacta: todo entra en la ventana (100vh) ------------------------
+   Mismo HTML y mismo orden; solo menos aire. La app ocupa exactamente el alto de
+   la ventana: el encabezado queda fijo arriba y el contenido se centra en el
+   resto. Si una pantalla trae más de lo que entra (historial, tablas largas),
+   se desplaza solo esa zona, nunca la página entera. */
+
+app-root {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow: hidden;
+}
+
+app-root > .cf-header {
+  flex: none;
+  width: 100%;
+  position: static;
+}
+
+app-root > .mf-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  justify-content: safe center;
+  gap: 8px;
+  padding: 8px var(--margen-lateral) 4px;
+  scrollbar-width: thin;
+}
+
+.mf-main > router-outlet + * {
+  gap: 8px;
+}
+
+/* Encabezado */
+.cf-header-interior {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+.cf-header-interior > div:first-child {
+  margin-bottom: 6px;
+}
+.cf-header h1 {
+  font-size: 1.2rem;
+}
+.cf-tab {
+  height: 34px;
+  min-width: 130px;
+  padding: 0 14px;
+  font-size: 0.93rem;
+  border-radius: 8px;
+}
+.cf-control {
+  height: 34px;
+  font-size: 0.88rem;
+  border-radius: 8px;
+}
+
+/* Pasos del trabajo y pie */
+.cf-circuito {
+  margin-bottom: 0;
+  padding: 3px 6px;
+}
+.cf-circuito-paso {
+  padding: 2px 8px 2px 4px;
+}
+.cf-circuito-num {
+  width: 18px;
+  height: 18px;
+}
+.mf-pie {
+  padding: 0 2px;
+  font-size: 0.74rem;
+}
+
+/* Tarjetas y títulos */
+.mf-panel,
+.mf-panel.\!py-3 {
+  padding: 8px 12px !important;
+  border-radius: 12px;
+}
+.mf-panel-titulo,
+.mf-panel-titulo.\!mb-2 {
+  margin-bottom: 6px !important;
+  gap: 8px;
+}
+.mf-panel h3 {
+  margin: 10px 0 6px;
+}
+app-encabezado h2 {
+  font-size: 1.1rem;
+}
+app-encabezado .mf-sub {
+  font-size: 0.8rem;
+}
+
+/* Campos y botones: más bajos, igual de legibles */
+.mf-input {
+  min-height: 34px;
+  padding: 5px 10px;
+  font-size: 0.9rem;
+}
+.mf-campo {
+  gap: 2px;
+}
+.mf-campo-etiqueta {
+  margin-bottom: 3px;
+}
+.mf-segmentado {
+  padding: 2px;
+}
+.mf-segmentado label {
+  padding: 4px 12px;
+  font-size: 0.9rem;
+}
+.mf-lista-cab {
+  padding: 5px 10px;
+}
+.mf-item {
+  min-height: 30px;
+  padding: 4px 8px;
+}
+@media (pointer: fine) {
+  .mf-btn {
+    min-height: 36px;
+    padding: 6px 16px;
+    font-size: 0.95rem;
+    border-radius: 9px;
+  }
+  .mf-btn-grande {
+    min-height: 42px;
+    padding: 8px 22px;
+    font-size: 1.02rem;
+  }
+  .mf-btn-chico {
+    min-height: 32px;
+    padding: 5px 12px;
+    font-size: 0.88rem;
+  }
+  .mf-btn-mini {
+    min-height: 28px;
+    padding: 3px 10px;
+    font-size: 0.82rem;
+  }
+}
+
+/* Nuevo control: menos separación y listas que usan el alto que sobra */
+.nc-grilla,
+.nc-lado {
+  gap: 10px;
+}
+.nc-ejecutar {
+  gap: 6px;
+}
+@media (min-width: 1024px) {
+  .nc-lado {
+    top: 0;
+  }
+  .nc-lista-alta {
+    min-height: 8rem;
+    max-height: calc(100dvh - 310px);
+  }
+  /* Lo que acompañaba al bajar ahora se pega arriba de la zona que se desplaza. */
+  .ej-layout-con-historial .ej-historial {
+    top: 0;
+    max-height: calc(100dvh - 110px);
+  }
+  .cl-lado {
+    top: 0;
+    max-height: calc(100dvh - 205px);
+  }
+}
+
+/* «¿Cómo deseas ingresar?» ocupa la ventana; si no entra, se desplaza adentro. */
+app-root > .pf-pantalla,
+app-root > app-elegir-perfil {
+  min-height: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  overflow-y: auto;
+}
+
+/* --- Subir a Xubio: los dos cuadros ocupan todo el alto libre ------------------ */
+@media (min-width: 1024px) {
+  app-convertir > .fx-grilla {
+    flex: 1 0 auto;
+  }
+
+  /* Textos del área vacía un poco más grandes para acompañar el cuadro. */
+  app-convertir .zona:not(.con-archivos) {
+    gap: 12px;
+    font-size: 1.1rem;
+  }
+
+  app-convertir .fx-vacio {
+    gap: 10px;
+    font-size: 1.05rem;
+  }
+
+  app-convertir .fx-vacio strong,
+  app-convertir .fx-vacio .font-semibold {
+    font-size: 1.2rem;
+  }
+}
+
+/* --- Sin franjas vacías: el contenido arranca arriba y la pantalla de cada
+       ruta ocupa el alto libre (en vez de quedar centrada con aire arriba). -- */
+app-root > .mf-main {
+  justify-content: flex-start;
+}
+
+.mf-main > router-outlet + * {
+  flex: 1 0 auto;
+}
+
+/* Clientes bloqueado: el cuadro de la contraseña, más grande y al centro del espacio libre. */
+app-clientes > section:has(#t-candado) {
+  margin-block: auto;
+  width: 100%;
+  max-width: 440px;
+  padding: 28px 32px !important;
+}
+
+app-clientes #t-candado {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+app-clientes section:has(#t-candado) .mf-ayuda {
+  font-size: 0.95rem;
+}
+
+app-clientes section:has(#t-candado) .mf-input,
+app-clientes section:has(#t-candado) .mf-btn {
+  height: 44px;
+  font-size: 1rem;
+}

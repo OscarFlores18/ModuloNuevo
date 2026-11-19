@@ -788,39 +788,6 @@ def _claves_de_error(e: dict) -> tuple[set, set]:
     return arca, xubio
 
 
-ERRORES_SEGUNDA_PASADA = ("letra_distinta", "tipo_distinto", "cuit_distinto")
-
-
-def sin_segunda_pasada(errores: list[dict], df_faltantes_arca, df_faltantes_xubio, col_cuit_arca):
-    """Saca de los faltantes los comprobantes que la 2ª pasada encontró en el otro
-    lado con otra letra, tipo o CUIT: están cargados (mal), no faltan. Si quedaran,
-    irían al CSV de «Subir a Xubio» y el comprobante terminaría duplicado."""
-    claves_a, claves_x = set(), set()
-    for e in errores:
-        if e["tipo"] in ERRORES_SEGUNDA_PASADA:
-            a, x = _claves_de_error(e)
-            claves_a |= a
-            claves_x |= x
-    if not claves_a and not claves_x:
-        return df_faltantes_arca, df_faltantes_xubio
-
-    def fuera(df, col_cuit, col_comp, claves):
-        if df.empty or not claves:
-            return df
-        tipo = df['Tipo'] if 'Tipo' in df.columns else pd.Series([""] * len(df), index=df.index)
-        cuits = df[col_cuit] if col_cuit in df.columns else pd.Series([""] * len(df), index=df.index)
-        quedan = [
-            _clave_fila(c, comp, t) not in claves
-            for c, comp, t in zip(cuits, df[col_comp], tipo)
-        ]
-        return df[quedan]
-
-    return (
-        fuera(df_faltantes_arca, col_cuit_arca, 'Clave_Py', claves_a),
-        fuera(df_faltantes_xubio, 'CUIT', 'Comprobante', claves_x),
-    )
-
-
 def _columnas(ws) -> dict[str, int]:
     return {str(c.value).strip().lower(): c.column for c in ws[1] if c.value is not None}
 
@@ -1282,11 +1249,9 @@ def procesar_cruce(
     )
     if avisar_errores is not None:
         avisar_errores(errores_diag)
-    # 2ª pasada (mismo comprobante con otra letra, tipo o CUIT): ya existe en
-    # Xubio mal cargado. Se corrige allá; subirlo desde «Faltantes» lo duplicaría.
-    df_faltantes_arca, df_faltantes_xubio = sin_segunda_pasada(
-        errores_diag, df_faltantes_arca, df_faltantes_xubio, col_doc_arca,
-    )
+    # Lo de la 2ª pasada (mismo comprobante con otra letra, tipo o CUIT) sigue en
+    # «Faltantes» como lo dio el cruce: el AUX sale con sus errores. Solo deja de
+    # estar si se corrige a mano o con «Aplicar cambios» (que vuelve a cruzar).
     if avisar_resumen is not None:
         # Cuántos comprobantes de ARCA tienen su par en Xubio (los demás son los
         # de la sección «Partidas de ARCA no encontradas…»).

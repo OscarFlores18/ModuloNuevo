@@ -45,17 +45,31 @@ PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "15"))
 ARCA_PING_MIN = int(os.getenv("MODULONUEVO_ARCA_PING_MIN", "9"))
 ARCA_RENOVAR_MIN = int(os.getenv("MODULONUEVO_ARCA_RENOVAR_MIN", "50"))
 
-# Navegador de los bots. Por defecto abre el Chrome visible del sistema, como
-# la app de escritorio. En servidores sin pantalla (Docker/Render) se usa
-# MODULONUEVO_HEADLESS=1 y MODULONUEVO_CHROME_CHANNEL vacío para lanzar el
-# Chromium que instala Playwright.
-PLAYWRIGHT_HEADLESS = os.getenv("MODULONUEVO_HEADLESS", "").strip().lower() in (
-    "1",
-    "true",
-    "si",
-    "sí",
-    "yes",
+# Navegador de los bots. Por defecto corre oculto (headless): los controles no
+# abren ventanas de Chrome en la pantalla. MODULONUEVO_HEADLESS=0 las vuelve a
+# mostrar (útil para ver qué hace un bot o completar un captcha a mano).
+# «Cargar en Xubio» siempre abre la ventana: ahí la persona aprieta «Importar».
+# En servidores sin Chrome (Docker/Render) se deja MODULONUEVO_CHROME_CHANNEL
+# vacío para lanzar el Chromium que instala Playwright.
+PLAYWRIGHT_HEADLESS = os.getenv("MODULONUEVO_HEADLESS", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
 )
+
+# Resolución fija de la página de los bots (ancho x alto, en píxeles): las
+# pantallas de ARCA y Xubio se ven igual en cualquier PC y en modo oculto.
+def _tamano(valor: str, por_defecto: tuple[int, int]) -> tuple[int, int]:
+    try:
+        ancho, alto = (int(x) for x in valor.lower().replace(" ", "").split("x"))
+        if ancho >= 800 and alto >= 600:
+            return ancho, alto
+    except ValueError:
+        pass
+    return por_defecto
+
+
+PLAYWRIGHT_VIEWPORT = _tamano(os.getenv("MODULONUEVO_VIEWPORT", ""), (1366, 768))
 PLAYWRIGHT_CHANNEL = (os.getenv("MODULONUEVO_CHROME_CHANNEL", "chrome") or "").strip() or None
 
 # Protección opcional para despliegues públicos: "usuario:clave".
@@ -70,7 +84,7 @@ _DIALOGOS_ENV = os.getenv("MODULONUEVO_DIALOGOS", "").strip().lower()
 DIALOGOS_LOCALES = (
     _DIALOGOS_ENV in ("1", "true", "si", "sí", "yes")
     if _DIALOGOS_ENV
-    else os.name == "nt" and not PLAYWRIGHT_HEADLESS and not BASIC_AUTH
+    else os.name == "nt" and not BASIC_AUTH
 )
 
 def _bandera(nombre: str, default: bool) -> bool:
