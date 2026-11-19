@@ -1257,27 +1257,6 @@ input[type='checkbox'] {
   font-size: 0.9rem;
 }
 
-/* El Excel del control: lo que se abre siempre, a la vista. */
-.ej-principal {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--color-borde);
-  border-radius: 10px 10px 0 0;
-  background: #ffffff;
-}
-
-.ej-principal-icono {
-  width: 30px;
-  height: 30px;
-  flex-shrink: 0;
-  padding: 5px;
-  border-radius: 8px;
-  background: #e7f5ec;
-  color: #15803d;
-}
-
 /* Filtro de tareas por cliente. */
 .tr-filtro {
   display: flex;
@@ -2352,32 +2331,11 @@ details[open] > summary .ej-chevron {
   text-decoration: line-through;
 }
 
-/* Aplicar cambios: elegido (todavía no hecho), en curso y confirmado por el servidor */
-.tr-elegida {
-  background: #f0fdf4;
-  border-radius: 8px;
-}
-
-.tr-check-aplicar {
-  accent-color: #15803d;
-}
-
-.tr-pendiente-aplicar {
-  color: #15803d;
-}
-
-.tr-aplicando {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-  color: var(--color-acento);
-}
-
+/* Errores que el control arregló solo: qué se cambió en el Excel */
 .tr-actualizado {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px 14px;
   margin: 12px 0 4px;
   padding: 10px 14px;
@@ -2393,6 +2351,25 @@ details[open] > summary .ej-chevron {
   width: 20px;
   height: 20px;
   flex-shrink: 0;
+  color: #15803d;
+}
+
+.tr-arreglos {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.tr-arreglos li {
+  margin: 2px 0;
+  overflow-wrap: anywhere;
+}
+
+.tr-arreglo-antes {
+  color: #b91c1c;
+}
+
+.tr-arreglo-despues {
   color: #15803d;
 }
 

@@ -123,7 +123,7 @@ def test_compras_compara_por_cuit_y_tipo():
     assert falta_en_arca.empty  # Díaz: factura y NC cargadas, no son duplicado
 
 
-def test_el_excel_marca_los_errores_en_negrita_sin_colores_nuevos(tmp_path: Path):
+def test_el_excel_marca_los_errores_en_rojo_claro_y_negrita(tmp_path: Path):
     import openpyxl
 
     arca, xubio = tmp_path / "arca.xlsx", tmp_path / "xubio.xlsx"
@@ -136,7 +136,10 @@ def test_el_excel_marca_los_errores_en_negrita_sin_colores_nuevos(tmp_path: Path
     wb = openpyxl.load_workbook(ruta)
     libro = wb["Libro Iva"]
     assert libro.cell(2, 1).font.bold
-    assert libro.cell(2, 1).fill.fill_type is None  # sin color agregado
+    assert str(libro.cell(2, 1).fill.start_color.rgb).endswith("FFCCCC")  # rojo claro
+    # Las columnas amarillas de totales quedan amarillas.
+    total_s_libro = {str(c.value).lower(): c.column for c in libro[1] if c.value}["total monto s/libro"]
+    assert str(libro.cell(2, total_s_libro).fill.start_color.rgb).endswith("FFFF00")
     estado = {str(c.value).lower(): c.column for c in libro[1] if c.value}["estado conciliación"]
     assert libro.cell(2, estado).value == "Letra distinta: en ARCA es C-00002-00000006"
     assert "Referencias" not in wb.sheetnames

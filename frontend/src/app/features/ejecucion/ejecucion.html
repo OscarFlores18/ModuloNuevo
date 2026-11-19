@@ -129,18 +129,13 @@
 
   <!-- Qué hay que hacer: los hallazgos como órdenes, en el orden en que conviene hacerlas -->
   @if (vista() === 'tareas') {
-    @let nSel = seleccionados().length;
-    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" role="tabpanel" aria-labelledby="tab-tareas" id="t-tareas" [attr.aria-busy]="aplicando()">
+    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" role="tabpanel" aria-labelledby="tab-tareas" id="t-tareas">
       <header class="tr-cab">
         <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientes() ? 'Hacelas en este orden' : corregidos().length ? 'Todo hecho · Excel actualizado' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
+          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientes() ? 'Hacelas en este orden' : corregidos().length ? 'Todo hecho · errores arreglados' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
           <p class="mf-sub m-0 mt-0.5" aria-live="polite">
-            @if (aplicando()) {
-              <span class="tr-aplicando"><span class="ej-spinner" aria-hidden="true"></span> Aplicando cambios y generando nuevo Excel...</span>
-            } @else if (nSel) {
-              <strong class="tr-pendiente-aplicar">{{ nSel }} {{ nSel === 1 ? 'cambio seleccionado listo' : 'cambios seleccionados listos' }} para aplicar</strong>
-            } @else if (!pendientes()) {
-              {{ corregidos().length ? 'Los cambios aplicados quedaron en el Excel nuevo y el control se re-chequeó.' : 'Tildaste todas las tareas de este control.' }}
+            @if (!pendientes()) {
+              {{ corregidos().length ? 'El control arregló solo los errores en el mismo Excel y lo volvió a chequear.' : 'Tildaste todas las tareas de este control.' }}
             } @else {
               @if (!perspectiva.canEdit()) {
                 Quedan {{ pendientes() }} de {{ tareas().length }} por hacer.
@@ -155,16 +150,7 @@
             <div [style.width.%]="((tareas().length - pendientes()) / tareas().length) * 100"></div>
           </div>
         }
-        @if (cambios().length || aplicando()) {
-          <button type="button" class="mf-btn mf-btn-ok inline-flex items-center gap-1.5" (click)="aplicarCambios()"
-            [disabled]="!perspectiva.canEdit() || !nSel || aplicando()" [attr.aria-busy]="aplicando()"
-            [title]="perspectiva.motivoBloqueo() ?? (nSel ? 'Corrige el Libro IVA con los datos de ARCA tildados y vuelve a cruzar' : 'Tildá las correcciones que querés aplicar')">
-            @if (aplicando()) {
-              <span class="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span> Aplicando…
-            } @else { Aplicar cambios ({{ nSel }}) }
-          </button>
-        }
-        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()" [disabled]="aplicando()">Ver todos los hallazgos</button>
+        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()">Ver todos los hallazgos</button>
       </header>
 
       @if (clientesConTareas().length > 1) {
@@ -178,21 +164,18 @@
         </div>
       }
 
-      @if (corregidos().length) {
+      @for (x of corregidos(); track x.cliente + x.operacion) {
         <div class="tr-actualizado" role="status">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg>
           <div class="min-w-0 flex-1">
-            @for (x of corregidos(); track x.cliente + x.operacion) {
-              <p class="m-0"><strong>Excel actualizado</strong> · {{ x.cliente }} · {{ x.operacion }}: {{ x.dato.cambios.length }} {{ x.dato.cambios.length === 1 ? 'cambio aplicado' : 'cambios aplicados' }} · {{ fechaCorta(x.dato.fecha) }}</p>
-            }
+            <p class="m-0"><strong>{{ x.cambios.length === 1 ? 'Error arreglado' : x.cambios.length + ' errores arreglados' }}</strong> · {{ x.cliente }} · {{ x.operacion }}</p>
+            <p class="m-0 mt-0.5 text-sm">Se corrigió con el dato de ARCA en el Libro IVA y el AUX del control. Hacé el mismo cambio en Xubio.</p>
+            <ul class="tr-arreglos">
+              @for (c of x.cambios; track $index) {
+                <li><span class="mono">{{ c.comprobante }}</span> · {{ c.campo }}: <s class="tr-arreglo-antes">{{ c.antes }}</s> → <strong class="tr-arreglo-despues">{{ c.despues }}</strong></li>
+              }
+            </ul>
           </div>
-          <span class="flex flex-wrap gap-2">
-            @for (x of corregidos(); track x.cliente + x.operacion) {
-              <button type="button" class="mf-btn mf-btn-chico" (click)="descargarNuevo(x)" [disabled]="!!descargando() || aplicando()" [title]="x.dato.aux">
-                ⬇ Descargar nuevo Excel{{ corregidos().length > 1 ? ' · ' + x.operacion : '' }}
-              </button>
-            }
-          </span>
         </div>
       }
 
@@ -202,7 +185,6 @@
           <ul class="tr-lista">
             @for (tarea of g.tareas; track tarea.clave; let i = $index) {
               @let hecha = estaHecha(tarea);
-              @let nCambios = cambiosDe(tarea.advertencia).length;
               @let idCheck = 'tr-' + g.id + '-' + i;
               @let faltantes = faltantesDe(tarea.advertencia);
               @let nTildadas = tildadas(tarea.advertencia, faltantes);
@@ -258,20 +240,6 @@
                     <button type="button" class="mf-btn-link tr-falt-mas" (click)="verDetalle(tarea)">Ver los {{ faltantes.length }} comprobantes</button>
                   }
                 </li>
-              } @else if (nCambios) {
-              <!-- Corrección: el checkbox la elige para «Aplicar cambios» (no la da por hecha) -->
-              @let nElegidos = elegidos(tarea.advertencia);
-              <li class="tr-tarea" [class.tr-elegida]="nElegidos > 0">
-                <input type="checkbox" class="tr-check tr-check-aplicar" [id]="idCheck" [checked]="nElegidos === nCambios" [indeterminate]="nElegidos > 0 && nElegidos < nCambios"
-                  [disabled]="!perspectiva.canEdit() || aplicando()" [attr.title]="perspectiva.motivoBloqueo() ?? 'Elegir para corregir con el dato de ARCA'" (change)="alternarCambios(tarea.advertencia, $event)" />
-                <label class="tr-texto" [for]="idCheck">
-                  <span class="tr-orden">{{ tarea.orden }}</span>
-                  <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ nElegidos }} de {{ nCambios }} {{ nCambios === 1 ? 'seleccionado' : 'seleccionados' }} para aplicar</span>
-                </label>
-                <span class="tr-acciones">
-                  <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)" [disabled]="aplicando()">Ver y elegir</button>
-                </span>
-              </li>
               } @else {
               <li class="tr-tarea" [class.tr-hecha]="hecha">
                 <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()" (change)="alternarHecha(tarea)" />
@@ -377,41 +345,26 @@
 
               @if (c.archivos.length) {
                 <div class="ej-carpeta">
-                  @for (a of c.principales; track a.nombre) {
-                    @let claveP = c.indice + '/' + a.nombre;
-                    <div class="ej-principal">
-                      <svg class="ej-principal-icono" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></svg>
-                      <div class="min-w-0 flex-1">
-                        <strong class="block">Excel del control</strong>
-                        <span class="mf-tenue block truncate text-xs" [title]="a.nombre">{{ a.nombre }} · {{ tamanoLegible(a.tamano) }}</span>
-                      </div>
-                      <button type="button" class="mf-btn" (click)="descargar(c, a)" [disabled]="descargando() === claveP" [attr.aria-label]="'Descargar ' + a.nombre">
-                        {{ descargando() === claveP ? 'Descargando…' : '⬇ Descargar' }}
-                      </button>
-                    </div>
-                  }
                   <div class="ej-carpeta-ruta">
-                    @if (c.otros.length) {
-                      <button type="button" class="ej-carpeta-titulo" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
-                        <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
-                        Lo que bajaron de ARCA y Xubio ({{ c.otros.length }})
-                        <span class="mf-tenue text-xs font-semibold" aria-hidden="true">{{ carpetaAbierta(c.nombre) ? '▴' : '▾' }}</span>
-                      </button>
-                    }
+                    <button type="button" class="ej-carpeta-titulo" (click)="alternarCarpeta(c.nombre)" [attr.aria-expanded]="carpetaAbierta(c.nombre)">
+                      <svg class="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" /></svg>
+                      Archivos ({{ c.archivos.length }})
+                      <span class="mf-tenue text-xs font-semibold">{{ carpetaAbierta(c.nombre) ? 'Ocultar ▴' : 'Mostrar ▾' }}</span>
+                    </button>
                     <button type="button" class="mf-btn mf-btn-suave mf-btn-chico ml-auto" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'"
                       [title]="dialogosLocales() ? 'Elegís la carpeta del cliente y adentro se arma mmaaaa / Control de facturas / N° de control. Si cerrás sin elegir, va a Descargas.' : 'Un .zip con las carpetas del cliente, del período y de este control.'">
                       {{ descargando() === c.indice + '/*' ? 'Descargando…' : dialogosLocales() ? 'Guardar todos en…' : 'Descargar todos (.zip)' }}
                     </button>
                   </div>
-                  @if (carpetaAbierta(c.nombre) && c.otros.length) {
+                  @if (carpetaAbierta(c.nombre)) {
                     <ul class="ej-archivos">
-                      @for (a of c.otros; track a.nombre) {
+                      @for (a of c.archivos; track a.nombre) {
                         @let clave = c.indice + '/' + a.nombre;
                         <li>
-                          <span class="mf-badge mf-badge-acento">{{ etiquetaArchivo[a.tipo] }}</span>
-                          <span class="min-w-0 flex-1 truncate" [title]="a.nombre">{{ a.nombre }}</span>
-                          <span class="mf-tenue text-xs tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
-                          <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
+                          <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
+                          <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
+                          <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
+                          <button type="button" class="mf-btn mf-btn-chico" [class.mf-btn-suave]="a.tipo !== 'auditoria'" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
                             {{ descargando() === clave ? 'Descargando…' : 'Descargar' }}
                           </button>
                         </li>

@@ -17,8 +17,6 @@ import {
   FaltantesDelExcel,
   HojasExcel,
   FilaFaltante,
-  CambioPar,
-  cambiosDisponibles,
   claveExcel,
   contarErrores,
   esPrioridad,
@@ -27,7 +25,7 @@ import {
   filasDelExcel,
   mostrarVentanaDeErrores,
 } from './ventana-errores';
-import { CorreccionElegida, elegirParaAplicar, estaIncluida, excluidasDe, guardarPrecarga, incluir, paraAplicar } from './seleccion';
+import { CorreccionElegida, estaIncluida, excluidasDe, guardarPrecarga, incluir } from './seleccion';
 import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
@@ -55,10 +53,6 @@ interface ClienteVista {
   /** Tareas sin tildar de este cliente (se hacen en la pestaña «Qué hay que hacer»). */
   pendientes: number;
   carpeta: string;
-  /** El Excel del control (AUX): lo que se abre siempre. */
-  principales: ArchivoGenerado[];
-  /** Lo que bajaron los bots de ARCA y Xubio: plegado de entrada. */
-  otros: ArchivoGenerado[];
   archivos: ArchivoGenerado[];
   origen: ClienteEjecucion;
 }
@@ -119,8 +113,8 @@ export class EjecucionPantalla {
   /** true: backend en esta PC, se guarda con ventanas de Windows. false (servidor): por el navegador. */
   protected readonly dialogosLocales = signal(false);
   protected readonly errorDescarga = signal<string | null>(null);
-  /** Clientes con los archivos de ARCA y Xubio a la vista (por nombre): de entrada, plegados. */
-  private readonly carpetasAbiertas = signal<ReadonlySet<string>>(new Set());
+  /** Clientes con la carpeta de archivos plegada (por nombre): de entrada, todas abiertas. */
+  private readonly carpetasPlegadas = signal<ReadonlySet<string>>(new Set());
 
   protected readonly ej = this.store.actual;
   protected readonly activa = computed(() => estaActiva(this.ej()?.estado));
@@ -199,107 +193,22 @@ export class EjecucionPantalla {
   /** Para el filtro: los clientes que tienen tareas. */
   protected readonly clientesConTareas = computed(() => [...new Set(this.tareas().map((t) => t.cliente))]);
 
-  /**
-   * Hecha a mano (tilde). Las correcciones (letra, tipo, importe, CUIT) no: su checkbox
-   * las elige para «Aplicar cambios» y desaparecen recién cuando el re-chequeo las da por buenas.
-   */
+  /** Hecha a mano (tilde). */
   protected estaHecha(t: Tarea): boolean {
-    return !this.cambiosDe(t.advertencia).length && this.hechas().has(t.clave);
+    return this.hechas().has(t.clave);
   }
 
-  // --- Aplicar cambios: elegir con checkbox, corregir de verdad con el botón ----------
+  // --- Errores arreglados solos: letra, tipo, importe o CUIT con el dato de ARCA ------
 
-  /** Los pares de «Error» que se pueden corregir con el dato de ARCA. */
-  protected readonly cambios = computed(() => (this.activa() ? [] : cambiosDisponibles(this.ej()?.advertencias ?? [])));
-  /** Los tildados (se guardan en este navegador, por control). */
-  protected readonly seleccionados = computed(() => {
-    const id = this.ej()?.id;
-    return this.cambios().filter((c) => paraAplicar(id, c.clave));
-  });
-  /** Esperando al servidor: los checkboxes y el botón quedan bloqueados. */
-  protected readonly aplicando = signal(false);
-
-  protected cambiosDe(a: Advertencia): CambioPar[] {
-    return this.cambios().filter((c) => c.datos.cliente === a.cliente && c.datos.operacion === a.operacion && TIPO_CAMPO[a.tipo] === c.datos.campo);
-  }
-
-  protected elegidos(a: Advertencia): number {
-    const id = this.ej()?.id;
-    return this.cambiosDe(a).filter((c) => paraAplicar(id, c.clave)).length;
-  }
-
-  protected alternarCambios(a: Advertencia, ev: Event): void {
-    if (!this.perspectiva.canEdit() || this.aplicando()) return;
-    elegirParaAplicar(this.ej()?.id, this.cambiosDe(a).map((c) => c.clave), (ev.target as HTMLInputElement).checked);
-  }
-
-  /** Lo que ya dejó «Aplicar cambios»: el Excel nuevo de cada cliente y operación. */
+  /** Lo que el control ya corrigió solo en el Libro IVA y su AUX, por cliente y operación. */
   protected readonly corregidos = computed(() =>
     (this.ej()?.detalle_clientes ?? []).flatMap((c, indice) =>
       (['Compras', 'Ventas'] as const)
         .map((op) => ({ indice, cliente: c.nombre, operacion: op, dato: c.corregidos?.[op] }))
-        .filter((x): x is { indice: number; cliente: string; operacion: 'Compras' | 'Ventas'; dato: Corregido } => !!x.dato),
+        .filter((x): x is { indice: number; cliente: string; operacion: 'Compras' | 'Ventas'; dato: Corregido } => !!x.dato?.cambios.length)
+        .map((x) => ({ ...x, cambios: x.dato.cambios.map(textoArreglo) })),
     ),
   );
-
-  /**
-   * Manda los tildados al servidor: corrige el Libro IVA, vuelve a cruzar y devuelve el
-   * control nuevo. Recién con esa respuesta cambia la pantalla.
-   */
-  protected async aplicarCambios(): Promise<void> {
-    const e = this.ej();
-    const elegidos = this.seleccionados();
-    if (!e || !elegidos.length || this.aplicando() || !this.perspectiva.canEdit()) return;
-    this.aplicando.set(true);
-    try {
-      const r = await this.api.aplicarCambios(e.id, elegidos.map((c) => c.datos));
-      const conError = r.resultados.filter((x) => x.error);
-      // Los de una operación que falló (por ejemplo, Excel abierto) quedan tildados
-      // para reintentar; los demás ya se aplicaron.
-      const fallaron = new Set(conError.map((x) => `${x.cliente}|${x.operacion}`));
-      elegirParaAplicar(
-        e.id,
-        elegidos.filter((c) => !fallaron.has(`${c.datos.cliente}|${c.datos.operacion}`)).map((c) => c.clave),
-        false,
-      );
-      this.store.reemplazar(r.ejecucion);
-      void this.cargarHojas(e.id);
-      const aplicados = r.resultados.reduce((n, x) => n + x.aplicados, 0);
-      const fallidos = r.resultados.flatMap((x) => x.no_aplicados);
-      if (aplicados) {
-        this.toast.ok(
-          'Excel actualizado',
-          `Se ${aplicados === 1 ? 'actualizó 1 comprobante' : `actualizaron ${aplicados} comprobantes`} en el Libro IVA y se re-chequeó el control.`,
-        );
-      } else {
-        this.toast.aviso('No se aplicó ningún cambio', 'Ningún comprobante elegido se pudo corregir: mirá el motivo de cada uno.');
-      }
-      for (const x of conError) this.toast.aviso(`${x.cliente} · ${x.operacion}: no se aplicó`, x.error ?? '');
-      if (fallidos.length) {
-        this.toast.aviso(
-          `${fallidos.length} ${fallidos.length === 1 ? 'cambio no se aplicó' : 'cambios no se aplicaron'}`,
-          fallidos.map((f) => `${f.comprobante || f.numero}: ${f.motivo}`).join(' '),
-        );
-      }
-    } catch (err) {
-      void this.alertas.mostrarErrorHumano('No se pudieron aplicar los cambios', '', mensajeDeError(err));
-    } finally {
-      this.aplicando.set(false);
-    }
-  }
-
-  /** «Descargar nuevo Excel»: el control re-chequeado. */
-  protected descargarNuevo(x: { indice: number; dato: Corregido }): void {
-    const c = this.clientes().find((v) => v.indice === x.indice);
-    const archivo = c?.archivos.find((a) => a.nombre === x.dato.aux);
-    if (c && archivo) void this.descargar(c, archivo);
-  }
-
-  /** Para la ventana de hallazgos: cuántos hay tildados y el botón. */
-  private readonly aplicarDesdeVentana = {
-    contar: () => this.seleccionados().length,
-    alAplicar: () => void this.aplicarCambios(),
-  };
 
   protected alternarHecha(t: Tarea): void {
     const id = this.ej()?.id;
@@ -400,7 +309,7 @@ export class EjecucionPantalla {
     const a = t.advertencia;
     // El armado desde la hoja no trae comprobantes: la ventana los toma del Excel.
     const reales = a.comprobantes.length || a.tipo !== 'faltante_en_xubio' ? [a] : [];
-    void mostrarVentanaDeErrores(reales, [],this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojaDe(t.advertencia), this.aplicarDesdeVentana, this.contextoVentana());
+    void mostrarVentanaDeErrores(reales, [],this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojaDe(t.advertencia), undefined, this.contextoVentana());
   }
 
   // --- Lo que no cruzó, tal como está en los AUX ---------------------------------------
@@ -550,8 +459,6 @@ export class EjecucionPantalla {
         problemas: problemasDe(c.pasos),
         pendientes: this.pendientesDe(c.nombre),
         carpeta: c.carpeta,
-        principales: archivos.filter((a) => a.tipo === 'auditoria'),
-        otros: archivos.filter((a) => a.tipo !== 'auditoria'),
         archivos,
         origen: c,
       };
@@ -625,7 +532,7 @@ export class EjecucionPantalla {
   protected verErrores(): void {
     const a = this.ej()?.advertencias;
     if (a?.length || this.hojas().sinLibro.size || this.hojas().sinArca.size)
-      void mostrarVentanaDeErrores(a ?? [], this.ej()?.resumenes ?? [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojas(), this.aplicarDesdeVentana, this.contextoVentana());
+      void mostrarVentanaDeErrores(a ?? [], this.ej()?.resumenes ?? [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojas(), undefined, this.contextoVentana());
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -670,7 +577,7 @@ export class EjecucionPantalla {
   }
 
   private async abrir(id: string | undefined): Promise<void> {
-    this.carpetasAbiertas.set(new Set());
+    this.carpetasPlegadas.set(new Set());
     this.pestana.set(null);
     this.filtroCliente.set(null);
     this.errorDescarga.set(null);
@@ -713,12 +620,12 @@ export class EjecucionPantalla {
   // --- Archivos ----------------------------------------------------------------------
 
   protected carpetaAbierta(nombre: string): boolean {
-    return this.carpetasAbiertas().has(nombre);
+    return !this.carpetasPlegadas().has(nombre);
   }
 
   protected alternarCarpeta(nombre: string): void {
-    this.carpetasAbiertas.update((abiertas) => {
-      const s = new Set(abiertas);
+    this.carpetasPlegadas.update((plegadas) => {
+      const s = new Set(plegadas);
       if (!s.delete(nombre)) s.add(nombre);
       return s;
     });
@@ -794,18 +701,21 @@ function diaDe(iso: string): string {
   return DIA_SEMANA.format(d).replace(',', '');
 }
 
-/** Qué campo corrige cada tipo de error (para encontrar los pares de una tarea). */
-const TIPO_CAMPO: Partial<Record<Advertencia['tipo'], string>> = {
-  letra_distinta: 'letra',
-  tipo_distinto: 'tipo',
-  importe_distinto: 'importe',
-  cuit_distinto: 'cuit',
-};
-
 const NOMBRE_CAMPO: Record<string, string> = { letra: 'Letra', tipo: 'Tipo', importe: 'Importe', cuit: 'CUIT' };
 const PESOS = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS' });
 
-/** Lo ya corregido en el Excel («Aplicar cambios»): falta hacerlo también en Xubio. */
+/** Un error ya arreglado en el Excel: «Letra · A-0002-00000006 → C-0002-00000006». */
+function textoArreglo(x: Corregido['cambios'][number]): { comprobante: string; campo: string; antes: string; despues: string } {
+  const valor = (v: unknown) => (x.campo === 'importe' && typeof v === 'number' ? PESOS.format(v) : v === null || v === undefined || v === '' ? '—' : String(v));
+  return {
+    comprobante: x.comprobante || `${x.pv}-${x.numero}`,
+    campo: NOMBRE_CAMPO[x.campo] ?? x.campo,
+    antes: valor(x.antes),
+    despues: valor(x.despues ?? x.valor_arca),
+  };
+}
+
+/** Lo ya corregido en el Excel: falta hacerlo también en Xubio. */
 function correccionesHechas(c: Corregido | undefined): CorreccionElegida[] {
   return (c?.cambios ?? []).map((x) => {
     const valor = x.campo === 'importe' && typeof x.valor_arca === 'number' ? PESOS.format(x.valor_arca) : String(x.valor_arca);

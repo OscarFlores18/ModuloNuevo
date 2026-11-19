@@ -593,8 +593,8 @@ def aplicar_cambios_ejecucion(
     pedido: AplicarCambiosRequest,
     _usuario: Usuario = Depends(usuario_actual),
 ) -> dict:
-    """Escribe los datos de ARCA elegidos en una copia del Libro IVA («… - corregido»),
-    vuelve a cruzar con ARCA y devuelve el control con los hallazgos nuevos."""
+    """Escribe los datos de ARCA elegidos en el Libro IVA del control,
+    vuelve a cruzar con ARCA sobre el mismo AUX y devuelve los hallazgos nuevos."""
     try:
         ej = ejecuciones_srv.obtener(ejecucion_id)
         return ejecuciones_srv.aplicar_cambios(ej, [c.model_dump() for c in pedido.cambios])
