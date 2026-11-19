@@ -726,9 +726,12 @@ export class EjecucionPantalla {
         return;
       }
       const r = await this.api.guardarArchivo(e.id, c.indice, archivo.nombre);
-      if (!r.cancelado) this.toast.ok('Archivo guardado', r.ruta);
+      if (r.cancelado) this.toast.info('No se guardó', `Cerraste la ventana sin elegir dónde guardar «${archivo.nombre}».`);
+      else this.toast.ok('Archivo guardado', r.ruta);
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudo guardar «${archivo.nombre}».`));
+      const msg = mensajeDeError(err, `No se pudo guardar «${archivo.nombre}».`);
+      this.errorDescarga.set(msg);
+      this.toast.error('No se pudo descargar', msg);
     } finally {
       this.descargando.set(null);
     }
@@ -755,9 +758,16 @@ export class EjecucionPantalla {
       const r = await this.api.exportar(e.id, c.indice);
       const donde = r.elegida ? r.carpeta : `${r.carpeta} (no elegiste carpeta: se creó en Descargas)`;
       if (r.copiados.length) this.toast.ok('Archivos guardados', `${r.copiados.length} ${r.copiados.length === 1 ? 'archivo' : 'archivos'} en ${donde}`);
-      if (r.fallas.length) this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
+      if (r.fallas.length) {
+        this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
+        this.toast.error(`${r.fallas.length} ${r.fallas.length === 1 ? 'archivo no se pudo guardar' : 'archivos no se pudieron guardar'}`, r.fallas[0].motivo);
+      } else if (!r.copiados.length) {
+        this.toast.aviso('No había archivos para guardar', `${c.nombre} no tiene archivos en este control.`);
+      }
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudieron guardar los archivos de ${c.nombre}.`));
+      const msg = mensajeDeError(err, `No se pudieron guardar los archivos de ${c.nombre}.`);
+      this.errorDescarga.set(msg);
+      this.toast.error('No se pudo descargar', msg);
     } finally {
       this.descargando.set(null);
     }

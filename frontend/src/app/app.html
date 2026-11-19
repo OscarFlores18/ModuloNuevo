@@ -71,16 +71,13 @@
         <p>Los bots entran a ARCA y Xubio con Google Chrome y {{ enEstaPc() ? 'esta PC' : 'el servidor' }} no lo tiene instalado. Instalalo desde google.com/chrome y volvé a abrir la app.</p>
       </div>
     }
-    @if (perspectiva.canEdit()) {
-      <app-circuito />
-    }
     <router-outlet />
   }
 
   <footer class="mf-pie">
     <span>Control de Facturas V-1.0.0</span>
     <span class="mf-sep">·</span>
-    <span>{{ enEstaPc() ? 'Los bots abren Google Chrome en esta computadora' : 'Los bots corren en el servidor' }}</span>
+    <span>{{ enEstaPc() ? 'Los bots usan Google Chrome de esta computadora' : 'Los bots corren en el servidor' }}</span>
     @if (!sesion.conectado()) {
       <span class="mf-sep">·</span>
       <span>Modo local</span>

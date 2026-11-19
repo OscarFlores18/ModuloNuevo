@@ -2765,85 +2765,6 @@ details[open] > summary .ej-chevron {
   right: -8px;
 }
 
-/* --- Circuito: los pasos de todo el trabajo -------------------------------- */
-.cf-circuito {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0 0 12px;
-  padding: 6px 8px;
-  overflow-x: auto;
-  border: 1px solid var(--color-borde);
-  border-radius: 10px;
-  background: #fff;
-  list-style: none;
-  scrollbar-width: thin;
-}
-
-.cf-circuito-titulo {
-  flex: none;
-  margin-right: 4px;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.cf-circuito li {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-}
-
-.cf-circuito-paso {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 9px 4px 5px;
-  border-radius: 999px;
-  color: #475569;
-  font-size: 12.5px;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color 0.15s, color 0.15s;
-}
-
-.cf-circuito-paso:hover {
-  background: var(--color-panel-alt);
-  color: var(--color-texto);
-}
-
-.cf-circuito-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: #e2e8f0;
-  color: #475569;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.cf-circuito-paso.actual {
-  background: rgba(37, 99, 235, 0.1);
-  color: #1d4ed8;
-}
-
-.cf-circuito-paso.actual .cf-circuito-num {
-  background: var(--color-acento);
-  color: #fff;
-}
-
-.cf-circuito-flecha {
-  color: #cbd5e1;
-  font-size: 12px;
-}
-
 /* --- Recorrido guiado ------------------------------------------------------- */
 .cf-recorrido-fondo {
   position: fixed;
@@ -3047,18 +2968,7 @@ app-root > .mf-main {
   border-radius: 8px;
 }
 
-/* Pasos del trabajo y pie */
-.cf-circuito {
-  margin-bottom: 0;
-  padding: 3px 6px;
-}
-.cf-circuito-paso {
-  padding: 2px 8px 2px 4px;
-}
-.cf-circuito-num {
-  width: 18px;
-  height: 18px;
-}
+/* Pie */
 .mf-pie {
   padding: 0 2px;
   font-size: 0.74rem;
@@ -3225,4 +3135,10 @@ app-clientes section:has(#t-candado) .mf-input,
 app-clientes section:has(#t-candado) .mf-btn {
   height: 44px;
   font-size: 1rem;
+}
+
+/* Campo de contraseña con «Ver / Ocultar» adentro: lugar para el botón (le gana al padding de .mf-input). */
+.mf-input.mf-con-ver {
+  padding-right: 76px;
+  text-overflow: ellipsis;
 }

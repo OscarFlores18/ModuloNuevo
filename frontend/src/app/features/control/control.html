@@ -180,8 +180,13 @@
             </label>
             <label class="mf-campo">
               <span>Contraseña</span>
-              <input class="mf-input" type="password" formControlName="clave" autocomplete="current-password"
-                [placeholder]="guardadaXubio() ? 'Nueva contraseña' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
+              <span class="relative block">
+                <input class="mf-input mf-con-ver" [type]="verClaveXubio() ? 'text' : 'password'" formControlName="clave" autocomplete="current-password"
+                  [placeholder]="guardadaXubio() ? 'Nueva contraseña' : ''" [attr.aria-invalid]="invalido('xubio') && !guardadaXubio()" />
+                <button type="button" class="mf-btn-link absolute inset-y-0 right-3 text-xs" (click)="verClaveXubio.update((v) => !v)" [attr.aria-pressed]="verClaveXubio()" [attr.aria-label]="verClaveXubio() ? 'Ocultar la contraseña' : 'Ver la contraseña'">
+                  {{ verClaveXubio() ? 'Ocultar' : 'Ver' }}
+                </button>
+              </span>
             </label>
             <div class="flex flex-wrap items-center gap-2">
               <label class="mf-check"><input type="checkbox" formControlName="recordar" />Recordar (queda cifrada en el servidor)</label>

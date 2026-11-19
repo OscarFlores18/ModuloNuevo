@@ -1,7 +1,7 @@
 """Control de Facturas como app de escritorio de Windows.
 
 Un solo proceso: FastAPI (que además sirve el build de Angular) corre en un hilo
-en 127.0.0.1 con un puerto libre, y pywebview abre una ventana nativa (WebView2,
+en 127.0.0.1 (siempre el mismo puerto, si está libre), y pywebview abre una ventana nativa (WebView2,
 el motor de Edge que ya trae Windows) apuntando a ese servidor. Al cerrar la
 ventana se apaga el servidor (los bots y el worker se detienen limpio) y termina
 el proceso.
@@ -85,8 +85,22 @@ def _ya_hay_una_abierta() -> bool:
 _MUTEX_HANDLE = None
 
 
+# Siempre el mismo puerto: la ventana guarda lo del navegador (localStorage: el
+# recorrido ya visto, filtros, tildes) por dirección, y con un puerto distinto en
+# cada apertura se perdía todo. Si está ocupado, prueba los siguientes y, como
+# último recurso, uno cualquiera.
+PUERTOS_FIJOS = (48517, 48518, 48519)
+
+
 def _puerto_libre() -> int:
-    """Pide al sistema un puerto libre en 127.0.0.1 (bind al puerto 0)."""
+    """El primer puerto fijo libre en 127.0.0.1; si no hay, uno que dé el sistema."""
+    for puerto in PUERTOS_FIJOS:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(("127.0.0.1", puerto))
+            except OSError:
+                continue
+            return puerto
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
@@ -116,6 +130,37 @@ def _avisar_error(texto: str) -> None:
         ctypes.windll.user32.MessageBoxW(None, texto, TITULO, 0x10)
     except Exception:
         print(texto, file=sys.stderr)
+
+
+class _ApiVentana:
+    """Lo que la página puede pedirle a la ventana (``window.pywebview.api``)."""
+
+    def avisar(self, titulo: str = "") -> bool:
+        """Terminó un control: si la ventana no está al frente, el ícono de la
+        barra de tareas parpadea hasta que se la abre (FlashWindowEx)."""
+        if os.name != "nt":
+            return False
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        hwnd = user32.FindWindowW(None, TITULO)
+        if not hwnd or user32.GetForegroundWindow() == hwnd:
+            return False
+
+        class FLASHWINFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.UINT),
+                ("hwnd", wintypes.HWND),
+                ("dwFlags", wintypes.DWORD),
+                ("uCount", wintypes.UINT),
+                ("dwTimeout", wintypes.DWORD),
+            ]
+
+        # FLASHW_ALL | FLASHW_TIMERNOFG: parpadea hasta que la ventana pasa al frente.
+        info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd, 0x3 | 0xC, 0, 0)
+        user32.FlashWindowEx(ctypes.byref(info))
+        return True
 
 
 class _Backend:
@@ -201,6 +246,7 @@ def main() -> int:
         height=800,
         min_size=(1024, 680),
         text_select=True,
+        js_api=_ApiVentana(),
     )
     # Bloquea hasta que se cierra la ventana; `arrancar` corre en otro hilo con
     # la ventana ya abierta. private_mode=False: sessionStorage y localStorage

@@ -271,6 +271,8 @@ export class NuevoControl {
   });
 
   /** El usuario apretó «Cambiar» para escribir otra contraseña de Xubio. */
+  /** «Ver» de la contraseña de Xubio. */
+  protected readonly verClaveXubio = signal(false);
   protected readonly cambiandoClave = signal(false);
 
   protected usarGuardada(): void {
