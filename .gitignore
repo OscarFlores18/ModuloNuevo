@@ -23,7 +23,8 @@ debug_log.txt
 .ruff_cache/
 .mypy_cache/
 
-# App de escritorio (build_app.ps1 / PyInstaller)
+
+# Salidas de compilación locales (no van al repo)
 /build/
 /dist/
-ControlFCT.spec
+*.spec

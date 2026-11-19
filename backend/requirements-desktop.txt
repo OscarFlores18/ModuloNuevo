@@ -1,5 +1,0 @@
-# App de escritorio (desktop.py + build_app.ps1): además de requirements.txt.
-# pywebview abre la ventana con WebView2 (Edge, ya viene en Windows 10/11).
--r requirements.txt
-pywebview>=5.4
-pyinstaller>=6.11

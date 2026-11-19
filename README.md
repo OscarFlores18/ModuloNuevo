@@ -3,14 +3,15 @@
 Automatización de la descarga de comprobantes desde **ARCA (ex AFIP)** y
 **Xubio**, y cruce de ambos Libros IVA para detectar partidas faltantes.
 
-El proyecto está en **migración de app de escritorio a sitio web**:
+Es un **sitio web** (se despliega en Render con Docker):
 
 - `backend/` — motor (bots + auditoría) expuesto como API HTTP con **FastAPI**.
-  Es la parte activa del proyecto.
+  También sirve el build del frontend.
 - `frontend/` — Angular 22 (mismo front que el módulo de ContadorWeb). Consume
   `/api/clientes`, `/api/ajustes` y `/api/ejecuciones`.
-- `main_control.py` — app de escritorio original (Tkinter/customtkinter).
-  Se conserva como referencia y reutiliza el mismo motor del backend.
+
+> La app de escritorio de Windows (instalador) vive en la rama `APP`; en `main`
+> está solo lo de la web.
 
 > Guía técnica del backend: [`backend/README.md`](backend/README.md)
 
@@ -42,12 +43,11 @@ La clave de conciliación es `LETRA-PTOVTA-NUMERO` (ej. `A-00012-00000123`).
 | Sistema | Windows 10/11 en local; Linux en Docker/Render |
 | Python | 3.11 o superior (verificado con **3.13.17**) |
 | Google Chrome | Instalado en local. Los bots abren Chrome real (`channel="chrome"`). En Docker/Render usan el Chromium de Playwright en modo headless |
-| Tcl/Tk | Solo para la app de escritorio (`main_control.py`) |
 
 Dependencias:
 
-- backend: `fastapi`, `uvicorn`, `pydantic`, `playwright`, `openpyxl`, `pandas`, `numpy`
-- escritorio: además `customtkinter`
+- backend: `fastapi`, `uvicorn`, `pydantic`, `cryptography`, `playwright`, `openpyxl`, `pandas`, `numpy`
+- frontend: Node 22 y las dependencias de `frontend/package.json`
 
 ---
 
@@ -72,11 +72,8 @@ source .venv/bin/activate
 > `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`
 
 ```powershell
-# 2. Backend (activo)
+# 2. Backend
 pip install -r backend/requirements-dev.txt
-
-# 3. App de escritorio (legacy, opcional)
-pip install -r requirements.txt
 ```
 
 En Windows no hace falta `playwright install`: los bots usan el Chrome del
@@ -313,49 +310,7 @@ Advertencias para el testeo en Render:
 
 ---
 
-## App de Windows (un solo ícono)
-
-La web empaquetada como programa: `desktop.py` levanta el backend y abre una
-ventana propia (WebView2, ya viene en Windows 10/11). No hace falta Python ni
-Node en la PC donde se usa; sí **Google Chrome** (los bots lo abren).
-
-```powershell
-.\build_app.ps1 -Instalar
-```
-
-- Arma `dist\ControlFCT\` (PyInstaller) y la instala en
-  `%LOCALAPPDATA%\Programs\ControlFCT`, con ícono en el Escritorio y en el menú
-  Inicio. **Ctrl+Alt+F** la abre desde cualquier lado o la trae al frente.
-- Si está [Inno Setup 6](https://jrsoftware.org/isdl.php), arma además
-  `dist\ControlFCT-Setup.exe`: un solo archivo para otra PC, sin pedir
-  administrador y con desinstalador en «Aplicaciones instaladas».
-- Sin Inno Setup, para otra PC: copiar `dist\ControlFCT` y `instalar_app.ps1`
-  y correr `powershell -ExecutionPolicy Bypass -File .\instalar_app.ps1`.
-- Desinstalar: `.\instalar_app.ps1 -Desinstalar`. Los datos
-  (`Documentos\ControlFCT`) no se borran nunca.
-
-El `.exe` no está firmado: si llega por internet (mail, Drive), SmartScreen
-puede mostrar «Windows protegió su PC» → «Más información» → «Ejecutar de
-todas formas». Con un certificado de firma de código deja de pasar.
-
----
-
-## Ejecutar la app de escritorio (legacy)
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python main_control.py
-```
-
-La GUI importa el motor desde `backend/app/`, así que no hay lógica duplicada.
-Su flujo es el mismo que el de la API, con diálogos y selección de carpetas.
-
----
-
 ## Configuración
-
-El formato es **idéntico** en la app de escritorio y en el backend, para que
-ambas puedan convivir durante la migración.
 
 ### `config.json`
 
@@ -413,9 +368,8 @@ Credenciales del operador (no del cliente):
 ```
 
 - En el backend, `<base>` es `MODULONUEVO_OUTPUT_DIR` o `carpeta_salida` del job.
-- En la app de escritorio, es la carpeta elegida en la ventana.
-- Los logs del backend van a `MODULONUEVO_LOG_DIR/backend.log`; la GUI sigue
-  escribiendo `debug_log.txt` en su carpeta de salida.
+- Los logs del backend van a `MODULONUEVO_LOG_DIR/backend.log`; cada control
+  además escribe `debug_log.txt` en la carpeta de salida.
 
 ---
 
@@ -428,7 +382,8 @@ python -m pytest
 
 Los tests no abren Chrome: cubren rutas, storage, modelos, API (con un job
 simulado), el contrato web (con sesiones simuladas) y el auditor con Excel
-sintéticos de ARCA y Xubio. Resultado esperado: **146 passed**.
+sintéticos de ARCA y Xubio. Resultado esperado: **208 passed** (sin la variable
+`MODULONUEVO_CLIENTES_CLAVE` definida).
 
 ---
 
@@ -441,7 +396,6 @@ sintéticos de ARCA y Xubio. Resultado esperado: **146 passed**.
 | ARCA dice "congestionado" y segmenta fechas | AFIP limita el rango de consulta | Es automático; si falla a 15 días, reintentar más tarde |
 | El bot queda "colgado" en ARCA | Diálogo nativo del navegador | Ya se cierra solo (`manejar_dialogo`) |
 | `ModuleNotFoundError: fastapi` | Faltan dependencias del backend | `pip install -r backend/requirements-dev.txt` |
-| La ventana no abre | Falta Tcl/Tk | Reinstalar Python marcando "tcl/tk and IDLE" |
 | Chrome no encontrado | No está instalado en la ruta estándar | Instalar Chrome |
 
 ---
@@ -461,9 +415,7 @@ ModuloNuevo/
 │   ├── tests/
 │   ├── requirements.txt
 │   └── README.md
-├── frontend/               # Angular 22 (web, base tomada de main)
-├── main_control.py         # GUI legacy (reutiliza backend/app)
-├── requirements.txt        # dependencias de la GUI
+├── frontend/               # Angular 22 (web)
 ├── Dockerfile              # Angular + FastAPI en una imagen (Render)
 ├── render.yaml             # blueprint de Render
 ├── .dockerignore
@@ -472,7 +424,7 @@ ModuloNuevo/
 
 ### Contrato de los bots
 
-- Reciben `log: Callable[[str], None]`; no escriben en consola ni en la GUI.
+- Reciben `log: Callable[[str], None]`; no escriben en consola.
 - Devuelven `BotResult` (`archivos`, `sin_datos`, `errores`, `detalle`).
 - Fallan con errores tipados (`LoginError`, `EmpresaNoEncontrada`,
   `TimeoutDescarga`, `ArchivoNoEncontrado`, `Cancelado`...).
