@@ -42,7 +42,7 @@ import { ClienteForm } from './cliente-form';
           </p>
           <span class="relative block">
           <input
-            class="mf-input pr-16"
+            class="mf-input mf-con-ver"
             [type]="verClave() ? 'text' : 'password'"
             [autocomplete]="acceso.configurada() ? 'current-password' : 'new-password'"
             [value]="clave()"

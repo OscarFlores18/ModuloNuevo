@@ -8,7 +8,6 @@ import { ClientesStore } from './core/services/clientes.store';
 import { EjecucionStore } from './core/services/ejecucion.store';
 import { PerspectivaService } from './core/services/perspectiva.service';
 import { SesionService } from './core/services/sesion.service';
-import { Circuito } from './core/ui/circuito';
 import { Recorrido } from './core/ui/recorrido';
 import { RecorridoService } from './core/ui/recorrido.service';
 import { Toasts } from './core/ui/toast';
@@ -16,7 +15,7 @@ import { ElegirPerfil } from './features/perfil/elegir-perfil';
 
 @Component({
   host: { '(window:scroll)': 'medirScroll()', '(window:resize)': 'medirScroll()' },
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, Circuito, Recorrido, ElegirPerfil],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, Recorrido, ElegirPerfil],
   selector: 'app-root',
   styleUrl: './app.css',
   templateUrl: './app.html',

@@ -10,7 +10,6 @@ export interface PasoRecorrido {
 /** El recorrido de cada pantalla (por el primer tramo de la ruta). */
 const RECORRIDOS: Record<string, PasoRecorrido[]> = {
   control: [
-    { objetivo: 'circuito', titulo: 'Cómo se trabaja', texto: 'Estos son los pasos de todo el trabajo, de punta a punta. El que estás haciendo queda en azul; tocá cualquiera para ir a esa pantalla.' },
     { objetivo: 'clientes', titulo: '1. Elegí los clientes', texto: 'Tocá un cliente de «Disponibles» para sumarlo a «A procesar». Se controlan en ese orden. Si tiene un «!», le faltan datos.' },
     { objetivo: 'periodo', titulo: '2. Período y operaciones', texto: 'Elegí el mes (o un año o un rango de fechas) y si controlás ventas, compras o las dos. Un mes que todavía no empezó no se puede elegir.' },
     { objetivo: 'xubio', titulo: '3. Cuenta de Xubio', texto: 'El usuario con el que el bot entra a Xubio. Si guardás la contraseña, la próxima vez no hace falta escribirla.' },
