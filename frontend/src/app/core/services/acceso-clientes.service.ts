@@ -6,9 +6,10 @@ import { environment } from '../../../environments/environment';
 /**
  * Contraseña liviana de la sección Clientes (ver backend/app/core/acceso_clientes.py).
  *
- * No es un login de la app: «Nuevo control» funciona sin ella. Al entrar a Clientes
- * se pide una sola vez por pestaña; la primera vez, lo que se escriba queda como
- * contraseña. El token vive en sessionStorage y va en `X-Clientes-Token`.
+ * No es un login de la app: «Nuevo control» funciona sin ella. Se pide una sola vez
+ * en cada computadora; la primera vez, lo que se escriba queda como contraseña. El
+ * token queda en localStorage (sobrevive a cerrar la app) y va en `X-Clientes-Token`.
+ * Solo se vuelve a pedir con «Bloquear» o si cambia la contraseña.
  */
 const CLAVE_TOKEN = 'control-fct.clientes';
 
@@ -19,7 +20,7 @@ interface Token {
 
 function leerToken(): Token | null {
   try {
-    const t = JSON.parse(globalThis.sessionStorage?.getItem(CLAVE_TOKEN) ?? 'null') as Token | null;
+    const t = JSON.parse(globalThis.localStorage?.getItem(CLAVE_TOKEN) ?? 'null') as Token | null;
     return t?.token && t.expira * 1000 > Date.now() ? t : null;
   } catch {
     return null;
@@ -28,8 +29,8 @@ function leerToken(): Token | null {
 
 function guardarToken(t: Token | null): void {
   try {
-    if (t) globalThis.sessionStorage?.setItem(CLAVE_TOKEN, JSON.stringify(t));
-    else globalThis.sessionStorage?.removeItem(CLAVE_TOKEN);
+    if (t) globalThis.localStorage?.setItem(CLAVE_TOKEN, JSON.stringify(t));
+    else globalThis.localStorage?.removeItem(CLAVE_TOKEN);
   } catch {
     // Sin almacenamiento (modo privado): dura hasta recargar.
   }

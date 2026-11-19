@@ -129,13 +129,18 @@
 
   <!-- Qué hay que hacer: los hallazgos como órdenes, en el orden en que conviene hacerlas -->
   @if (vista() === 'tareas') {
-    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" role="tabpanel" aria-labelledby="tab-tareas" id="t-tareas">
+    @let nSel = seleccionados().length;
+    <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" role="tabpanel" aria-labelledby="tab-tareas" id="t-tareas" [attr.aria-busy]="aplicando()">
       <header class="tr-cab">
         <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientes() ? 'Hacelas en este orden' : corregidos().length ? 'Todo hecho · errores arreglados' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
+          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientes() ? 'Hacelas en este orden' : corregidos().length ? 'Todo hecho · Excel actualizado' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
           <p class="mf-sub m-0 mt-0.5" aria-live="polite">
-            @if (!pendientes()) {
-              {{ corregidos().length ? 'El control arregló solo los errores en el mismo Excel y lo volvió a chequear.' : 'Tildaste todas las tareas de este control.' }}
+            @if (aplicando()) {
+              <span class="tr-aplicando"><span class="ej-spinner" aria-hidden="true"></span> Aplicando cambios y re-chequeando el control...</span>
+            } @else if (nSel) {
+              <strong class="tr-pendiente-aplicar">{{ nSel }} {{ nSel === 1 ? 'cambio seleccionado listo' : 'cambios seleccionados listos' }} para aplicar</strong>
+            } @else if (!pendientes()) {
+              {{ corregidos().length ? 'Los cambios aplicados quedaron en el mismo Excel y el control se re-chequeó.' : 'Tildaste todas las tareas de este control.' }}
             } @else {
               @if (!perspectiva.canEdit()) {
                 Quedan {{ pendientes() }} de {{ tareas().length }} por hacer.
@@ -150,7 +155,16 @@
             <div [style.width.%]="((tareas().length - pendientes()) / tareas().length) * 100"></div>
           </div>
         }
-        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()">Ver todos los hallazgos</button>
+        @if (cambios().length || aplicando()) {
+          <button type="button" class="mf-btn mf-btn-ok inline-flex items-center gap-1.5" (click)="aplicarCambios()"
+            [disabled]="!perspectiva.canEdit() || !nSel || aplicando()" [attr.aria-busy]="aplicando()"
+            [title]="perspectiva.motivoBloqueo() ?? (nSel ? 'Corrige el Libro IVA con los datos de ARCA tildados y vuelve a cruzar' : 'Tildá las correcciones que querés que la app haga por vos')">
+            @if (aplicando()) {
+              <span class="inline-block h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span> Aplicando…
+            } @else { Aplicar cambios ({{ nSel }}) }
+          </button>
+        }
+        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()" [disabled]="aplicando()">Ver todos los hallazgos</button>
       </header>
 
       @if (clientesConTareas().length > 1) {
@@ -168,7 +182,7 @@
         <div class="tr-actualizado" role="status">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 13l4 4L19 7" /></svg>
           <div class="min-w-0 flex-1">
-            <p class="m-0"><strong>{{ x.cambios.length === 1 ? 'Error arreglado' : x.cambios.length + ' errores arreglados' }}</strong> · {{ x.cliente }} · {{ x.operacion }}</p>
+            <p class="m-0"><strong>{{ x.cambios.length === 1 ? 'Cambio aplicado' : x.cambios.length + ' cambios aplicados' }}</strong> · {{ x.cliente }} · {{ x.operacion }}</p>
             <p class="m-0 mt-0.5 text-sm">Se corrigió con el dato de ARCA en el Libro IVA y el AUX del control. Hacé el mismo cambio en Xubio.</p>
             <ul class="tr-arreglos">
               @for (c of x.cambios; track $index) {
@@ -185,6 +199,7 @@
           <ul class="tr-lista">
             @for (tarea of g.tareas; track tarea.clave; let i = $index) {
               @let hecha = estaHecha(tarea);
+              @let nCambios = cambiosDe(tarea.advertencia).length;
               @let idCheck = 'tr-' + g.id + '-' + i;
               @let faltantes = faltantesDe(tarea.advertencia);
               @let nTildadas = tildadas(tarea.advertencia, faltantes);
@@ -240,6 +255,20 @@
                     <button type="button" class="mf-btn-link tr-falt-mas" (click)="verDetalle(tarea)">Ver los {{ faltantes.length }} comprobantes</button>
                   }
                 </li>
+              } @else if (nCambios) {
+              <!-- Corrección: el checkbox la elige para «Aplicar cambios» (no la da por hecha) -->
+              @let nElegidos = elegidos(tarea.advertencia);
+              <li class="tr-tarea" [class.tr-elegida]="nElegidos > 0">
+                <input type="checkbox" class="tr-check tr-check-aplicar" [id]="idCheck" [checked]="nElegidos === nCambios" [indeterminate]="nElegidos > 0 && nElegidos < nCambios"
+                  [disabled]="!perspectiva.canEdit() || aplicando()" [attr.title]="perspectiva.motivoBloqueo() ?? 'Elegir para que la app lo corrija con el dato de ARCA'" (change)="alternarCambios(tarea.advertencia, $event)" />
+                <label class="tr-texto" [for]="idCheck">
+                  <span class="tr-orden">{{ tarea.orden }}</span>
+                  <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ nElegidos }} de {{ nCambios }} {{ nCambios === 1 ? 'seleccionado' : 'seleccionados' }} para aplicar</span>
+                </label>
+                <span class="tr-acciones">
+                  <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)" [disabled]="aplicando()">Ver y elegir</button>
+                </span>
+              </li>
               } @else {
               <li class="tr-tarea" [class.tr-hecha]="hecha">
                 <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()" (change)="alternarHecha(tarea)" />
