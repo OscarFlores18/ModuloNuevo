@@ -315,6 +315,9 @@ Advertencias para el testeo en Render:
 
 ## App de Windows (un solo ícono)
 
+> **¿Solo querés instalarla?** Bajá el instalador de la carpeta
+> [`instalador/`](instalador/) y seguí su [README](instalador/README.md).
+
 La web empaquetada como programa: `desktop.py` levanta el backend y abre una
 ventana propia (WebView2, ya viene en Windows 10/11). No hace falta Python ni
 Node en la PC donde se usa; sí **Google Chrome** (los bots lo abren).
