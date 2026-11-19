@@ -1140,7 +1140,9 @@ const ESTILOS = `
     .ve-kpi-mal .ve-kpi-estado { background: #fdf0d9; color: #7a4f0f; }
 
     /* Filtros (Todos | Error | Subir a Xubio | A revisar): pestañas grandes, una por tipo. */
-    .ve-barra { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 -28px 14px; padding: 10px 28px; background: rgba(244, 247, 251, 0.96); border-bottom: 1px solid #e2e8f0; backdrop-filter: blur(4px); }
+    /* top negativo = el relleno de arriba del contenedor: sin eso la barra se pega 16 px
+       más abajo del borde y por ese hueco se ve pasar la lista. */
+    .ve-barra { position: sticky; top: -16px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 -28px 14px; padding: 10px 28px; background: rgba(244, 247, 251, 0.96); border-bottom: 1px solid #e2e8f0; backdrop-filter: blur(4px); }
     .ve-empresa { margin: 0; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #334155; }
     .ve-filtros, .ve-pills { display: flex; flex-wrap: wrap; gap: 8px; }
     .ve-pills { margin: 0 0 12px; }
@@ -1296,7 +1298,7 @@ const ESTILOS = `
       .ve-popup .swal2-title { padding: 18px 64px 12px 16px; font-size: 1.25em; }
       .ve-popup .swal2-actions { padding: 12px 16px; }
       .ve-popup .swal2-confirm { width: 100%; }
-      .ve-barra { margin: 0 -12px 12px; padding: 8px 12px; }
+      .ve-barra { top: -12px; margin: 0 -12px 12px; padding: 8px 12px; }
       .ve-chip { min-height: 44px; }
       .ve-derecha { max-width: none; }
       .ve-error summary { flex-wrap: wrap; }

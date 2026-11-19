@@ -40,9 +40,10 @@ import { ClienteForm } from './cliente-form';
               Se pide una sola vez en esta computadora. Mínimo 8 caracteres.
             }
           </p>
+          <span class="relative block">
           <input
-            class="mf-input"
-            type="password"
+            class="mf-input pr-16"
+            [type]="verClave() ? 'text' : 'password'"
             [autocomplete]="acceso.configurada() ? 'current-password' : 'new-password'"
             [value]="clave()"
             (input)="clave.set($any($event.target).value)"
@@ -50,6 +51,10 @@ import { ClienteForm } from './cliente-form';
             placeholder="Contraseña"
             autofocus
           />
+            <button type="button" class="mf-btn-link absolute inset-y-0 right-3 text-xs" (click)="verClave.update((v) => !v)" [attr.aria-pressed]="verClave()" [attr.aria-label]="verClave() ? 'Ocultar la contraseña' : 'Ver la contraseña'">
+              {{ verClave() ? 'Ocultar' : 'Ver' }}
+            </button>
+          </span>
           @if (errorClave(); as e) { <p class="mf-ayuda m-0 text-red-600" role="alert">{{ e }}</p> }
           <button type="submit" class="mf-btn" [disabled]="!clave() || entrando()">
             {{ entrando() ? 'Entrando…' : acceso.configurada() ? 'Entrar' : 'Guardar y entrar' }}
@@ -195,6 +200,8 @@ export class ClientesPantalla {
   protected readonly guardadoRecien = signal<string | null>(null);
 
   protected readonly clave = signal('');
+  /** «Ver» de la contraseña de Clientes. */
+  protected readonly verClave = signal(false);
   protected readonly entrando = signal(false);
   protected readonly errorClave = signal<string | null>(null);
   protected readonly precargando = signal(false);

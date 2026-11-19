@@ -13,13 +13,12 @@ interface PasoCircuito {
   activoEn: string[];
 }
 
-/** El trabajo completo, de punta a punta, en el orden en que se hace. */
+/** El trabajo completo, de punta a punta: los mismos 4 botones de arriba, en el orden en que se hace. */
 const PASOS: PasoCircuito[] = [
   { numero: 1, texto: 'Clientes', ruta: '/clientes', ayuda: 'Cargá cada cliente con su CUIT y su clave fiscal de ARCA. Se hace una sola vez.', activoEn: ['/clientes'] },
   { numero: 2, texto: 'Nuevo control', ruta: '/control', ayuda: 'Elegí los clientes y el período: los bots bajan ARCA y Xubio y arman la auditoría.', activoEn: ['/control'] },
-  { numero: 3, texto: 'Hallazgos y tareas', ruta: '/ejecuciones', ayuda: 'Mirá qué encontró el control y hacé las tareas: corregir en Xubio o consultar al cliente.', activoEn: ['/ejecuciones'] },
-  { numero: 4, texto: 'Subir a Xubio', ruta: '/convertir-aux', ayuda: 'Lo que está en ARCA y falta en Xubio se importa desde acá.', activoEn: ['/convertir-aux'] },
-  { numero: 5, texto: 'Confirmar', ruta: '/control', ayuda: 'Corré un control nuevo del mismo período: si quedó todo bien, sale sin hallazgos.', activoEn: [] },
+  { numero: 3, texto: 'Ejecuciones', ruta: '/ejecuciones', ayuda: 'Mirá qué encontró el control y hacé las tareas: corregir en Xubio o consultar al cliente.', activoEn: ['/ejecuciones'] },
+  { numero: 4, texto: 'Subir a Xubio', ruta: '/convertir-aux', ayuda: 'Lo que está en ARCA y falta en Xubio se importa desde acá. Después, un control nuevo del mismo período confirma que quedó todo bien.', activoEn: ['/convertir-aux'] },
 ];
 
 /**

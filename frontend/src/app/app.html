@@ -21,6 +21,13 @@
     <!-- Fila inferior: pestañas y acciones -->
     <div class="flex flex-wrap items-center justify-between gap-3">
       <nav class="flex flex-wrap gap-2" aria-label="Secciones">
+        <!-- Mismo orden que «Cómo se trabaja»: Clientes, Nuevo control, Ejecuciones, Subir a Xubio -->
+        <a routerLink="/clientes" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
+          Clientes
+          @if (clientes.lista().length) {
+            <span class="cf-tab-badge" [title]="clientes.incompletos() + ' con datos incompletos'">{{ clientes.lista().length }}</span>
+          }
+        </a>
         @if (perspectiva.canEdit()) {
           <a routerLink="/control" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Nuevo control</a>
         }
@@ -31,12 +38,6 @@
           }
         </a>
         <a routerLink="/convertir-aux" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">Subir a Xubio</a>
-        <a routerLink="/clientes" routerLinkActive="activo" ariaCurrentWhenActive="page" class="cf-tab">
-          Clientes
-          @if (clientes.lista().length) {
-            <span class="cf-tab-badge" [title]="clientes.incompletos() + ' con datos incompletos'">{{ clientes.lista().length }}</span>
-          }
-        </a>
       </nav>
 
       <!-- Controles de la derecha -->
