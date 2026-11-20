@@ -41,7 +41,6 @@ from ...extraccion import servicio as extraccion_srv
 from ...extraccion.modelo import Comprobante
 from ...services import ejecuciones as ejecuciones_srv
 from ...services import importacion_xubio as importacion_srv
-from ...services import importar_clientes as importar_clientes_srv
 from ...services import precarga as precarga_srv
 from ..deps import exigir_acceso_clientes, get_clientes, get_credenciales_xubio
 
@@ -190,49 +189,6 @@ def precargar_clientes(
         _publico(nombre, datos) for nombre, datos in repo.listar_publico().items()
     ]
     return resultado
-
-
-class ImportarClientes(BaseModel):
-    texto: str = Field(max_length=2_000_000)
-
-
-@router.post("/clientes/importar", dependencies=[Depends(exigir_acceso_clientes)])
-def importar_clientes(
-    body: ImportarClientes,
-    repo: ClientesRepository = Depends(get_clientes),
-) -> dict:
-    """Varios clientes de una vez desde un JSON (ver services/importar_clientes.py).
-    Los nuevos se agregan; los que ya están (mismo nombre, sin importar mayúsculas)
-    se actualizan con lo que traiga el JSON (una clave vacía deja la que había)."""
-    try:
-        leidos = importar_clientes_srv.leer(body.texto)
-    except importar_clientes_srv.JsonInvalido as exc:
-        raise HTTPException(status_code=422, detail={"mensaje": str(exc)}) from None
-    existentes = {n.casefold(): n for n in repo.listar_publico()}
-    agregados: list[str] = []
-    actualizados: list[str] = []
-    errores: list[str] = []
-    for c in leidos:
-        try:
-            nombre = _validar_nombre(c["nombre"])
-        except HTTPException as exc:
-            errores.append(f"«{c['nombre']}»: {exc.detail['mensaje']}")
-            continue
-        entrada = ClienteEntrada(nombre=nombre, arca=DatosArca(**c["arca"]), **c["extras"])
-        previo_nombre = existentes.get(nombre.casefold())
-        if previo_nombre is None:
-            repo.guardar(nombre, _combinar({}, entrada))
-            existentes[nombre.casefold()] = nombre
-            agregados.append(nombre)
-        else:
-            repo.guardar(previo_nombre, _combinar(repo.obtener_publico(previo_nombre) or {}, entrada))
-            actualizados.append(previo_nombre)
-    return {
-        "agregados": agregados,
-        "actualizados": actualizados,
-        "errores": errores,
-        "clientes": [_publico(n, d) for n, d in repo.listar_publico().items()],
-    }
 
 
 @router.get("/clientes")

@@ -1,4 +1,5 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { CuitPipe, formatearCuit } from '../../core/cuit.pipe';
 import { Cliente, mensajeDeError } from '../../core/models';
@@ -8,22 +9,17 @@ import { PerspectivaService } from '../../core/services/perspectiva.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ClienteForm } from './cliente-form';
-import { ResultadoImportacion } from '../../core/services/api.service';
+import { leerClientesJson } from './clientes-json';
 
 @Component({
   selector: 'app-clientes',
-  imports: [RouterLink, CuitPipe, Alerta, Encabezado, ClienteForm],
+  imports: [RouterLink, NgTemplateOutlet, CuitPipe, Alerta, Encabezado, ClienteForm],
   template: `
     <app-encabezado titulo="Clientes" bajada="Las empresas que se controlan y los datos con los que los bots entran a ARCA y a Xubio.">
       @if (acceso.desbloqueado()) {
         @if (acceso.configurada()) {
           <button type="button" class="mf-btn mf-btn-suave" (click)="bloquear()" title="Vuelve a pedir la contraseña">Bloquear</button>
         }
-        <!-- Un .json con varios clientes: se cargan todos al listado -->
-        <label class="mf-btn mf-btn-suave" [class.cursor-pointer]="perspectiva.editaClientes() && !importando()" [class.opacity-50]="!perspectiva.editaClientes() || importando()" [attr.title]="bloqueoClientes() ?? 'Elegí un archivo .json con los clientes y se cargan todos juntos'">
-          {{ importando() ? 'Cargando…' : 'Cargar clientes' }}
-          <input type="file" accept=".json,application/json" class="sr-only" aria-label="Cargar clientes desde un archivo .json" [disabled]="!perspectiva.editaClientes() || importando()" (change)="cargarArchivo($event)" />
-        </label>
         <button type="button" class="mf-btn mf-btn-suave" (click)="precargar()" [disabled]="precargando() || !perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">
           {{ precargando() ? 'Precargando…' : 'Precargar clientes del estudio' }}
         </button>
@@ -175,12 +171,32 @@ import { ResultadoImportacion } from '../../core/services/api.service';
               <p class="mf-tenue m-0 text-sm">Tocá un cliente de la lista para ver y editar sus datos acá.</p>
               <button type="button" class="mf-btn w-full" (click)="abrir(null)" data-tour="nuevo-cliente" [disabled]="!perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">+ Nuevo cliente</button>
             </section>
+            <ng-container *ngTemplateOutlet="cuadroJson" />
           }
         </aside>
       }
     </div>
 
+    @if (!anchoGrande()) {
+      <div class="mt-4"><ng-container *ngTemplateOutlet="cuadroJson" /></div>
     }
+
+    }
+
+    <!-- Pegar clientes en JSON (formato del config.json): se guardan al pegar. -->
+    <ng-template #cuadroJson>
+      <section class="mf-panel cl-json" aria-labelledby="t-json">
+        <h2 id="t-json" class="m-0 text-base">Cargar desde JSON</h2>
+        <p class="mf-ayuda m-0">Pegá el cliente como en el <code>config.json</code> y se guarda solo. Si ya existe, se actualiza.</p>
+        <textarea class="mf-input cl-json-texto" rows="4" spellcheck="false" autocomplete="off"
+          placeholder='{"CLIENTES": {"EMPRESA S.A.": {"ARCA": {"cuit_login": "…", "clave": "…", "cuit_representado": "…"}}}}'
+          aria-label="JSON de clientes" [value]="json()" (input)="json.set($any($event.target).value)"
+          (paste)="alPegarJson($event)" [disabled]="!perspectiva.editaClientes() || importando()"></textarea>
+        <button type="button" class="mf-btn mf-btn-suave w-full" (click)="importarJson()" [disabled]="!json().trim() || !perspectiva.editaClientes() || importando()" [attr.title]="bloqueoClientes()">
+          {{ importando() ? 'Guardando…' : 'Cargar' }}
+        </button>
+      </section>
+    </ng-template>
 
     @if (!anchoGrande()) {
       <app-cliente-form [(abierto)]="formAbierto" [cliente]="editando()" (guardado)="guardadoRecien.set($event)" />
@@ -211,8 +227,6 @@ export class ClientesPantalla {
   protected readonly entrando = signal(false);
   protected readonly errorClave = signal<string | null>(null);
   protected readonly precargando = signal(false);
-  /** «Cargar clientes»: leyendo y guardando el .json elegido. */
-  protected readonly importando = signal(false);
   protected readonly avisoPrecarga = signal<{ nivel: 'ok' | 'info' | 'error'; mensajes: string[] } | null>(null);
 
   protected readonly sinClave = computed(() => this.store.lista().filter((c) => !c.arca.tiene_clave).length);
@@ -303,36 +317,58 @@ export class ClientesPantalla {
     }
   }
 
-  /**
-   * «Cargar clientes»: el .json elegido va al backend, que agrega los nuevos y
-   * actualiza los que ya están (una clave vacía deja la que había).
-   * Formato: {"CLIENTES": {"NOMBRE": {"ARCA": {"cuit_login", "clave", "cuit_representado"}}}}.
-   */
-  protected async cargarArchivo(ev: Event): Promise<void> {
-    const input = ev.target as HTMLInputElement;
-    const archivo = input.files?.[0];
-    input.value = '';
-    if (!archivo || !this.perspectiva.editaClientes() || this.importando()) return;
-    this.importando.set(true);
-    this.avisoPrecarga.set(null);
-    try {
-      this.importado(await this.store.importar(await archivo.text()));
-    } catch (e) {
-      this.avisoPrecarga.set({ nivel: 'error', mensajes: [`«${archivo.name}»: ${mensajeDeError(e, 'No se pudieron cargar los clientes.')}`] });
-    } finally {
-      this.importando.set(false);
-    }
+  /** El JSON pegado en «Cargar desde JSON». */
+  protected readonly json = signal('');
+  protected readonly importando = signal(false);
+
+  /** Al pegar se guarda enseguida (el texto ya está en el cuadro en el siguiente tick). */
+  protected alPegarJson(ev: ClipboardEvent): void {
+    const pegado = ev.clipboardData?.getData('text');
+    if (!pegado) return;
+    ev.preventDefault();
+    this.json.set(pegado);
+    void this.importarJson();
   }
 
-  /** Qué se agregó, qué se actualizó y qué no se pudo. */
-  private importado(r: ResultadoImportacion): void {
-    const lista = (nombres: string[]) => nombres.join(', ');
-    const mensajes: string[] = [];
-    if (r.agregados.length) mensajes.push(`Se agregaron ${r.agregados.length}: ${lista(r.agregados)}.`);
-    if (r.actualizados.length) mensajes.push(`Se actualizaron ${r.actualizados.length}: ${lista(r.actualizados)}.`);
-    mensajes.push(...r.errores.map((e) => `No se cargó ${e}`));
-    const nivel = r.errores.length ? (r.agregados.length || r.actualizados.length ? 'info' : 'error') : 'ok';
-    this.avisoPrecarga.set({ nivel, mensajes: mensajes.length ? mensajes : ['No había nada para cargar.'] });
+  /** Lee el JSON y da de alta (o actualiza, si ya está) cada cliente. */
+  protected async importarJson(): Promise<void> {
+    if (!this.perspectiva.editaClientes() || this.importando()) return;
+    let clientes;
+    try {
+      clientes = leerClientesJson(this.json());
+    } catch (e) {
+      this.avisoPrecarga.set({ nivel: 'error', mensajes: [mensajeDeError(e, 'No se pudo leer el JSON.')] });
+      return;
+    }
+    this.importando.set(true);
+    this.avisoPrecarga.set(null);
+    this.guardadoRecien.set(null);
+    const clave = (n: string) => n.trim().replace(/\.+$/, '').toLocaleLowerCase('es');
+    const agregados: string[] = [];
+    const actualizados: string[] = [];
+    const errores: string[] = [];
+    for (const datos of clientes) {
+      const existente = this.store.lista().find((c) => clave(c.nombre) === clave(datos.nombre));
+      try {
+        // Uno que ya estaba conserva su nombre y su mail si el JSON no los trae.
+        await this.store.guardar(existente?.nombre ?? null, {
+          ...datos,
+          nombre: existente?.nombre ?? datos.nombre,
+          email: datos.email ?? existente?.email,
+        });
+        (existente ? actualizados : agregados).push(existente?.nombre ?? datos.nombre);
+      } catch (e) {
+        errores.push(`${datos.nombre}: ${mensajeDeError(e, 'no se pudo guardar.')}`);
+      }
+    }
+    this.importando.set(false);
+    const mensajes = [
+      ...(agregados.length ? [`Se agregó: ${agregados.join(', ')}.`] : []),
+      ...(actualizados.length ? [`Se actualizó: ${actualizados.join(', ')}.`] : []),
+      ...errores,
+    ];
+    this.avisoPrecarga.set({ nivel: errores.length ? 'error' : 'ok', mensajes });
+    if (!errores.length) this.json.set('');
   }
 
   protected abrir(c: Cliente | null): void {

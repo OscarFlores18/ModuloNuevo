@@ -24,12 +24,6 @@ export class ApiService {
   precargarClientes(): Promise<ResultadoPrecarga> {
     return firstValueFrom(this.http.post<ResultadoPrecarga>(`${this.url}/clientes/precargar`, {}));
   }
-  /** Varios clientes de una vez desde un JSON (pide la contraseña de Clientes). */
-  importarClientes(texto: string): Promise<ResultadoImportacion> {
-    return firstValueFrom(
-      this.http.post<ResultadoImportacion>(`${this.url}/clientes/importar`, { texto }).pipe(errorLegible('No se pudieron cargar los clientes.')),
-    );
-  }
   borrarCliente(nombre: string): Promise<void> {
     return firstValueFrom(this.http.delete<void>(`${this.url}/clientes/${encodeURIComponent(nombre)}`));
   }
@@ -146,14 +140,6 @@ export class ApiService {
   zip(id: string, indice: number): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
   }
-}
-
-/** «Cargar varios»: los nuevos, los que ya estaban (se actualizan) y los que no se pudieron cargar. */
-export interface ResultadoImportacion {
-  agregados: string[];
-  actualizados: string[];
-  errores: string[];
-  clientes: Cliente[];
 }
 
 export interface ResultadoPrecarga {
