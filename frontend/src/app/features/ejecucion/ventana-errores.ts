@@ -468,7 +468,8 @@ function grilla(grupos: Grupo[], marcado?: Marcado): string {
       const fuera = conSubir && !!g.subir && !g.subir.incluida;
       const elegido = conAplicar && !!g.aplicar?.tildado;
       const clases = [conCorr && 've-par', hecha && 've-hecha', fuera && 've-excluida', elegido && 've-elegido'].filter(Boolean).join(' ');
-      const atributos = `${clases ? ` class="${clases}"` : ''}${g.clase ? ` data-clase="${g.clase}"` : ''}`;
+      const op = g.filas[0]?.op;
+      const atributos = `${clases ? ` class="${clases}"` : ''}${g.clase ? ` data-clase="${g.clase}"` : ''}${op ? ` data-op="${esc(op)}"` : ''}`;
       const tilde = () => {
         if (conAplicar) {
           if (!g.aplicar) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
@@ -1227,14 +1228,23 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
   const explicadas = grupos.filter((g) => g.filas[0].nota).length;
   const meta = ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : '';
   // Un mail por operación, con el mismo cuadro que la grilla (tiques incluidos, con su observación).
+  // Con Ventas y Compras se elige una con las pills: se ven sus filas y solo su botón.
+  const separar = porOp.size > 1;
+  const primera = [...porOp.keys()][0];
   const mails = [...porOp]
     .map(([op, { n: k, adv }]) => {
       const tabla = tablaRevisar(grupos.filter((g) => g.filas[0].op === op));
       if (!tabla.datos.length) return '';
       const a: Advertencia = { ...(adv ?? faltanteDesdeExcel(cliente, op, k)), tipo: 'faltante_en_arca', cliente, operacion: op };
-      return botonMail(a, marcado.canEdit, tabla, porOp.size > 1);
+      const boton = botonMail(a, marcado.canEdit, tabla, separar);
+      return separar ? `<span class="ve-mail-op" data-op-mail="${op}"${op === primera ? '' : ' hidden'}>${boton}</span>` : boton;
     })
     .join('');
+  const pills = separar
+    ? `<div class="ve-pills" data-pills-op role="group" aria-label="Elegir operación">
+        ${[...porOp].map(([op, { n: k }]) => `<button type="button" class="ve-pill" data-op-pill="${op}" aria-pressed="${op === primera}">${op} (${k})</button>`).join('')}
+      </div>`
+    : '';
   const queHacer =
     n > explicadas
       ? 'Consultalas con el cliente: pueden ser facturas manuales (CAI), tiques o errores de tipeo.'
@@ -1247,9 +1257,9 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
           <span class="ve-titulo">Partidas del ${esc(libroDe(ops))} no encontradas en ARCA${cantidadTexto(n)}</span>
           <span class="ve-que-hacer">${queHacer}</span>
         </span>
-        <span class="ve-derecha">${meta}${mails}${plegar(n)}</span>
+        <span class="ve-derecha">${meta}${mails ? `<span class="ve-acciones">${mails}</span>` : ''}${plegar(n)}</span>
       </summary>
-      <div class="ve-cuerpo">${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
+      <div class="ve-cuerpo">${pills}${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
     </details>`;
 }
 
@@ -1746,6 +1756,18 @@ export function mostrarVentanaDeErrores(
           const clase = b.dataset['pill'];
           for (const par of bloque?.querySelectorAll<HTMLElement>('tbody.ve-par') ?? []) par.hidden = !!clase && par.dataset['clase'] !== clase;
         });
+      }
+      // «A revisar» con Ventas y Compras: las pills muestran una operación y su botón de mail.
+      for (const pills of popup.querySelectorAll<HTMLElement>('[data-pills-op]')) {
+        const bloque = pills.closest('.ve-bloque');
+        const mostrar = (op: string) => {
+          for (const t of bloque?.querySelectorAll<HTMLElement>('tbody[data-op]') ?? []) t.hidden = t.dataset['op'] !== op;
+          for (const m of bloque?.querySelectorAll<HTMLElement>('[data-op-mail]') ?? []) m.hidden = m.dataset['opMail'] !== op;
+        };
+        const botones = pills.querySelectorAll<HTMLButtonElement>('button[data-op-pill]');
+        grupoDeBotones(botones, 'aria-pressed', (b) => mostrar(b.dataset['opPill']!));
+        const elegida = [...botones].find((b) => b.getAttribute('aria-pressed') === 'true');
+        if (elegida) mostrar(elegida.dataset['opPill']!);
       }
       // Tilde «cargado / resuelto» (solo Acceso Total; el empleado lo ve deshabilitado).
       const marcadas = new Set(hechas);
