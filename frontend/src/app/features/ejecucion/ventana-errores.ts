@@ -1031,8 +1031,10 @@ export async function abrirMail(m: MailArmado, pegar?: () => Promise<void>): Pro
 }
 
 /** «✉ Consultar al cliente»: abre Gmail con el mail armado (o bloqueado en Empleado). */
-function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail): string {
-  if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">✉ Consultar al cliente</button>`;
+function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail, conOperacion = false): string {
+  // Con Ventas y Compras en el mismo bloque hay un mail por operación: el botón dice cuál.
+  const texto = `✉ Consultar al cliente${conOperacion && e.operacion ? ` · ${esc(e.operacion)}` : ''}`;
+  if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">${texto}</button>`;
   const destino = contexto.emails[e.cliente]
     ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]}`
     : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes)';
@@ -1040,7 +1042,7 @@ function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail): string 
   const ayuda = `${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
   const id = String(mailsArmados.size + 1);
   mailsArmados.set(id, m);
-  return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" title="${esc(ayuda)}">✉ Consultar al cliente</a>`;
+  return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" title="${esc(ayuda)}">${texto}</a>`;
 }
 
 
@@ -1182,7 +1184,7 @@ function bloqueSubir(
     const tildadas = grupos.filter((g) => g.subir?.op === op && g.subir.incluida).length;
     if (conSubida) botones.push(botonSubir(a, registrar(a), canEdit, porOp.size > 1, tildadas));
     // Avisarle al cliente: percepciones, centro de costo y forma de pago de estas facturas.
-    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) botones.push(botonMail(adv, canEdit));
+    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) botones.push(botonMail(adv, canEdit, undefined, porOp.size > 1));
   }
   const tildadas = grupos.filter((g) => g.subir?.incluida).length;
   const meta = `<span class="ve-meta" data-cuenta>${tildadas} de ${grupos.length} para subir</span>${ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : ''}`;
@@ -1230,7 +1232,7 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
       const tabla = tablaRevisar(grupos.filter((g) => g.filas[0].op === op));
       if (!tabla.datos.length) return '';
       const a: Advertencia = { ...(adv ?? faltanteDesdeExcel(cliente, op, k)), tipo: 'faltante_en_arca', cliente, operacion: op };
-      return botonMail(a, marcado.canEdit, tabla);
+      return botonMail(a, marcado.canEdit, tabla, porOp.size > 1);
     })
     .join('');
   const queHacer =
