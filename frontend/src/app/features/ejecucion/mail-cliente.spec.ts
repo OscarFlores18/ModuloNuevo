@@ -35,8 +35,6 @@ describe('Mail «Consultar al cliente»', () => {
         'Fecha | Tipo | Punto de Venta | Número Desde | Cód. Autorización | Tipo Doc. Emisor | Nro. Doc. Emisor | Denominación Emisor | Imp. Neto Gravado | Imp. Op. Exentas | IVA | Imp. Total',
         '01/10/2025 | 1 - Factura A | 4 | 400205 | 74517958652179 | CUIT | 30707310657 | NOVIT S. A. | 62.502,25 | - | 13.125,47 | 75.627,72',
         '',
-        'También adjuntamos la posición del IVA.',
-        '',
         'Quedamos a la espera, muchas gracias.',
         '',
         'Saludos cordiales y buen comienzo de semana!!',
@@ -47,8 +45,13 @@ describe('Mail «Consultar al cliente»', () => {
     expect(m.html).toContain('text-align:center;white-space:nowrap">74517958652179<');
     expect(m.html).toContain('text-align:right;white-space:nowrap">62.502,25<');
     expect(m.html).toContain('text-align:right;white-space:nowrap;font-weight:bold">75.627,72<');
-    expect(m.url).toContain('to=a@b.com');
+    expect(m.url).toContain('to=a%40b.com');
+    // El cuerpo no va en la URL (perdería la tabla): se pega con formato.
     expect(m.url).not.toContain('body=');
+    // Respaldo sin portapapeles: el texto plano, con los saltos de línea codificados.
+    expect(new URL(m.urlConTexto!).searchParams.get('body')).toBe(m.texto);
+    expect(m.urlConTexto).toContain('%0A');
+    expect(m.urlConTexto).not.toContain('+');
   });
 
   it('Factura C: los importes vacíos o nulos salen con «-»', () => {
@@ -61,12 +64,26 @@ describe('Mail «Consultar al cliente»', () => {
 
   it('abre Gmail con la cuenta configurada (authuser), el destinatario y el asunto', () => {
     const m = armarMail(faltante, { emails: { 'PICCININI y ASOCIADOS S.A': 'a@b.com' }, periodo: '10/2025', cuenta: 'tito@estudio.com.ar' });
-    expect(m.url.startsWith('https://mail.google.com/mail/?view=cm&fs=1&authuser=tito@estudio.com.ar&to=a@b.com&su=')).toBe(true);
+    expect(m.url.startsWith('https://mail.google.com/mail/?view=cm&fs=1&authuser=tito%40estudio.com.ar&to=a%40b.com&su=')).toBe(true);
+    const q = new URL(m.url).searchParams;
+    expect(q.get('authuser')).toBe('tito@estudio.com.ar');
+    expect(q.get('su')).toBe('Consulta de comprobantes de compras · 10/2025 · PICCININI y ASOCIADOS S.A');
     // Un usuario que no es un mail no se usa: Gmail abre con la cuenta de siempre.
     expect(armarMail(faltante, { emails: {}, periodo: '10/2025', cuenta: 'usuario' }).url).not.toContain('authuser');
   });
 
-  it('copia con ClipboardItem (HTML y texto) y recién después abre Gmail, con el aviso', async () => {
+  it('largo (más de 1800 caracteres): sin respaldo de texto en la URL', () => {
+    const muchas = {
+      ...faltante,
+      comprobantes: Array.from({ length: 30 }, () => (faltante.comprobantes as unknown[])[0]),
+    } as unknown as Advertencia;
+    const m = armarMail(muchas, { emails: {}, periodo: '10/2025', cuenta: 'tito@estudio.com.ar' });
+    expect(m.texto.length).toBeGreaterThan(1800);
+    expect(m.urlConTexto).toBeNull();
+    expect(m.url).toContain('authuser=');
+  });
+
+  it('copia con ClipboardItem (HTML y texto) y recién después abre Gmail sin cuerpo, con el aviso', async () => {
     const m = armarMail(faltante, { emails: {}, periodo: '10/2025' });
     const pasos: string[] = [];
     const g = globalThis as { ClipboardItem?: unknown };
@@ -83,6 +100,33 @@ describe('Mail «Consultar al cliente»', () => {
       await abrirMail(m);
       expect(pasos).toEqual(['copia:text/html,text/plain', `abre:${m.url}`]);
       expect(document.querySelector('.ve-aviso-mail')?.textContent).toBe('Correo con tabla copiado al portapapeles. Presiona Ctrl + V en Gmail');
+    } finally {
+      delete (navigator as { clipboard?: unknown }).clipboard;
+      abrir.mockRestore();
+      g.ClipboardItem = tenia;
+      document.querySelector('.ve-aviso-mail')?.remove();
+    }
+  });
+
+  it('con el backend en esta PC y destinatario: pide el Ctrl+V automático antes de abrir Gmail', async () => {
+    const conMail = armarMail(faltante, { emails: { 'PICCININI y ASOCIADOS S.A': 'a@b.com' }, periodo: '10/2025' });
+    const sinMail = armarMail(faltante, { emails: {}, periodo: '10/2025' });
+    const pasos: string[] = [];
+    const g = globalThis as { ClipboardItem?: unknown };
+    const tenia = g.ClipboardItem;
+    g.ClipboardItem = class {};
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { write: async () => void pasos.push('copia') } });
+    const abrir = vi.spyOn(window, 'open').mockImplementation(() => (pasos.push('abre'), null));
+    const pegar = async () => void pasos.push('pegar');
+    try {
+      await abrirMail(conMail, pegar);
+      expect(pasos).toEqual(['copia', 'pegar', 'abre']);
+      expect(document.querySelector('.ve-aviso-mail')?.textContent).toContain('se pega solo');
+      // Sin destinatario el cursor queda en «Para»: no se pega solo.
+      pasos.length = 0;
+      await abrirMail(sinMail, pegar);
+      expect(pasos).toEqual(['copia', 'abre']);
+      expect(document.querySelector('.ve-aviso-mail')?.textContent).toContain('Ctrl + V');
     } finally {
       delete (navigator as { clipboard?: unknown }).clipboard;
       abrir.mockRestore();

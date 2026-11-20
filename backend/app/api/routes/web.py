@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...auditor.csv_arca import convertir_auxiliares, filas_para_mostrar, libro_sin_arca
 from ...version import COMPILADO, VERSION
 from ...bots.navegador import chrome_disponible
-from ...core import acceso_clientes, config, dialogos
+from ...core import acceso_clientes, config, dialogos, pegado
 from ...core.controles import resumen_controles
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
@@ -376,6 +376,24 @@ def cargar_en_xubio(
         return importacion_srv.preparar(body.cliente, body.operacion, datos, clientes, creds)
     except importacion_srv.ErrorImportacion as exc:
         raise HTTPException(status_code=exc.status, detail={"mensaje": exc.mensaje}) from exc
+
+
+# --- Mail «Consultar al cliente» -----------------------------------------------
+
+
+@router.post("/mail/pegar", status_code=status.HTTP_202_ACCEPTED)
+def pegar_mail() -> dict:
+    """Aprieta Ctrl+V en Gmail cuando se abre (el mail con la tabla ya está copiado).
+
+    Solo con el backend en esta PC: en un servidor no hay teclado que apretar.
+    """
+    _solo_local()
+    if not pegado.pegar_en_gmail():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"mensaje": "El pegado automático solo funciona en Windows."},
+        )
+    return {"ok": True}
 
 
 # --- Ajustes -------------------------------------------------------------------

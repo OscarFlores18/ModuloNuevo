@@ -745,6 +745,8 @@ export interface ContextoVentana {
   periodo: string;
   /** Cuenta de Gmail con la que se redacta (`authuser`): el usuario de Xubio del control. */
   cuenta?: string;
+  /** Con el backend en esta PC: le pide que apriete Ctrl+V en Gmail cuando se abra. */
+  pegarEnGmail?: () => Promise<void>;
 }
 
 /** El de la ventana abierta (se fija al abrirla). */
@@ -752,22 +754,49 @@ let contexto: ContextoVentana = { emails: {}, periodo: '' };
 
 /**
  * «Consultar al cliente»: arma el mail con la estructura del estudio (saludo,
- * pedido, tabla de comprobantes con bordes y cierre). El compose web de Gmail
- * solo acepta texto plano en la URL, así que el mail con la tabla se copia al
- * portapapeles y Gmail se abre con la cuenta, el destinatario y el asunto: se
- * pega con Ctrl+V (Gmail abierto vacío pone la firma de la cuenta).
+ * pedido, tabla de comprobantes con bordes y cierre) y abre el compose de Gmail
+ * con la cuenta de la empresa (`authuser`), el destinatario y el asunto.
+ *
+ * El cuerpo NO va en la URL: Gmail solo acepta texto plano ahí y la tabla
+ * llegaba como «a | b | c». El mail con la tabla (HTML) se copia al
+ * portapapeles y se pega con Ctrl+V; Gmail abierto vacío pone la firma debajo.
+ * Solo si no se puede copiar, el texto plano va en la URL (si entra).
  *
  * Se usa el compose de Gmail y no `mailto:` porque Windows resuelve `mailto:`
  * con la aplicación de correo predeterminada del sistema (en esta PC, Outlook),
  * y Gmail en el navegador nunca llegaba a abrirse.
  */
-const COMPOSE_GMAIL = 'https://mail.google.com/mail/';
+const COMPOSE_GMAIL = 'https://mail.google.com/mail/?view=cm&fs=1';
+
+/** Hasta cuántos caracteres de cuerpo van en la URL del compose (respaldo sin portapapeles). */
+export const MAX_CUERPO_URL = 1800;
 
 /** El mail listo: link al compose de Gmail, el cuerpo con la tabla (HTML) y en texto. */
 export interface MailArmado {
+  /** Compose de Gmail: cuenta, destinatario y asunto (sin cuerpo). */
   url: string;
+  /** Destinatarios («a@b.com,c@d.com»); vacío si el cliente no tiene mail. */
+  para: string;
+  /** Respaldo si no se pudo copiar: el mismo compose con el texto plano, o null si es largo. */
+  urlConTexto: string | null;
   html: string;
   texto: string;
+}
+
+const MAIL_VALIDO = /^[^@\s,]+@[^@\s,]+\.[^@\s,]+$/;
+
+/** URL del compose de Gmail; `URLSearchParams` codifica saltos de línea y acentos. */
+export function urlComposeGmail(p: { cuenta?: string; para?: string; asunto: string; cuerpo?: string }): string {
+  const q = new URLSearchParams();
+  // authuser: Gmail redacta con esa cuenta (la de la empresa, con su firma)
+  // aunque el navegador tenga otras abiertas. Solo si es un mail.
+  const cuenta = (p.cuenta ?? '').trim();
+  if (MAIL_VALIDO.test(cuenta)) q.set('authuser', cuenta);
+  if (p.para) q.set('to', p.para);
+  q.set('su', p.asunto);
+  if (p.cuerpo) q.set('body', p.cuerpo);
+  // URLSearchParams pasa los espacios a «+»; con %20 no hay dudas al decodificar.
+  return `${COMPOSE_GMAIL}&${q.toString().replace(/\+/g, '%20')}`;
 }
 
 /** Los mails armados de la ventana abierta, por id del botón. */
@@ -848,7 +877,6 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMai
           ];
   const saludo = 'Estimados buenos días, ¿cómo están?';
   const cierre = [
-    'También adjuntamos la posición del IVA.',
     'Quedamos a la espera, muchas gracias.',
     'Saludos cordiales y buen comienzo de semana!!',
   ];
@@ -887,17 +915,10 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMai
 
   const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
   const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
-  // Las comas y las @ se dejan legibles: Gmail separa varios mails con coma y
-  // los reconoce igual estando sin escapar.
-  const legible = (s: string) => encodeURIComponent(s).replace(/%2C/g, ',').replace(/%40/g, '@');
-  const partes = ['view=cm', 'fs=1'];
-  // authuser: Gmail redacta con esa cuenta (la de la empresa, con su firma)
-  // aunque el navegador tenga otras abiertas. Solo si es un mail.
-  const cuenta = (ctx.cuenta ?? '').trim();
-  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cuenta)) partes.push(`authuser=${legible(cuenta)}`);
-  if (para) partes.push(`to=${legible(para)}`);
-  partes.push(`su=${encodeURIComponent(asunto)}`);
-  return { url: `${COMPOSE_GMAIL}?${partes.join('&')}`, html, texto };
+  const base = { cuenta: ctx.cuenta, para, asunto };
+  const url = urlComposeGmail(base);
+  const urlConTexto = texto.length <= MAX_CUERPO_URL ? urlComposeGmail({ ...base, cuerpo: texto }) : null;
+  return { url, para, urlConTexto, html, texto };
 }
 
 /**
@@ -972,32 +993,54 @@ export function avisoMail(texto: string, tipo: 'ok' | 'error' = 'ok'): HTMLEleme
 }
 
 /**
- * Clic en «Consultar al cliente»: copia el mail con la tabla y después abre
- * Gmail (cuenta, destinatario y asunto) para pegarlo con Ctrl+V.
+ * Clic en «Consultar al cliente»: copia el mail con la tabla y recién después
+ * abre Gmail (cuenta, destinatario y asunto). Si Gmail se abre primero, la app
+ * pierde el foco y la copia falla.
+ *
+ * `pegar`: con el backend en esta PC, él aprieta Ctrl+V cuando Gmail queda
+ * adelante. Solo con destinatario: sin él, Gmail deja el cursor en «Para» y el
+ * mail se pegaría ahí.
  */
-export async function abrirMail(m: MailArmado): Promise<void> {
-  const copiado = await copiarMailConFormato(m);
-  if (copiado) {
-    avisoMail('Correo con tabla copiado al portapapeles. Presiona Ctrl + V en Gmail');
-    window.open(m.url, '_blank', 'noopener');
-  } else {
-    // Sin portapapeles, el texto va escrito en el cuerpo (sin bordes, pero completo).
-    avisoMail('No se pudo copiar la tabla: Gmail se abre con el texto del correo.', 'error');
-    window.open(`${m.url}&body=${encodeURIComponent(m.texto)}`, '_blank', 'noopener');
+export async function abrirMail(m: MailArmado, pegar?: () => Promise<void>): Promise<void> {
+  if (await copiarMailConFormato(m)) {
+    let solo = false;
+    if (pegar && m.para) {
+      try {
+        await pegar();
+        solo = true;
+      } catch {
+        // Sin backend local: queda el Ctrl+V a mano.
+      }
+    }
+    avisoMail(
+      solo
+        ? 'Correo con tabla copiado: se pega solo en Gmail en unos segundos (no cambies de ventana).'
+        : 'Correo con tabla copiado al portapapeles. Presiona Ctrl + V en Gmail',
+    );
+    window.open(m.url, '_blank', 'noopener,noreferrer');
+    return;
   }
+  // Sin portapapeles: el texto plano en la URL (sin bordes, pero completo), si entra.
+  avisoMail(
+    m.urlConTexto
+      ? 'No se pudo copiar la tabla: Gmail se abre con el texto del correo.'
+      : 'No se pudo copiar el correo: Gmail se abre sin el texto.',
+    'error',
+  );
+  window.open(m.urlConTexto ?? m.url, '_blank', 'noopener,noreferrer');
 }
 
-/** «✉ Consultar al cliente»: copia el mail armado y abre Gmail (o bloqueado en Empleado). */
+/** «✉ Consultar al cliente»: abre Gmail con el mail armado (o bloqueado en Empleado). */
 function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail): string {
   if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">✉ Consultar al cliente</button>`;
   const destino = contexto.emails[e.cliente]
     ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]}`
     : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes)';
-  const ayuda = `${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
   const m = armarMail(e, contexto, tabla);
+  const ayuda = `${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
   const id = String(mailsArmados.size + 1);
   mailsArmados.set(id, m);
-  return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener" title="${esc(ayuda)}">✉ Consultar al cliente</a>`;
+  return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" title="${esc(ayuda)}">✉ Consultar al cliente</a>`;
 }
 
 
@@ -1808,9 +1851,8 @@ export function mostrarVentanaDeErrores(
         const boton = (ev.target as HTMLElement).closest<HTMLElement>('a[data-mail]');
         const m = boton ? mailsArmados.get(boton.dataset['mail'] ?? '') : undefined;
         if (!boton || !m) return;
-        // Gmail se abre recién cuando terminó de copiar (si no, la copia falla).
         ev.preventDefault();
-        void abrirMail(m);
+        void abrirMail(m, contexto.pegarEnGmail);
       });
       // Copia rápida: clic en el comprobante o la CUIT.
       popup.addEventListener('click', (ev) => {

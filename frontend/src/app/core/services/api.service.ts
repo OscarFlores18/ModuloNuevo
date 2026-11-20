@@ -51,6 +51,10 @@ export class ApiService {
   ajustes(): Promise<Ajustes> {
     return firstValueFrom(this.http.get<Ajustes>(`${this.url}/ajustes`));
   }
+  /** El backend (en esta PC) aprieta Ctrl+V en Gmail cuando se abre. */
+  pegarMail(): Promise<void> {
+    return firstValueFrom(this.http.post<void>(`${this.url}/mail/pegar`, {}));
+  }
   olvidarXubio(): Promise<void> {
     return firstValueFrom(this.http.delete<void>(`${this.url}/ajustes/xubio`));
   }

@@ -620,8 +620,17 @@ export class EjecucionPantalla {
   private contextoVentana(): ContextoVentana {
     const emails: Record<string, string> = {};
     for (const c of this.clientesStore.lista()) if (c.email) emails[c.nombre] = c.email;
-    return { emails, periodo: this.ej()?.periodo ?? '', cuenta: this.ej()?.parametros?.xubio_usuario ?? '' };
+    // Controles viejos sin usuario en los parámetros: el de Xubio guardado en Ajustes.
+    const cuenta = this.ej()?.parametros?.xubio_usuario?.trim() || this.cuentaXubio();
+    // Backend en esta PC: aprieta Ctrl+V en Gmail por nosotros.
+    const pegarEnGmail = this.enEstaPc() ? () => this.api.pegarMail() : undefined;
+    return { emails, periodo: this.ej()?.periodo ?? '', cuenta, pegarEnGmail };
   }
+
+  /** Usuario de Xubio guardado en Ajustes (la cuenta de la empresa), de respaldo para `authuser`. */
+  private readonly cuentaXubio = signal('');
+  /** El backend corre en esta PC (puede apretar teclas en Gmail). */
+  private readonly enEstaPc = signal(false);
 
   /** Cuántas filas de faltantes se muestran en la tarjeta (el resto, en «Ver comprobantes»). */
   protected readonly maxFaltantes = 8;
@@ -642,6 +651,13 @@ export class EjecucionPantalla {
   constructor() {
     void this.store.cargarHistorial();
     void this.clientesStore.cargar();
+    this.api.ajustes().then(
+      (a) => {
+        this.cuentaXubio.set(a.xubio?.usuario?.trim() ?? '');
+        this.enEstaPc.set(!!a.dialogos_locales);
+      },
+      () => undefined,
+    );
 
     // El reloj corre solo con el control activo.
     effect((alLimpiar) => {
