@@ -748,6 +748,28 @@ export interface ContextoVentana {
   cuenta?: string;
   /** Con el backend en esta PC: le pide que apriete Ctrl+V en Gmail cuando se abra. */
   pegarEnGmail?: () => Promise<void>;
+  /** El día con el que se arma el saludo final (por defecto, hoy). */
+  hoy?: Date;
+  /**
+   * «Pedir que las carguen»: descarga el Excel de las partidas de ARCA no encontradas
+   * (formato «Mis Comprobantes») para adjuntarlo; con operación, solo esa.
+   */
+  descargarExcelFaltantes?: (cliente: string, operacion: string | null) => Promise<void>;
+}
+
+/**
+ * Las facturas de ARCA que no estaban en Xubio, dos avisos al cliente:
+ * - `cargadas`: el estudio ya las subió; faltan percepciones, centro de costo y pago.
+ * - `a_cargar`: el cliente las carga él mismo; se le dice cuáles.
+ */
+export type AvisoCarga = 'cargadas' | 'a_cargar';
+
+/** El saludo final según el día: lunes, comienzo de semana; viernes a domingo, fin de semana. */
+export function saludoFinal(hoy: Date = new Date()): string {
+  const dia = hoy.getDay(); // 0 domingo … 6 sábado
+  if (dia === 1) return 'Saludos cordiales y buen comienzo de semana!!';
+  if (dia === 5 || dia === 6 || dia === 0) return 'Saludos cordiales y buen fin de semana!!';
+  return 'Saludos cordiales y buena semana!!';
 }
 
 /** El de la ventana abierta (se fija al abrirla). */
@@ -802,6 +824,8 @@ export function urlComposeGmail(p: { cuenta?: string; para?: string; asunto: str
 
 /** Los mails armados de la ventana abierta, por id del botón. */
 const mailsArmados = new Map<string, MailArmado>();
+/** Los que van con el Excel de partidas de ARCA no encontradas: de qué cliente y operación. */
+const adjuntos = new Map<string, { cliente: string; operacion: string | null }>();
 
 /** Columnas de importe: «62.502,25»; en cero, vacías o nulas (Factura C) «-». */
 const COLUMNAS_IMPORTE = /neto|exent|iva|total|suma|diferencia/i;
@@ -826,15 +850,62 @@ export interface TablaMail {
   datos: string[][];
 }
 
-/** La tabla del mail: las columnas de ARCA si vinieron; si no (controles viejos), las de la vista. */
+/** «IVA 21%», «IVA 10,5%»…: el IVA de una alícuota (el número es el porcentaje). */
+const COLUMNA_ALICUOTA = /^\s*(?:imp\.?\s*)?iva\s*(\d+(?:[.,]\d+)?)\s*%?\s*$/i;
+/** Las tres columnas de ARCA que en el mail van juntas en «Comprobante». */
+const PARTES_COMPROBANTE = ['Tipo', 'Punto de Venta', 'Número Desde'] as const;
+
+/** «30707310657» → «30-70731065-7». Lo que no tiene 11 dígitos (un DNI) queda igual. */
+function cuitConGuiones(v: CeldaVista['valor'] | undefined): string {
+  const t = v === null || v === undefined ? '' : String(v).trim();
+  const d = t.replace(/\D/g, '');
+  return d.length === 11 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : t;
+}
+
+/** «11 - Factura C», 1, 7 → «Factura C-00001-00000007». */
+function comprobanteMail(tipo: CeldaVista['valor'] | undefined, pv: CeldaVista['valor'] | undefined, numero: CeldaVista['valor'] | undefined): string {
+  const nombre = String(tipo ?? '').replace(/^\s*\d+\s*-\s*/, '').trim();
+  const digitos = (v: CeldaVista['valor'] | undefined, largo: number) => {
+    const d = String(v ?? '').replace(/\D/g, '');
+    return d ? d.padStart(largo, '0') : '';
+  };
+  const p = digitos(pv, 5);
+  const n = digitos(numero, 8);
+  return p && n ? `${nombre}-${p}-${n}` : nombre;
+}
+
+/**
+ * La tabla del mail: las columnas de ARCA si vinieron; si no (controles viejos), las de la vista.
+ * Con las de ARCA: Tipo, Punto de Venta y Número Desde van juntas en «Comprobante»; el
+ * documento, con guiones; y la celda IVA dice el porcentaje de cada alícuota (varias, una
+ * debajo de la otra).
+ */
 export function tablaMail(filas: FilaConError[]): TablaMail {
   const conMail = filas.find((f) => f.mail?.length);
-  const base = conMail?.mail ?? filas[0]?.fila ?? [];
-  const columnas = base.map((c) => c.columna);
+  const base = (conMail?.mail ?? filas[0]?.fila ?? []).map((c) => c.columna);
+  const alicuotas = base.filter((c) => COLUMNA_ALICUOTA.test(c));
+  const juntar = PARTES_COMPROBANTE.every((c) => base.includes(c));
+  const columnas = base.flatMap((c) => {
+    if (alicuotas.includes(c)) return [];
+    if (juntar && c === 'Tipo') return ['Comprobante'];
+    if (juntar && (PARTES_COMPROBANTE as readonly string[]).includes(c)) return [];
+    return [c];
+  });
   const datos = filas.map((f) => {
     const valores: Record<string, CeldaVista['valor']> = {};
     for (const c of (conMail ? f.mail : undefined) ?? f.fila) valores[c.columna] = c.valor;
-    return columnas.map((col) => celdaMail(col, valores[col]));
+    return columnas.map((col) => {
+      if (juntar && col === 'Comprobante') return comprobanteMail(valores['Tipo'], valores['Punto de Venta'], valores['Número Desde']);
+      if (/^nro\. doc/i.test(col)) return cuitConGuiones(valores[col]);
+      if (col === 'IVA' && alicuotas.length) {
+        const partes = alicuotas
+          .map((a) => [a.match(COLUMNA_ALICUOTA)![1], aNumero(valores[a] ?? null)] as const)
+          .filter(([, n]) => n)
+          .map(([pct, n]) => `${pct}%: ${celdaMail('IVA', n)}`);
+        if (partes.length) return partes.join('\n');
+      }
+      return celdaMail(col, valores[col]);
+    });
   });
   return { columnas, datos };
 }
@@ -861,8 +932,9 @@ function estiloTd(columna: string): string {
  * `tabla`: el cuadro ya armado (por ejemplo, el de «A revisar», igual que la
  * grilla de la ventana). Sin ella, se arma con los comprobantes del hallazgo.
  */
-export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMail): MailArmado {
-  const operacion = (e.operacion ?? '').toLowerCase();
+export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMail, aviso: AvisoCarga = 'cargadas'): MailArmado {
+  // Sin operación (el mail de «Todos» en «A revisar»): van las dos juntas.
+  const operacion = e.operacion ? e.operacion.toLowerCase() : 'ventas y compras';
   const pedido =
     e.tipo === 'total_no_cierra'
       ? [
@@ -872,15 +944,17 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMai
         ? [
             `Enviamos detalles de comprobantes de ${operacion} que tenemos registrados y que no figuran en ARCA. Por favor, confirmarnos si corresponden y, si es así, enviarnos los comprobantes en cuanto los tengan.`,
           ]
-        : [
-            'Enviamos detalles de facturas que están en Arca y que fueron cargadas a Xubio; falta cargar las percepciones. Por favor enviarlas en cuanto las tengan.',
-            'También aclarar en la factura a qué centro de costo imputamos y, en el caso que fueron abonadas, aclarar de qué forma fueron canceladas.',
-          ];
+        : aviso === 'a_cargar'
+          ? [
+              `Enviamos detalles de facturas de ${operacion} que están en Arca y que todavía no figuran en Xubio. Por favor cargarlas en cuanto puedan, junto con sus percepciones.`,
+              'Al cargarlas, tener en cuenta a qué centro de costo corresponden y, en el caso que fueron abonadas, de qué forma fueron canceladas.',
+            ]
+          : [
+              'Enviamos detalles de facturas que están en Arca y que fueron cargadas a Xubio; falta cargar las percepciones. Por favor enviarlas en cuanto las tengan.',
+              'También aclarar en la factura a qué centro de costo imputamos y, en el caso que fueron abonadas, aclarar de qué forma fueron canceladas.',
+            ];
   const saludo = 'Estimados buenos días, ¿cómo están?';
-  const cierre = [
-    'Quedamos a la espera, muchas gracias.',
-    'Saludos cordiales y buen comienzo de semana!!',
-  ];
+  const cierre = ['Quedamos a la espera, muchas gracias.', saludoFinal(ctx.hoy)];
   const { columnas, datos } = tabla ?? tablaMail((e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo));
   const estilos = columnas.map(estiloTd);
 
@@ -891,7 +965,7 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMai
     columnas.map((c) => `<th style="${ESTILO_TH}">${esc(c)}</th>`).join('') +
     '</tr></thead><tbody>' +
     datos
-      .map((fila, n) => `<tr${n % 2 ? ` style="${FONDO_PAR}"` : ''}>` + fila.map((v, i) => `<td style="${estilos[i]}">${esc(v)}</td>`).join('') + '</tr>')
+      .map((fila, n) => `<tr${n % 2 ? ` style="${FONDO_PAR}"` : ''}>` + fila.map((v, i) => `<td style="${estilos[i]}">${esc(v).replace(/\n/g, '<br>')}</td>`).join('') + '</tr>')
       .join('') +
     '</tbody></table>';
   const html =
@@ -907,14 +981,17 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMai
     '',
     ...pedido.flatMap((t) => [t, '']),
     columnas.join(' | '),
-    ...datos.map((f) => f.map((v) => v || ' ').join(' | ')),
+    ...datos.map((f) => f.map((v) => v.replace(/\n/g, ' / ') || ' ').join(' | ')),
     '',
     ...cierre.flatMap((t) => [t, '']),
   ]
     .join('\n')
     .trimEnd();
 
-  const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
+  const asunto =
+    aviso === 'a_cargar' && e.tipo !== 'total_no_cierra' && e.tipo !== 'faltante_en_arca'
+      ? `Comprobantes de ${operacion} para cargar en Xubio · ${ctx.periodo} · ${e.cliente}`
+      : `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
   const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
   const base = { cuenta: ctx.cuenta, para, asunto };
   const url = urlComposeGmail(base);
@@ -1002,7 +1079,7 @@ export function avisoMail(texto: string, tipo: 'ok' | 'error' = 'ok'): HTMLEleme
  * adelante. Solo con destinatario: sin él, Gmail deja el cursor en «Para» y el
  * mail se pegaría ahí.
  */
-export async function abrirMail(m: MailArmado, pegar?: () => Promise<void>): Promise<void> {
+export async function abrirMail(m: MailArmado, pegar?: () => Promise<void>, adjunto = ''): Promise<void> {
   if (await copiarMailConFormato(m)) {
     let solo = false;
     if (pegar && m.para) {
@@ -1015,8 +1092,8 @@ export async function abrirMail(m: MailArmado, pegar?: () => Promise<void>): Pro
     }
     avisoMail(
       solo
-        ? 'Correo con tabla copiado: se pega solo en Gmail en unos segundos (no cambies de ventana).'
-        : 'Correo con tabla copiado al portapapeles. Presiona Ctrl + V en Gmail',
+        ? `Correo con tabla copiado: se pega solo en Gmail en unos segundos (no cambies de ventana).${adjunto}`
+        : `Correo con tabla copiado al portapapeles. Presiona Ctrl + V en Gmail${adjunto ? `.${adjunto}` : ''}`,
     );
     window.open(m.url, '_blank', 'noopener,noreferrer');
     return;
@@ -1032,17 +1109,26 @@ export async function abrirMail(m: MailArmado, pegar?: () => Promise<void>): Pro
 }
 
 /** «✉ Consultar al cliente»: abre Gmail con el mail armado (o bloqueado en Empleado). */
-function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail, conOperacion = false): string {
+function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail, conOperacion = false, aviso?: AvisoCarga): string {
   // Con Ventas y Compras en el mismo bloque hay un mail por operación: el botón dice cuál.
-  const texto = `✉ Consultar al cliente${conOperacion && e.operacion ? ` · ${esc(e.operacion)}` : ''}`;
+  const nombre = aviso === 'cargadas' ? 'Avisar que se cargaron' : aviso === 'a_cargar' ? 'Pedir que las carguen' : 'Consultar al cliente';
+  const texto = `✉ ${nombre}${conOperacion && e.operacion ? ` · ${esc(e.operacion)}` : ''}`;
   if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">${texto}</button>`;
   const destino = contexto.emails[e.cliente]
     ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]}`
     : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes)';
-  const m = armarMail(e, contexto, tabla);
-  const ayuda = `${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
+  const m = armarMail(e, contexto, tabla, aviso);
+  const queDice =
+    aviso === 'cargadas'
+      ? 'Avisa que ya las cargamos en Xubio y pide percepciones, centro de costo y forma de pago'
+      : aviso === 'a_cargar'
+        ? 'Le pide al cliente que las cargue él en Xubio y descarga el Excel de las partidas para adjuntarlo'
+        : '';
+  const ayuda = `${queDice ? `${queDice}. ` : ''}${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
   const id = String(mailsArmados.size + 1);
   mailsArmados.set(id, m);
+  // Al pedir que las carguen, va con el Excel de las partidas (se descarga para adjuntarlo).
+  if (aviso === 'a_cargar') adjuntos.set(id, { cliente: e.cliente, operacion: e.operacion ?? null });
   return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" title="${esc(ayuda)}">${texto}</a>`;
 }
 
@@ -1184,8 +1270,12 @@ function bloqueSubir(
     const a = adv ?? faltanteDesdeExcel(cliente, op, k);
     const tildadas = grupos.filter((g) => g.subir?.op === op && g.subir.incluida).length;
     if (conSubida) botones.push(botonSubir(a, registrar(a), canEdit, porOp.size > 1, tildadas));
-    // Avisarle al cliente: percepciones, centro de costo y forma de pago de estas facturas.
-    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) botones.push(`<span data-op-mail="${op}">${botonMail(adv, canEdit, undefined, porOp.size > 1)}</span>`);
+    // Avisarle al cliente: que ya las cargamos (faltan percepciones, centro de costo y
+    // forma de pago) o, si las carga él, cuáles tiene que cargar.
+    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) {
+      const varias = porOp.size > 1;
+      botones.push(`<span data-op-mail="${op}">${botonMail(adv, canEdit, undefined, varias, 'cargadas')}${botonMail(adv, canEdit, undefined, varias, 'a_cargar')}</span>`);
+    }
   }
   const tildadas = grupos.filter((g) => g.subir?.incluida).length;
   const meta = `<span class="ve-meta" data-cuenta>${tildadas} de ${grupos.length} para subir</span>${ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : ''}`;
@@ -1197,18 +1287,22 @@ function bloqueSubir(
           <span class="ve-titulo">Partidas de ARCA no encontradas en el ${esc(libroDe(ops))}${cantidadTexto(n)}</span>
           <span class="ve-que-hacer">Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).</span>
         </span>
-        <span class="ve-derecha">${meta}${botones.length ? `<span class="ve-acciones">${botones.join('')}</span>` : ''}</span>
+        <span class="ve-derecha ve-derecha-subir"><span class="ve-metas">${meta}</span>${botones.length ? `<span class="ve-acciones ve-acciones-subir">${botones.join('')}</span>` : ''}</span>
       </summary>
       <div class="ve-cuerpo">${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
     </details>`;
 }
 
-/** El cuadro del mail de «A revisar»: las columnas y las filas de la grilla de la ventana. */
-function tablaRevisar(grupos: Grupo[]): TablaMail {
+/**
+ * El cuadro del mail de «A revisar»: las columnas y las filas de la grilla de la ventana.
+ * `conOp`: con Ventas y Compras juntas, una primera columna dice de cuál es cada una.
+ */
+function tablaRevisar(grupos: Grupo[], conOp = false): TablaMail {
   const filas = grupos.map((g) => g.filas[0]);
   return {
-    columnas: ['Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', 'Observación', 'Total'],
+    columnas: [...(conOp ? ['Operación'] : []), 'Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', 'Observación', 'Total'],
     datos: filas.map((f) => [
+      ...(conOp ? [f.op ?? ''] : []),
       texto(f.datos['Fecha']),
       abreviarTipo(texto(f.datos['Tipo'])),
       texto(f.datos['Comprobante']),
@@ -1228,21 +1322,31 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
   const explicadas = grupos.filter((g) => g.filas[0].nota).length;
   const meta = ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : '';
   // Un mail por operación, con el mismo cuadro que la grilla (tiques incluidos, con su observación).
-  // Con Ventas y Compras se elige una con las pills: se ven sus filas y solo su botón.
+  // Con Ventas y Compras, las pills eligen: «Todos» (lo predeterminado), con un solo
+  // mail de las dos, o una operación, con sus filas y su mail.
   const separar = porOp.size > 1;
-  const primera = [...porOp.keys()][0];
-  const mails = [...porOp]
+  const todas = tablaRevisar(grupos, true);
+  const mailTodos =
+    separar && todas.datos.length
+      ? `<span class="ve-mail-op" data-op-mail="">${botonMail(
+          { ...(porOp.values().next().value!.adv ?? faltanteDesdeExcel(cliente, ops[0], n)), tipo: 'faltante_en_arca', cliente, operacion: null } as Advertencia,
+          marcado.canEdit,
+          todas,
+        )}</span>`
+      : '';
+  const mails = mailTodos + [...porOp]
     .map(([op, { n: k, adv }]) => {
       const tabla = tablaRevisar(grupos.filter((g) => g.filas[0].op === op));
       if (!tabla.datos.length) return '';
       const a: Advertencia = { ...(adv ?? faltanteDesdeExcel(cliente, op, k)), tipo: 'faltante_en_arca', cliente, operacion: op };
       const boton = botonMail(a, marcado.canEdit, tabla, separar);
-      return separar ? `<span class="ve-mail-op" data-op-mail="${op}"${op === primera ? '' : ' hidden'}>${boton}</span>` : boton;
+      return separar ? `<span class="ve-mail-op" data-op-mail="${op}" hidden>${boton}</span>` : boton;
     })
     .join('');
   const pills = separar
     ? `<div class="ve-pills" data-pills-op role="group" aria-label="Elegir operación">
-        ${[...porOp].map(([op, { n: k }]) => `<button type="button" class="ve-pill" data-op-pill="${op}" aria-pressed="${op === primera}">${op} (${k})</button>`).join('')}
+        <button type="button" class="ve-pill" data-op-pill="" aria-pressed="true">Todos (${n})</button>
+        ${[...porOp].map(([op, { n: k }]) => `<button type="button" class="ve-pill" data-op-pill="${op}" aria-pressed="false">${op} (${k})</button>`).join('')}
       </div>`
     : '';
   const queHacer =
@@ -1464,6 +1568,17 @@ const ESTILOS = `
     .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: 46%; }
     .ve-meta { font-size: 13px; font-weight: 600; color: #64748b; white-space: nowrap; }
     .ve-acciones { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+    /* Los botones de mail de una operación (dos en «Subir a Xubio»): separados igual. */
+    .ve-acciones > [data-op-mail] { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+    .ve-acciones > [data-op-mail][hidden] { display: none; }
+    /* «Subir a Xubio»: arriba lo que cuenta; abajo «Subir» a todo el ancho y, debajo,
+       los dos mails al cliente lado a lado y del mismo ancho. */
+    .ve-derecha-subir { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
+    .ve-metas { display: flex; justify-content: flex-end; gap: 10px; }
+    .ve-acciones-subir { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ve-acciones-subir > .ve-boton-chico { grid-column: 1 / -1; }
+    .ve-acciones-subir > [data-op-mail] { display: contents; }
+    .ve-acciones-subir [data-op-mail] .ve-boton { padding: 8px 14px; }
     .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; font-size: 14.5px; font-weight: 700; padding: 8px 18px; border-radius: 10px; background: #2563eb; color: #fff !important; text-decoration: none; white-space: nowrap; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25); }
     .ve-boton:hover:not(:disabled) { background: #1d4ed8; }
     .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
@@ -1592,6 +1707,7 @@ const ESTILOS = `
       .ve-insignias { flex-direction: row; }
       .ve-cab { flex-basis: 100%; }
       .ve-derecha { width: 100%; justify-content: flex-start; }
+      .ve-metas { justify-content: flex-start; }
       /* En pantallas angostas la CUIT cede su lugar (está en el Excel de la auditoría). */
       .ve-grilla col.c-cuit { width: 0; }
       .ve-grilla td.cuit, .ve-grilla th.h-cuit { padding: 0; }
@@ -1749,6 +1865,7 @@ export function mostrarVentanaDeErrores(
 ) {
   contexto = ctx;
   mailsArmados.clear();
+  adjuntos.clear();
   const hechas = leerHechas(ejecucionId);
   const graves = contarErrores(errores).grave;
   const ordenados = ordenarHallazgos(errores);
@@ -1918,17 +2035,15 @@ export function mostrarVentanaDeErrores(
           for (const par of bloque?.querySelectorAll<HTMLElement>('tbody.ve-par') ?? []) par.hidden = !!clase && par.dataset['clase'] !== clase;
         });
       }
-      // «A revisar» con Ventas y Compras: las pills muestran una operación y su botón de mail.
+      // «A revisar» con Ventas y Compras: «Todos» (al abrir) o una operación, cada uno con su botón de mail.
       for (const pills of popup.querySelectorAll<HTMLElement>('[data-pills-op]')) {
         const bloque = pills.closest('.ve-bloque');
         const mostrar = (op: string) => {
-          for (const t of bloque?.querySelectorAll<HTMLElement>('tbody[data-op]') ?? []) t.hidden = t.dataset['op'] !== op;
+          for (const t of bloque?.querySelectorAll<HTMLElement>('tbody[data-op]') ?? []) t.hidden = !!op && t.dataset['op'] !== op;
           for (const m of bloque?.querySelectorAll<HTMLElement>('[data-op-mail]') ?? []) m.hidden = m.dataset['opMail'] !== op;
         };
         const botones = pills.querySelectorAll<HTMLButtonElement>('button[data-op-pill]');
-        grupoDeBotones(botones, 'aria-pressed', (b) => mostrar(b.dataset['opPill']!));
-        const elegida = [...botones].find((b) => b.getAttribute('aria-pressed') === 'true');
-        if (elegida) mostrar(elegida.dataset['opPill']!);
+        grupoDeBotones(botones, 'aria-pressed', (b) => mostrar(b.dataset['opPill'] ?? ''));
       }
       // Tilde «cargado / resuelto» (solo Acceso Total; el empleado lo ve deshabilitado).
       const marcadas = new Set(hechas);
@@ -2037,7 +2152,14 @@ export function mostrarVentanaDeErrores(
         const m = boton ? mailsArmados.get(boton.dataset['mail'] ?? '') : undefined;
         if (!boton || !m) return;
         ev.preventDefault();
-        void abrirMail(m, contexto.pegarEnGmail);
+        const adjunto = adjuntos.get(boton.dataset['mail'] ?? '');
+        const descargar = adjunto && contexto.descargarExcelFaltantes;
+        void abrirMail(m, contexto.pegarEnGmail, descargar ? ' El Excel de las partidas se descargó: adjuntalo al mail.' : '');
+        if (descargar) {
+          descargar(adjunto.cliente, adjunto.operacion).catch(() =>
+            avisoMail('No se pudo descargar el Excel de las partidas para adjuntar.', 'error'),
+          );
+        }
       });
       // Copia rápida: clic en el comprobante o la CUIT.
       popup.addEventListener('click', (ev) => {

@@ -121,6 +121,12 @@ export class ApiService {
     return firstValueFrom(this.http.get<FaltantesExcel>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes`));
   }
 
+  /** Las partidas de ARCA no encontradas en un .xlsx (formato «Mis Comprobantes»), para adjuntar al mail. */
+  faltantesExcel(id: string, indice: number, operacion: string | null): Promise<{ nombre: string; contenido: string }> {
+    const params: Record<string, string> = operacion ? { operacion } : {};
+    return firstValueFrom(this.http.get<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes-excel`, { params }));
+  }
+
   /** Un archivo del control como Blob, para bajarlo por el navegador (la descarga lleva los encabezados de sesión). */
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
