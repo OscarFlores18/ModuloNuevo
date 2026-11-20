@@ -2184,6 +2184,107 @@ details[open] > summary .ej-chevron {
   color: #b91c1c;
 }
 
+/* --- Clientes: «Cargar desde JSON» ------------------------------------------------ */
+
+.cl-json {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cl-lado > .cl-json {
+  margin-top: 16px;
+}
+.cl-json-cab {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cl-json-cab h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+.cl-json-cab p {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  color: var(--color-tenue);
+}
+.cl-json-icono {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: var(--color-acento-fuerte);
+  font: 700 0.85rem var(--font-mono);
+}
+.cl-json-texto {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  background: var(--color-panel-alt);
+  color: var(--color-texto);
+  font: 0.8rem/1.5 var(--font-mono);
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.cl-json-texto::placeholder {
+  color: #94a3b8;
+}
+.cl-json-texto:focus {
+  outline: none;
+  border-color: var(--color-acento);
+  background: var(--color-panel);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.cl-json-texto:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.cl-json-estado {
+  min-height: 20px;
+  font-size: 0.85rem;
+}
+.cl-json-mal {
+  color: var(--color-error-texto);
+}
+.cl-json-detectados {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cl-json-detectados li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  background: var(--color-panel);
+}
+.cl-json-nombre {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.cl-json-pie {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
 /* --- Faltantes a Xubio: elegir a la izquierda, resultados a la derecha -------- */
 
 .fx-grilla {
