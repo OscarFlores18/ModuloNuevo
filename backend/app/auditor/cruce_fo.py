@@ -1056,10 +1056,14 @@ def procesar_cruce(
     avisar_letras_distintas: Callable[[list[dict]], None] | None = None,
     avisar_errores: Callable[[list[dict]], None] | None = None,
     avisar_resumen: Callable[[dict], None] | None = None,
+    libro_xubio_vacio: bool = False,
 ) -> str:
     """Genera el control de facturas y devuelve la ruta del Excel.
 
     Nunca frena por duplicados ni por letras distintas: los anota y sigue.
+
+    `libro_xubio_vacio`: el bot de Xubio corrió bien y dijo «Sin registros» (no
+    baja archivo): sin el Libro IVA se cruza contra uno vacío en vez de dar error.
     """
     log(f"      [INFO] Iniciando cruce FO 04-01 para {empresa} ({operacion})")
     
@@ -1088,7 +1092,10 @@ def procesar_cruce(
             f"No se encontró el archivo de ARCA esperado:\n{ruta_arca}",
             detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_arca},
         )
-    if not os.path.exists(ruta_xubio):
+    sin_libro_xubio = not os.path.exists(ruta_xubio)
+    if sin_libro_xubio and libro_xubio_vacio:
+        log(f"      [INFO] Xubio no tiene registros de {operacion} en el período: se cruza contra un Libro IVA vacío.")
+    elif sin_libro_xubio:
         raise ArchivoNoEncontrado(
             f"No se encontró el archivo de Xubio esperado:\n{ruta_xubio}",
             detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_xubio},
@@ -1205,7 +1212,10 @@ def procesar_cruce(
         return s
 
     # 2. CARGA INTELIGENTE DE LIBRO IVA
-    df_xubio_raw = pd.read_csv(ruta_xubio, header=None) if ruta_xubio.endswith('.csv') else pd.read_excel(ruta_xubio, header=None)
+    if sin_libro_xubio:
+        df_xubio_raw = pd.DataFrame()
+    else:
+        df_xubio_raw = pd.read_csv(ruta_xubio, header=None) if ruta_xubio.endswith('.csv') else pd.read_excel(ruta_xubio, header=None)
     
     nombre_xubio = os.path.basename(ruta_xubio)
     if df_xubio_raw.empty:
@@ -1691,7 +1701,8 @@ def procesar_cruce(
             ws_xubio[f"{letra_est}{row}"].value = f'=IF(AND({letra_d_iva}{row}>=-0.02, {letra_d_iva}{row}<=0.02, {letra_d_tot}{row}>=-0.02, {letra_d_tot}{row}<=0.02), "Ok", "Faltante en ARCA")'
 
     regla_revisar = FormulaRule(formula=[f'${letra_est}2="Faltante en ARCA"'], font=Font(bold=True))
-    ws_xubio.conditional_formatting.add(f"A2:{letra_est}{max_row_xubio}", regla_revisar)
+    if max_row_xubio >= 2:  # sin filas (libro vacío) no hay rango que marcar
+        ws_xubio.conditional_formatting.add(f"A2:{letra_est}{max_row_xubio}", regla_revisar)
 
     # --- TOTALES FINALES ---
     t_a1, t_a2, t_a3 = max_row_arca + 2, max_row_arca + 3, max_row_arca + 4
