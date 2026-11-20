@@ -44,7 +44,7 @@ CONFIG_PATH = DATA_DIR / "config.json"
 XUBIO_CRED_PATH = DATA_DIR / "xubio_credenciales.json"
 
 # Pausa entre un cliente y el siguiente (el front muestra la cuenta regresiva).
-PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "15"))
+PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "3"))
 
 # Keep-alive de ARCA: el portal cierra la sesión por inactividad (~15 min).
 # Se consulta el portal cada ARCA_PING_MIN minutos y se renueva el login a los
@@ -77,11 +77,13 @@ def _tamano(valor: str, por_defecto: tuple[int, int]) -> tuple[int, int]:
 
 
 PLAYWRIGHT_VIEWPORT = _tamano(os.getenv("MODULONUEVO_VIEWPORT", ""), (1366, 768))
-# Cuánto esperan los bots a que ARCA o Xubio carguen una página, abran una pestaña
-# o entreguen una descarga. Con muchos controles seguidos los sitios se ponen lentos
-# y 20-30 s no alcanzaban (errores de «Timeout»). Las comprobaciones rápidas
-# (¿hay un cartel?, ¿se abrió el menú?) siguen cortas.
-PLAYWRIGHT_ESPERA_MS = max(10, int(os.getenv("MODULONUEVO_ESPERA_S", "60") or 60)) * 1000
+# Cuánto esperan los bots a que ARCA o Xubio carguen una página o abran una
+# pestaña. Se probó con 60 s y no ayudó: lo que no llegaba en 30 s no llegaba nunca
+# (sesión vencida, corte de internet) y cada falla tardaba el doble. Esas fallas
+# ahora se detectan al toque y el cliente se reintenta al final del control.
+PLAYWRIGHT_ESPERA_MS = max(10, int(os.getenv("MODULONUEVO_ESPERA_S", "30") or 30)) * 1000
+# Las descargas sí pueden tardar (un mes con muchos comprobantes).
+PLAYWRIGHT_DESCARGA_MS = max(PLAYWRIGHT_ESPERA_MS, 90_000)
 PLAYWRIGHT_CHANNEL = (os.getenv("MODULONUEVO_CHROME_CHANNEL", "chrome") or "").strip() or None
 
 # Protección opcional para despliegues públicos: "usuario:clave".

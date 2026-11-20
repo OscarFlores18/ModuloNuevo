@@ -150,3 +150,33 @@ def test_faltante_trae_las_columnas_de_arca_para_el_mail(tmp_path: Path):
     assert str(mail["Número Desde"]) == "400205"
     assert float(mail["Imp. Total"]) == 1210
     assert mail["Denominación Emisor"] == "PROVEEDOR"
+
+
+def test_libro_xubio_sin_registros_no_es_error(tmp_path: Path):
+    # Xubio dijo «Sin registros» y no bajó archivo: se cruza contra un libro vacío.
+    ra = tmp_path / "arca.xlsx"
+    _arca(ra, [{"cuit": "27479591992", "total": 1210}])
+    errores: list[dict] = []
+    salida = procesar_cruce(
+        "PICCININI", "Compras", "01/04/2026", "30/04/2026", str(tmp_path),
+        ruta_arca_manual=str(ra), ruta_xubio_manual=str(tmp_path / "no-existe.xlsx"),
+        log=lambda _: None, avisar_errores=errores.extend, libro_xubio_vacio=True,
+    )
+    assert Path(salida).exists()
+    # ARCA tiene uno y Xubio ninguno: es el aviso de siempre, no un archivo faltante.
+    assert [e["tipo"] for e in errores] == ["xubio_vacio"]
+
+
+def test_sin_libro_xubio_y_sin_aviso_sigue_siendo_error(tmp_path: Path):
+    import pytest
+
+    from backend.app.core.errors import ArchivoNoEncontrado
+
+    ra = tmp_path / "arca.xlsx"
+    _arca(ra, [{"cuit": "27479591992"}])
+    with pytest.raises(ArchivoNoEncontrado):
+        procesar_cruce(
+            "PICCININI", "Compras", "01/04/2026", "30/04/2026", str(tmp_path),
+            ruta_arca_manual=str(ra), ruta_xubio_manual=str(tmp_path / "no-existe.xlsx"),
+            log=lambda _: None,
+        )

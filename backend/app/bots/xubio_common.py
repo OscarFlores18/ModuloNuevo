@@ -177,9 +177,9 @@ def _abrir_selector_compania(page, matar_popup, log: Callable[[str], None]):
     )
 
     # Con Xubio lento la barra de la compañía tarda en aparecer: se la espera una vez
-    # (hasta la espera configurada) en vez de agotar los intentos de 4 s en vacío.
+    # (hasta 10 s) en vez de agotar los intentos de 4 s en vacío.
     try:
-        contenedor.wait_for(state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
+        contenedor.wait_for(state="visible", timeout=10000)
     except Exception:
         pass
 
@@ -360,8 +360,15 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
     está mostrando: casi siempre el problema es que el nombre del cliente en la
     app no coincide con el nombre real de la compañía en Xubio.
     """
-    # 1) Leer la empresa actualmente activa
-    page.wait_for_selector('#resaltarCompania', state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
+    # 1) Leer la empresa actualmente activa. Si la barra no aparece en 15 s, Xubio
+    # quedó a medio cargar (pasó en un control: el elemento estaba, oculto, un
+    # minuto entero): se recarga una vez en vez de esperar de más.
+    try:
+        page.wait_for_selector('#resaltarCompania', state="visible", timeout=15000)
+    except Exception:
+        log("      [AVISO]: Xubio no mostró la empresa activa: se recarga la página...")
+        page.reload(wait_until="domcontentloaded")
+        page.wait_for_selector('#resaltarCompania', state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
     empresa_actual = _texto_seguro(page.locator('#resaltarCompania').first)
 
     if _coincide(nombre_cliente, empresa_actual):

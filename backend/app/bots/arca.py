@@ -37,7 +37,14 @@ from ..core.models import BotResult
 from .navegador import capturas_permitidas, como_fuente, inyectar, lanzar, nuevo_contexto, oculto
 
 # Marcas con las que ARCA contesta cuando la sesión ya no vale.
-MARCAS_SESION_VENCIDA = ("MISSING_AUTHENTICATION_INFO", "HTTP Status 401", "F1:username")
+MARCAS_SESION_VENCIDA = (
+    "MISSING_AUTHENTICATION_INFO",
+    "HTTP Status 401",
+    "F1:username",
+    # Mis Comprobantes con la sesión vencida: «Error No se encuentra logueado al
+    # sistema o su sesión expiró» (antes se tomaba por «falta el filtro de fechas»).
+    "No se encuentra logueado",
+)
 
 URL_LOGIN = "https://auth.afip.gob.ar/contribuyente_/login.xhtml"
 URL_PORTAL = "https://portalcf.cloud.afip.gob.ar/portal/app/"
@@ -400,7 +407,10 @@ class SesionArca:
         if self._context is None:
             return False
         try:
-            respuesta = self._context.request.get(URL_PORTAL, timeout=15000)
+            # ignore_https_errors: el pedido va por fuera de Chrome y ARCA no manda la
+            # cadena de certificados completa («unable to verify the first
+            # certificate»): sin esto el chequeo fallaba siempre y se re-logueaba de más.
+            respuesta = self._context.request.get(URL_PORTAL, timeout=15000, ignore_https_errors=True)
             if respuesta.status in (401, 403):
                 return False
             cuerpo = respuesta.body()
@@ -438,7 +448,7 @@ class SesionArca:
     def _es_sesion_vencida(self, page: Page) -> bool:
         try:
             url = (page.url or "").lower()
-            if "login" in url or "auth.afip" in url:
+            if any(m in url for m in ("login", "auth.afip", "expiredsession", "/logout")):
                 return True
             html = page.content()
             return any(marca in html for marca in MARCAS_SESION_VENCIDA)
@@ -454,7 +464,20 @@ class SesionArca:
 
         if portal.locator("#buscadorInput").count() == 0:
             self._ir(portal, URL_PORTAL)
-            portal.wait_for_selector("#buscadorInput", timeout=config.PLAYWRIGHT_ESPERA_MS)
+            # El buscador del portal o, si ARCA venció la sesión, su pantalla de
+            # login: antes se esperaba el buscador el tiempo entero aunque ARCA ya
+            # hubiera mandado al login (1 min perdido y el cliente con error).
+            login = portal.locator("[id='F1:username']")
+            try:
+                portal.locator("#buscadorInput").or_(login).first.wait_for(
+                    state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS
+                )
+            except Exception as exc:
+                if self._es_sesion_vencida(portal):
+                    raise SesionVencida("ARCA pidió volver a iniciar sesión en el portal.") from exc
+                raise
+            if login.count() or self._es_sesion_vencida(portal):
+                raise SesionVencida("ARCA pidió volver a iniciar sesión en el portal.")
 
         buscador = portal.locator("#buscadorInput")
         buscador.click()
@@ -593,6 +616,10 @@ class SesionArca:
                 "y no se pudo elegir. Revisá que el CUIT de ingreso represente a esta "
                 "empresa en Mis Comprobantes y que el CUIT representado esté bien cargado.",
                 detalle={"tipo": tipo_comprobante, "url": servicio.url},
+            )
+        if self._es_sesion_vencida(servicio):
+            raise SesionVencida(
+                f"ARCA venció la sesión al apretar '{tipo_comprobante}'."
             )
         pantalla = self._resumen_pantalla(servicio)
         self._guardar_diagnostico(servicio, f"arca-{tipo_comprobante.lower()}")
@@ -755,7 +782,7 @@ class SesionArca:
                         state="visible",
                         timeout=config.PLAYWRIGHT_ESPERA_MS,
                     )
-                    with servicio.expect_download() as download_info:
+                    with servicio.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info:
                         boton_csv.click()
                     download = download_info.value
                     nombre_temporal = f"Parcial_{len(csv_parciales)+1}_{download.suggested_filename}"
@@ -788,7 +815,7 @@ class SesionArca:
                     "button.buttons-excel", state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS
                 )
 
-                with servicio.expect_download() as download_info:
+                with servicio.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info:
                     boton_excel.click()
                 download = download_info.value
                 nombre_temp_excel = f"ParcialExcel_{len(excels_parciales)+1}_{download.suggested_filename}"
@@ -829,7 +856,7 @@ class SesionArca:
                         'button[title="Exportar como CSV"], button:has-text("CSV")'
                     ).first
                     if boton_csv.is_visible():
-                        with servicio.expect_download() as download_info_csv:
+                        with servicio.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info_csv:
                             boton_csv.click()
                         download_c = download_info_csv.value
                         nombre_temp_csv = f"ParcialCSV_{len(csv_parciales)+1}_{download_c.suggested_filename}"

@@ -146,7 +146,7 @@ def procesar_informe_individual(
 
     if hay_datos:
         log(f"      [INFO]: Datos encontrados. Descargando Excel de {tipo_reporte}...")
-        with page.expect_download() as download_info:
+        with page.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info:
             boton_exportar.click()
 
         download = download_info.value
