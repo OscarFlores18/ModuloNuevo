@@ -99,8 +99,10 @@ $argumentos += @('--collect-all', 'pypdfium2', '--collect-all', 'pypdfium2_raw')
 
 # OCR de fotos y PDF escaneados: Tesseract va adentro de la app (<_internal>\tesseract,
 # ver backend/app/extraccion/ocr.py). Se toma de vendor\tesseract o del Tesseract
-# instalado en esta PC (instalador de UB Mannheim). Solo el .exe, sus DLL y los
-# idiomas español e inglés, para no inflar el instalador.
+# instalado en esta PC (instalador de UB Mannheim). installer\preparar_tesseract.py
+# copia solo el .exe, las DLL que usa y los idiomas español e inglés, sin la
+# depuración de MinGW: ~26 MB en vez de ~240 (el instalador tiene que quedar
+# debajo de los 100 MB por archivo de GitHub).
 $origenTess = @(
     (Join-Path $raiz 'vendor\tesseract'),
     (Join-Path $env:ProgramFiles 'Tesseract-OCR'),
@@ -108,17 +110,8 @@ $origenTess = @(
 ) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'tesseract.exe')) } | Select-Object -First 1
 if ($origenTess) {
     $tess = Join-Path $raiz 'build\tesseract'
-    if (Test-Path $tess) { Remove-Item $tess -Recurse -Force }
-    New-Item -ItemType Directory -Force (Join-Path $tess 'tessdata') | Out-Null
-    Copy-Item (Join-Path $origenTess 'tesseract.exe') $tess
-    Copy-Item (Join-Path $origenTess '*.dll') $tess
-    foreach ($idioma in 'spa', 'eng', 'osd') {
-        $datos = Join-Path $origenTess "tessdata\$idioma.traineddata"
-        if (Test-Path $datos) { Copy-Item $datos (Join-Path $tess 'tessdata') }
-    }
-    if (-not (Test-Path (Join-Path $tess 'tessdata\spa.traineddata'))) {
-        Write-Host 'Tesseract sin el idioma español (spa.traineddata): el OCR va a leer peor los acentos.' -ForegroundColor Yellow
-    }
+    & $python (Join-Path $raiz 'installer\preparar_tesseract.py') $origenTess $tess
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar Tesseract.' }
     $argumentos += @('--add-data', "$tess;tesseract")
     Write-Host "Tesseract incluido desde $origenTess"
 } else {
