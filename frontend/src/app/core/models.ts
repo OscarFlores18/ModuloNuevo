@@ -30,7 +30,7 @@ export interface ClienteEntrada {
 export interface Ajustes {
   carpeta_salida: string;
   pausa_segundos: number;
-  /** true: el backend corre en esta PC y guarda con ventanas de Windows. false (servidor): se baja por el navegador. */
+  /** true: el backend corre en esta PC (app de escritorio). false: corre en un servidor. Las descargas van siempre por el navegador. */
   dialogos_locales: boolean;
   /** false: los bots usan Google Chrome y la PC donde corre el backend no lo tiene. */
   chrome_instalado: boolean;

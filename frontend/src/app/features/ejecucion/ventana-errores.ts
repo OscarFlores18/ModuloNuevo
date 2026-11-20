@@ -743,6 +743,8 @@ export interface ContextoVentana {
   emails: Record<string, string>;
   /** «01/11/2026 al 17/11/2026». */
   periodo: string;
+  /** Cuenta de Gmail con la que se redacta (`authuser`): el usuario de Xubio del control. */
+  cuenta?: string;
 }
 
 /** El de la ventana abierta (se fija al abrirla). */
@@ -752,7 +754,8 @@ let contexto: ContextoVentana = { emails: {}, periodo: '' };
  * «Consultar al cliente»: arma el mail con la estructura del estudio (saludo,
  * pedido, tabla de comprobantes con bordes y cierre). El compose web de Gmail
  * solo acepta texto plano en la URL, así que el mail con la tabla se copia al
- * portapapeles y Gmail se abre con el destinatario y el asunto: se pega con Ctrl+V.
+ * portapapeles y Gmail se abre con la cuenta, el destinatario y el asunto: se
+ * pega con Ctrl+V (Gmail abierto vacío pone la firma de la cuenta).
  *
  * Se usa el compose de Gmail y no `mailto:` porque Windows resuelve `mailto:`
  * con la aplicación de correo predeterminada del sistema (en esta PC, Outlook),
@@ -760,14 +763,23 @@ let contexto: ContextoVentana = { emails: {}, periodo: '' };
  */
 const COMPOSE_GMAIL = 'https://mail.google.com/mail/';
 
-/** Los mails armados de la ventana abierta, por id del botón. */
-const mailsArmados = new Map<string, { url: string; html: string; texto: string }>();
+/** El mail listo: link al compose de Gmail, el cuerpo con la tabla (HTML) y en texto. */
+export interface MailArmado {
+  url: string;
+  html: string;
+  texto: string;
+}
 
-/** Columnas de importe: «62.502,25»; en cero «-», como en ARCA. */
+/** Los mails armados de la ventana abierta, por id del botón. */
+const mailsArmados = new Map<string, MailArmado>();
+
+/** Columnas de importe: «62.502,25»; en cero, vacías o nulas (Factura C) «-». */
 const COLUMNAS_IMPORTE = /neto|exent|iva|total|suma|diferencia/i;
+/** Códigos y documentos: centrados en la tabla del mail. */
+const COLUMNAS_CODIGO = /punto de venta|número desde|numero desde|autoriz|tipo doc|nro\. doc|cuit|comprobante/i;
 
 function celdaMail(columna: string, v: CeldaVista['valor'] | undefined): string {
-  if (v === null || v === undefined || v === '') return '';
+  if (v === null || v === undefined || v === '') return COLUMNAS_IMPORTE.test(columna) ? '-' : '';
   if (COLUMNAS_IMPORTE.test(columna)) {
     const n = aNumero(v);
     if (n === null) return String(v);
@@ -778,8 +790,14 @@ function celdaMail(columna: string, v: CeldaVista['valor'] | undefined): string 
   return String(v);
 }
 
+/** El cuadro del mail: títulos y, por fila, cada celda ya como texto. */
+export interface TablaMail {
+  columnas: string[];
+  datos: string[][];
+}
+
 /** La tabla del mail: las columnas de ARCA si vinieron; si no (controles viejos), las de la vista. */
-export function tablaMail(filas: FilaConError[]): { columnas: string[]; datos: string[][] } {
+export function tablaMail(filas: FilaConError[]): TablaMail {
   const conMail = filas.find((f) => f.mail?.length);
   const base = conMail?.mail ?? filas[0]?.fila ?? [];
   const columnas = base.map((c) => c.columna);
@@ -791,12 +809,29 @@ export function tablaMail(filas: FilaConError[]): { columnas: string[]; datos: s
   return { columnas, datos };
 }
 
-const ESTILO_TABLA = 'border-collapse:collapse;font-family:Arial,sans-serif;font-size:12px';
-const ESTILO_TH = 'border:1px solid #000;padding:4px 6px;background:#d9e1f2;font-weight:bold;text-align:center;white-space:nowrap';
-const ESTILO_TD = 'border:1px solid #000;padding:3px 6px;white-space:nowrap';
+// Plantilla oficial del estudio: todas las celdas con borde, para que al pegar
+// en Gmail las columnas no queden sueltas.
+const ESTILO_TABLA = 'border-collapse:collapse;border:1px solid #64748b;font-family:Calibri,Arial,sans-serif;font-size:13px';
+const ESTILO_CELDA = 'border:1px solid #94a3b8;padding:5px 8px';
+const ESTILO_TH = `${ESTILO_CELDA};background-color:#e2e8f0;font-weight:bold;text-align:center;white-space:nowrap`;
 
-export function armarMail(e: Advertencia, ctx: ContextoVentana): { url: string; html: string; texto: string } {
-  const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo);
+/** Filas alternadas, como una tabla de Excel. */
+const FONDO_PAR = 'background-color:#f8fafc';
+
+/** Importes a la derecha (el total en negrita), códigos y CUIT al centro. */
+function estiloTd(columna: string): string {
+  if (COLUMNAS_IMPORTE.test(columna)) {
+    return `${ESTILO_CELDA};text-align:right;white-space:nowrap${/^(imp\. )?total$/i.test(columna.trim()) ? ';font-weight:bold' : ''}`;
+  }
+  if (COLUMNAS_CODIGO.test(columna)) return `${ESTILO_CELDA};text-align:center;white-space:nowrap`;
+  return `${ESTILO_CELDA};text-align:left`;
+}
+
+/**
+ * `tabla`: el cuadro ya armado (por ejemplo, el de «A revisar», igual que la
+ * grilla de la ventana). Sin ella, se arma con los comprobantes del hallazgo.
+ */
+export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMail): MailArmado {
   const operacion = (e.operacion ?? '').toLowerCase();
   const pedido =
     e.tipo === 'total_no_cierra'
@@ -808,37 +843,33 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana): { url: string; 
             `Enviamos detalles de comprobantes de ${operacion} que tenemos registrados y que no figuran en ARCA. Por favor, confirmarnos si corresponden y, si es así, enviarnos los comprobantes en cuanto los tengan.`,
           ]
         : [
-            'Enviamos detalles de facturas que están en ARCA y que fueron cargadas a Xubio; falta cargar las percepciones. Por favor, enviarlas en cuanto las tengan.',
-            'También aclarar en la factura a qué centro de costo imputamos y, en el caso de que fueron abonadas, aclarar de qué forma fueron canceladas.',
+            'Enviamos detalles de facturas que están en Arca y que fueron cargadas a Xubio; falta cargar las percepciones. Por favor enviarlas en cuanto las tengan.',
+            'También aclarar en la factura a qué centro de costo imputamos y, en el caso que fueron abonadas, aclarar de qué forma fueron canceladas.',
           ];
-  const saludo = 'Estimados, buenos días, ¿cómo están?';
+  const saludo = 'Estimados buenos días, ¿cómo están?';
   const cierre = [
     'También adjuntamos la posición del IVA.',
     'Quedamos a la espera, muchas gracias.',
     'Saludos cordiales y buen comienzo de semana!!',
   ];
-  const { columnas, datos } = tablaMail(filas);
-  const derecha = columnas.map((c) => COLUMNAS_IMPORTE.test(c));
+  const { columnas, datos } = tabla ?? tablaMail((e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo));
+  const estilos = columnas.map(estiloTd);
 
   const parrafo = (t: string) => `<p style="margin:0 0 12px">${esc(t)}</p>`;
-  const tabla =
-    `<table style="${ESTILO_TABLA}"><thead><tr>` +
+  // border="1" además del estilo: si Gmail descarta algún estilo al pegar, los bordes quedan.
+  const cuadro =
+    `<table border="1" cellspacing="0" cellpadding="5" style="${ESTILO_TABLA}"><thead><tr>` +
     columnas.map((c) => `<th style="${ESTILO_TH}">${esc(c)}</th>`).join('') +
     '</tr></thead><tbody>' +
     datos
-      .map(
-        (fila) =>
-          '<tr>' +
-          fila.map((v, i) => `<td style="${ESTILO_TD};text-align:${derecha[i] ? 'right' : 'left'}">${esc(v)}</td>`).join('') +
-          '</tr>',
-      )
+      .map((fila, n) => `<tr${n % 2 ? ` style="${FONDO_PAR}"` : ''}>` + fila.map((v, i) => `<td style="${estilos[i]}">${esc(v)}</td>`).join('') + '</tr>')
       .join('') +
     '</tbody></table>';
   const html =
     '<div style="font-family:Arial,sans-serif;font-size:13px">' +
     parrafo(saludo) +
     pedido.map(parrafo).join('') +
-    tabla +
+    cuadro +
     '<br>' +
     cierre.map(parrafo).join('') +
     '</div>';
@@ -856,22 +887,26 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana): { url: string; 
 
   const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
   const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
-  const partes = ['view=cm', 'fs=1', `su=${encodeURIComponent(asunto)}`];
-  // Las comas y las @ del destinatario se dejan legibles: Gmail separa varios
-  // mails con coma y los reconoce igual estando sin escapar.
-  if (para) {
-    partes.splice(2, 0, `to=${encodeURIComponent(para).replace(/%2C/g, ',').replace(/%40/g, '@')}`);
-  }
+  // Las comas y las @ se dejan legibles: Gmail separa varios mails con coma y
+  // los reconoce igual estando sin escapar.
+  const legible = (s: string) => encodeURIComponent(s).replace(/%2C/g, ',').replace(/%40/g, '@');
+  const partes = ['view=cm', 'fs=1'];
+  // authuser: Gmail redacta con esa cuenta (la de la empresa, con su firma)
+  // aunque el navegador tenga otras abiertas. Solo si es un mail.
+  const cuenta = (ctx.cuenta ?? '').trim();
+  if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(cuenta)) partes.push(`authuser=${legible(cuenta)}`);
+  if (para) partes.push(`to=${legible(para)}`);
+  partes.push(`su=${encodeURIComponent(asunto)}`);
   return { url: `${COMPOSE_GMAIL}?${partes.join('&')}`, html, texto };
 }
 
 /**
- * Copia el mail (con la tabla) al portapapeles en el mismo clic, antes de que se
- * abra Gmail. Tiene que ser sincrónico: en cuanto se abre el navegador la app
- * pierde el foco y Windows ya no deja escribir en el portapapeles (por eso el
- * `navigator.clipboard` asincrónico dejaba Gmail vacío, solo con la firma).
+ * Copia sincrónica del mail (con la tabla), el respaldo de `copiarMailConFormato`.
+ * Antes era la única: con el `navigator.clipboard` asincrónico Gmail se abría
+ * antes de terminar de copiar y quedaba vacío, solo con la firma. Ahora Gmail
+ * se abre recién cuando la copia terminó.
  */
-export function copiarMail(m: { html: string; texto: string }): boolean {
+export function copiarMail(m: Pick<MailArmado, 'html' | 'texto'>): boolean {
   const alCopiar = (ev: ClipboardEvent) => {
     ev.clipboardData?.setData('text/html', m.html);
     ev.clipboardData?.setData('text/plain', m.texto);
@@ -897,14 +932,69 @@ export function copiarMail(m: { html: string; texto: string }): boolean {
   return ok;
 }
 
+/**
+ * Copia el mail con formato (`text/html` con la tabla y `text/plain`) con
+ * `navigator.clipboard.write`. Se espera a que termine ANTES de abrir Gmail: si
+ * el navegador se abre primero, la app pierde el foco y la copia falla. Si el
+ * portapapeles asincrónico no está (o no deja), se usa la copia sincrónica.
+ */
+export async function copiarMailConFormato(m: Pick<MailArmado, 'html' | 'texto'>): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([m.html], { type: 'text/html' }),
+          'text/plain': new Blob([m.texto], { type: 'text/plain' }),
+        }),
+      ]);
+      return true;
+    }
+  } catch {
+    // Sin permiso o sin foco: se prueba la copia sincrónica.
+  }
+  return copiarMail(m);
+}
+
+/** Aviso discreto abajo a la derecha, por encima de la ventana de hallazgos. */
+export function avisoMail(texto: string, tipo: 'ok' | 'error' = 'ok'): HTMLElement {
+  document.querySelector('.ve-aviso-mail')?.remove();
+  const aviso = document.createElement('div');
+  aviso.className = 've-aviso-mail';
+  aviso.setAttribute('role', 'status');
+  aviso.textContent = texto;
+  aviso.style.cssText =
+    'position:fixed;right:20px;bottom:20px;z-index:2000;max-width:min(420px,calc(100vw - 40px));padding:12px 16px;' +
+    'border-radius:10px;font:600 14px/1.4 system-ui,sans-serif;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);' +
+    `background:${tipo === 'ok' ? '#15803d' : '#b91c1c'}`;
+  document.body.appendChild(aviso);
+  setTimeout(() => aviso.remove(), 6000);
+  return aviso;
+}
+
+/**
+ * Clic en «Consultar al cliente»: copia el mail con la tabla y después abre
+ * Gmail (cuenta, destinatario y asunto) para pegarlo con Ctrl+V.
+ */
+export async function abrirMail(m: MailArmado): Promise<void> {
+  const copiado = await copiarMailConFormato(m);
+  if (copiado) {
+    avisoMail('Correo con tabla copiado al portapapeles. Presiona Ctrl + V en Gmail');
+    window.open(m.url, '_blank', 'noopener');
+  } else {
+    // Sin portapapeles, el texto va escrito en el cuerpo (sin bordes, pero completo).
+    avisoMail('No se pudo copiar la tabla: Gmail se abre con el texto del correo.', 'error');
+    window.open(`${m.url}&body=${encodeURIComponent(m.texto)}`, '_blank', 'noopener');
+  }
+}
+
 /** «✉ Consultar al cliente»: copia el mail armado y abre Gmail (o bloqueado en Empleado). */
-function botonMail(e: Advertencia, canEdit: boolean): string {
+function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail): string {
   if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">✉ Consultar al cliente</button>`;
   const destino = contexto.emails[e.cliente]
     ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]}`
     : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes)';
   const ayuda = `${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
-  const m = armarMail(e, contexto);
+  const m = armarMail(e, contexto, tabla);
   const id = String(mailsArmados.size + 1);
   mailsArmados.set(id, m);
   return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener" title="${esc(ayuda)}">✉ Consultar al cliente</a>`;
@@ -1067,6 +1157,23 @@ function bloqueSubir(
     </details>`;
 }
 
+/** El cuadro del mail de «A revisar»: las columnas y las filas de la grilla de la ventana. */
+function tablaRevisar(grupos: Grupo[]): TablaMail {
+  const filas = grupos.map((g) => g.filas[0]);
+  return {
+    columnas: ['Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', 'Observación', 'Total'],
+    datos: filas.map((f) => [
+      texto(f.datos['Fecha']),
+      abreviarTipo(texto(f.datos['Tipo'])),
+      texto(f.datos['Comprobante']),
+      cuit(f.datos['CUIT']),
+      texto(f.datos['Razón social']),
+      f.nota?.texto ?? '',
+      importe(f.datos['Total']),
+    ]),
+  };
+}
+
 /** «A revisar»: partidas del Libro IVA no encontradas en ARCA, tal como están en el Excel. */
 function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: FaltantesDelExcel, marcado: Marcado): string {
   const { ops, grupos, porOp, hoja } = sinCruce(items, cliente, hojas, 'xubio');
@@ -1074,11 +1181,14 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
   if (!n) return '';
   const explicadas = grupos.filter((g) => g.filas[0].nota).length;
   const meta = ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : '';
-  // Un mail por operación con las que hay que consultar (sin las normales).
-  const mails = [...porOp.values()]
-    .map((o) => o.adv)
-    .filter((a): a is Advertencia => !!a && (a.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo))
-    .map((a) => botonMail(a, marcado.canEdit))
+  // Un mail por operación, con el mismo cuadro que la grilla (tiques incluidos, con su observación).
+  const mails = [...porOp]
+    .map(([op, { n: k, adv }]) => {
+      const tabla = tablaRevisar(grupos.filter((g) => g.filas[0].op === op));
+      if (!tabla.datos.length) return '';
+      const a: Advertencia = { ...(adv ?? faltanteDesdeExcel(cliente, op, k)), tipo: 'faltante_en_arca', cliente, operacion: op };
+      return botonMail(a, marcado.canEdit, tabla);
+    })
     .join('');
   const queHacer =
     n > explicadas
@@ -1698,16 +1808,9 @@ export function mostrarVentanaDeErrores(
         const boton = (ev.target as HTMLElement).closest<HTMLElement>('a[data-mail]');
         const m = boton ? mailsArmados.get(boton.dataset['mail'] ?? '') : undefined;
         if (!boton || !m) return;
-        // Antes de que se abra Gmail (el enlace se sigue después de este clic).
-        const antes = boton.textContent;
-        if (copiarMail(m)) {
-          boton.setAttribute('href', m.url);
-          boton.textContent = '✓ Copiado: pegalo en Gmail con Ctrl+V';
-        } else {
-          // Sin portapapeles, el aviso va escrito en el cuerpo (sin bordes, pero completo).
-          boton.setAttribute('href', `${m.url}&body=${encodeURIComponent(m.texto)}`);
-        }
-        setTimeout(() => (boton.textContent = antes), 6000);
+        // Gmail se abre recién cuando terminó de copiar (si no, la copia falla).
+        ev.preventDefault();
+        void abrirMail(m);
       });
       // Copia rápida: clic en el comprobante o la CUIT.
       popup.addEventListener('click', (ev) => {

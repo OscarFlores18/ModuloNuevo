@@ -112,8 +112,6 @@ export class EjecucionPantalla {
   protected readonly tamanoLegible = tamanoLegible;
 
   protected readonly descargando = signal<string | null>(null);
-  /** true: backend en esta PC, se guarda con ventanas de Windows. false (servidor): por el navegador. */
-  protected readonly dialogosLocales = signal(false);
   protected readonly errorDescarga = signal<string | null>(null);
   /** Clientes con la carpeta de archivos plegada (por nombre): de entrada, todas abiertas. */
   private readonly carpetasPlegadas = signal<ReadonlySet<string>>(new Set());
@@ -601,11 +599,15 @@ export class EjecucionPantalla {
 
   protected readonly conteoErrores = computed(() => contarErrores(this.ej()?.advertencias ?? []));
 
-  /** Mails de los clientes y período, para «Consultar al cliente». */
+  /**
+   * Mails de los clientes, período y cuenta de Gmail para «Consultar al
+   * cliente». La cuenta es el usuario de Xubio con el que se corrió el control
+   * (la de la empresa): Gmail redacta con ella (`authuser`).
+   */
   private contextoVentana(): ContextoVentana {
     const emails: Record<string, string> = {};
     for (const c of this.clientesStore.lista()) if (c.email) emails[c.nombre] = c.email;
-    return { emails, periodo: this.ej()?.periodo ?? '' };
+    return { emails, periodo: this.ej()?.periodo ?? '', cuenta: this.ej()?.parametros?.xubio_usuario ?? '' };
   }
 
   /** Cuántas filas de faltantes se muestran en la tarjeta (el resto, en «Ver comprobantes»). */
@@ -625,7 +627,6 @@ export class EjecucionPantalla {
   });
 
   constructor() {
-    this.api.ajustes().then((a) => this.dialogosLocales.set(a.dialogos_locales), () => this.dialogosLocales.set(false));
     void this.store.cargarHistorial();
     void this.clientesStore.cargar();
 
@@ -713,23 +714,19 @@ export class EjecucionPantalla {
     });
   }
 
-  /** El servidor (esta misma PC) abre «Guardar como» y copia ahí el archivo. */
+  /**
+   * Descarga del navegador, igual que en «Subir a Xubio»: va a Descargas y en la
+   * app de escritorio se ve en el panel de descargas de arriba a la derecha.
+   */
   protected async descargar(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
-      if (!this.dialogosLocales()) {
-        descargarBlob(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
-        this.toast.ok('Archivo descargado', archivo.nombre);
-        return;
-      }
-      const r = await this.api.guardarArchivo(e.id, c.indice, archivo.nombre);
-      if (r.cancelado) this.toast.info('No se guardó', `Cerraste la ventana sin elegir dónde guardar «${archivo.nombre}».`);
-      else this.toast.ok('Archivo guardado', r.ruta);
+      descargarBlob(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
     } catch (err) {
-      const msg = mensajeDeError(err, `No se pudo guardar «${archivo.nombre}».`);
+      const msg = mensajeDeError(err, `No se pudo descargar «${archivo.nombre}».`);
       this.errorDescarga.set(msg);
       this.toast.error('No se pudo descargar', msg);
     } finally {
@@ -737,35 +734,18 @@ export class EjecucionPantalla {
     }
   }
 
-  /**
-   * Modo servidor: un .zip con Cliente/mmaaaa/Control de facturas/N° control. Modo local:
-   * el servidor (esta misma PC) abre la ventana para elegir carpeta. Elegida: adentro van
-   * mmaaaa con los archivos. Cerrada sin elegir: se crea Descargas/Cliente/mmaaaa.
-   */
+  /** Un .zip con Cliente/mmaaaa/Control de facturas/N° control, por el panel de descargas. */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/*`);
     this.errorDescarga.set(null);
     try {
-      if (!this.dialogosLocales()) {
-        // Mismo nombre que arma el backend: sin caracteres inválidos ni punto final («S.A.»).
-        const cliente = c.nombre.replace(/[\\/*?:"<>|]/g, '').trim().replace(/[. ]+$/, '') || 'Cliente';
-        descargarBlob(`${cliente} - ${carpetaDelPeriodo(e.parametros.desde)}.zip`, await this.api.zip(e.id, c.indice));
-        this.toast.ok('Archivos descargados', 'Un .zip con las carpetas del cliente y del período.');
-        return;
-      }
-      const r = await this.api.exportar(e.id, c.indice);
-      const donde = r.elegida ? r.carpeta : `${r.carpeta} (no elegiste carpeta: se creó en Descargas)`;
-      if (r.copiados.length) this.toast.ok('Archivos guardados', `${r.copiados.length} ${r.copiados.length === 1 ? 'archivo' : 'archivos'} en ${donde}`);
-      if (r.fallas.length) {
-        this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
-        this.toast.error(`${r.fallas.length} ${r.fallas.length === 1 ? 'archivo no se pudo guardar' : 'archivos no se pudieron guardar'}`, r.fallas[0].motivo);
-      } else if (!r.copiados.length) {
-        this.toast.aviso('No había archivos para guardar', `${c.nombre} no tiene archivos en este control.`);
-      }
+      // Mismo nombre que arma el backend: sin caracteres inválidos ni punto final («S.A.»).
+      const cliente = c.nombre.replace(/[\\/*?:"<>|]/g, '').trim().replace(/[. ]+$/, '') || 'Cliente';
+      descargarBlob(`${cliente} - ${carpetaDelPeriodo(e.parametros.desde)}.zip`, await this.api.zip(e.id, c.indice));
     } catch (err) {
-      const msg = mensajeDeError(err, `No se pudieron guardar los archivos de ${c.nombre}.`);
+      const msg = mensajeDeError(err, `No se pudieron descargar los archivos de ${c.nombre}.`);
       this.errorDescarga.set(msg);
       this.toast.error('No se pudo descargar', msg);
     } finally {

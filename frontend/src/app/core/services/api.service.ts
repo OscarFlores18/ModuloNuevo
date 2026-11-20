@@ -81,12 +81,6 @@ export class ApiService {
   cancelar(id: string): Promise<ResumenEjecucion> {
     return firstValueFrom(this.http.post<ResumenEjecucion>(`${this.url}/ejecuciones/${id}/cancelar`, {}));
   }
-  /** El servidor abre la ventana para elegir carpeta y copia ahí los archivos (ver ResultadoExportar). */
-  exportar(id: string, indice: number): Promise<ResultadoExportar> {
-    return firstValueFrom(this.http.post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}));
-  }
-  /** Modo servidor: el archivo como Blob (la descarga lleva los encabezados de sesión). */
-  /** Las partidas de ARCA no encontradas en el Libro IVA, leídas de la hoja «Faltantes» de cada AUX. */
   /** Escribe los datos de ARCA elegidos en el Libro IVA, vuelve a cruzar y devuelve el control nuevo. */
   aplicarCambios(id: string, cambios: CambioElegido[]): Promise<ResultadoAplicar> {
     return firstValueFrom(
@@ -94,25 +88,18 @@ export class ApiService {
     );
   }
 
+  /** Las partidas de ARCA no encontradas en el Libro IVA, leídas de la hoja «Faltantes» de cada AUX. */
   faltantes(id: string, indice: number): Promise<FaltantesExcel> {
     return firstValueFrom(this.http.get<FaltantesExcel>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes`));
   }
 
+  /** Un archivo del control como Blob, para bajarlo por el navegador (la descarga lleva los encabezados de sesión). */
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
   }
-  /** Modo servidor: todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas/N° control. */
+  /** Todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas/N° control. */
   zip(id: string, indice: number): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
-  }
-  /** El servidor abre «Guardar como» y copia ahí ese archivo. */
-  guardarArchivo(id: string, indice: number, nombre: string): Promise<{ cancelado: true } | { cancelado?: false; ruta: string }> {
-    return firstValueFrom(
-      this.http.post<{ cancelado: true } | { cancelado?: false; ruta: string }>(
-        `${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}/guardar`,
-        {},
-      ),
-    );
   }
 }
 
@@ -162,14 +149,6 @@ ${cuerpo}`.trim();
   else if (e.status >= 500) mensaje = delBackend || 'El servidor tuvo un error interno. Probá de nuevo; si sigue, pasá el detalle técnico.';
   else mensaje = delBackend || porDefecto;
   return new ErrorApi(mensaje, tecnico, e.status);
-}
-
-/** `elegida`: false si se cerró la ventana y se creó la carpeta del cliente en Descargas. */
-export interface ResultadoExportar {
-  carpeta: string;
-  elegida: boolean;
-  copiados: string[];
-  fallas: { nombre: string; motivo: string }[];
 }
 
 export interface ResultadoCargaXubio {
