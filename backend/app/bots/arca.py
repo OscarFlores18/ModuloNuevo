@@ -352,9 +352,14 @@ class SesionArca:
             except Exception:
                 pass
             pantalla = self._pantalla_login(page)
+            # Los errores de login solo cuentan en la pantalla de ingreso: una vez
+            # en el portal, cartelitos como «Ocurrió un error al cargar tus
+            # vencimientos» son de los widgets y no dicen nada de la clave.
+            url = (pantalla.get("url") or getattr(page, "url", "") or "").lower()
+            en_ingreso = not url or "auth.afip" in url
             mensajes = [
                 m for m in pantalla.get("mensajes") or []
-                if any(p in m.lower() for p in _PALABRAS_ERROR_LOGIN)
+                if en_ingreso and any(p in m.lower() for p in _PALABRAS_ERROR_LOGIN)
             ]
             if mensajes:
                 raise LoginError(

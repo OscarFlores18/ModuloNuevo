@@ -1701,7 +1701,8 @@ def procesar_cruce(
             ws_xubio[f"{letra_est}{row}"].value = f'=IF(AND({letra_d_iva}{row}>=-0.02, {letra_d_iva}{row}<=0.02, {letra_d_tot}{row}>=-0.02, {letra_d_tot}{row}<=0.02), "Ok", "Faltante en ARCA")'
 
     regla_revisar = FormulaRule(formula=[f'${letra_est}2="Faltante en ARCA"'], font=Font(bold=True))
-    ws_xubio.conditional_formatting.add(f"A2:{letra_est}{max_row_xubio}", regla_revisar)
+    if max_row_xubio >= 2:  # sin filas (libro vacío) no hay rango que marcar
+        ws_xubio.conditional_formatting.add(f"A2:{letra_est}{max_row_xubio}", regla_revisar)
 
     # --- TOTALES FINALES ---
     t_a1, t_a2, t_a3 = max_row_arca + 2, max_row_arca + 3, max_row_arca + 4

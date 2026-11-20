@@ -180,3 +180,15 @@ def test_sin_libro_xubio_y_sin_aviso_sigue_siendo_error(tmp_path: Path):
             ruta_arca_manual=str(ra), ruta_xubio_manual=str(tmp_path / "no-existe.xlsx"),
             log=lambda _: None,
         )
+
+
+def test_sin_comprobantes_en_ningun_lado_arma_el_control(tmp_path: Path):
+    """ARCA devolvió 0 comprobantes y Xubio no tiene libro: el control se arma vacío."""
+    ra = tmp_path / "arca.xlsx"
+    _arca(ra, [])
+    salida = procesar_cruce(
+        "PICCININI", "Ventas", "01/09/2026", "30/09/2026", str(tmp_path),
+        ruta_arca_manual=str(ra), ruta_xubio_manual=str(tmp_path / "no-existe.xlsx"),
+        log=lambda _: None, avisar_errores=lambda _: None, libro_xubio_vacio=True,
+    )
+    assert Path(salida).exists()

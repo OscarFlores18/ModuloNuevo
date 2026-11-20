@@ -212,45 +212,41 @@ def _abrir_selector_compania(page, matar_popup, log: Callable[[str], None]):
 
 def _nombres_companias(page, limite: int = 60) -> list[str]:
     """Nombres que muestra el desplegable (sin filtrar), para poder avisar."""
-    opciones = page.locator("#compania-lista li.licomp a")
     nombres: list[str] = []
     try:
-        total = opciones.count()
+        # De una sola vez y sin esperas (ver _link_compania_en_dom).
+        textos = page.locator("#compania-lista li.licomp a").evaluate_all(
+            "els => els.map(e => (e.textContent || '').trim())"
+        )
     except Exception:
         return nombres
-    for i in range(min(total, limite)):
-        try:
-            # text_content() también funciona con el menú cerrado (inner_text no).
-            texto = (opciones.nth(i).text_content() or "").strip()
-        except Exception:
-            continue
+    for texto in (textos or [])[:limite]:
         if texto and texto not in nombres:
             nombres.append(texto)
     return nombres
 
 
-def _link_compania_en_dom(page, nombre: str):
-    """El link de la empresa dentro de ``#compania-lista``, esté visible o no.
+def _link_compania_en_dom(page, nombre: str) -> str | None:
+    """El ``href`` de la empresa dentro de ``#compania-lista``, esté visible o no.
 
     Xubio deja la lista completa en el DOM y la muestra/oculta por CSS. Por eso
     se puede resolver la empresa por nombre sin abrir el desplegable, que es
     justo lo que falla cuando cambian el header (ver diagnóstico 2026-11-13:
     hover y click no abrían el menú, pero la lista y los ``href`` estaban ahí).
+
+    La lista se lee de una sola vez y sin esperas: antes se leía link por link
+    y, si la página se recargaba en el medio, cada link esperaba 30 s y el bot
+    quedaba trabado varios minutos (corrida del 20/11/2026).
     """
-    opciones = page.locator("#compania-lista li.licomp a")
     try:
-        total = opciones.count()
+        opciones = page.locator("#compania-lista li.licomp a").evaluate_all(
+            "els => els.map(e => [(e.textContent || '').trim(), e.getAttribute('href') || ''])"
+        )
     except Exception:
         return None
-    for i in range(total):
-        opcion = opciones.nth(i)
-        try:
-            # text_content() funciona aunque el menú esté oculto (inner_text no).
-            texto = (opcion.text_content() or "").strip()
-        except Exception:
-            continue
-        if texto and _coincide(nombre, texto):
-            return opcion
+    for texto, href in opciones or []:
+        if texto and href and _coincide(nombre, texto):
+            return href
     return None
 
 
@@ -261,13 +257,7 @@ def enlace_empresa(page, nombre: str) -> str | None:
     Lo usa la ventana de hallazgos: «Corregir en Xubio» abre la empresa correcta
     en el navegador del usuario. Solo se aceptan direcciones de xubio.com.
     """
-    enlace = _link_compania_en_dom(page, nombre)
-    if enlace is None:
-        return None
-    try:
-        href = enlace.get_attribute("href")
-    except Exception:
-        return None
+    href = _link_compania_en_dom(page, nombre)
     if not href:
         return None
     destino = urljoin(page.url, href)
@@ -382,31 +372,26 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
     #    esté cerrado. Ir al href /NXV/Relogin?tenant=... evita depender de que
     #    el desplegable se abra, que es lo que se rompe cuando Xubio cambia el
     #    CSS del header (hover/click no abren el menú pero la lista sigue ahí).
-    enlace = _link_compania_en_dom(page, nombre_cliente)
-    if enlace is not None:
+    href = _link_compania_en_dom(page, nombre_cliente)
+    if href:
+        destino = urljoin(page.url, href)
+        log(f"      [INFO]: Cambiando por el link de la lista ({destino}).")
         try:
-            href = enlace.get_attribute("href")
-        except Exception:
-            href = None
-        if href:
-            destino = urljoin(page.url, href)
-            log(f"      [INFO]: Cambiando por el link de la lista ({destino}).")
-            try:
-                page.goto(destino)
-            except Exception as exc:
-                primero = (
-                    str(exc).splitlines()[0][:140]
-                    if str(exc)
-                    else type(exc).__name__
-                )
-                log(f"      [AVISO]: No se pudo abrir el link de la empresa: {primero}")
-            else:
-                if _confirmar_cambio(page, matar_popup, nombre_cliente, log):
-                    return
-                log(
-                    "      [AVISO]: El link no dejó la empresa esperada; "
-                    "se prueba el menú."
-                )
+            page.goto(destino)
+        except Exception as exc:
+            primero = (
+                str(exc).splitlines()[0][:140]
+                if str(exc)
+                else type(exc).__name__
+            )
+            log(f"      [AVISO]: No se pudo abrir el link de la empresa: {primero}")
+        else:
+            if _confirmar_cambio(page, matar_popup, nombre_cliente, log):
+                return
+            log(
+                "      [AVISO]: El link no dejó la empresa esperada; "
+                "se prueba el menú."
+            )
 
     # 3) Abrir el selector de compañía (ver _abrir_selector_compania).
     buscador = _abrir_selector_compania(page, matar_popup, log)
