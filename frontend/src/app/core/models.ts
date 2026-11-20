@@ -117,6 +117,47 @@ export interface ResultadoConversion {
   error: string | null;
 }
 
+/** Emisor o receptor de un comprobante: tipo de documento de ARCA (80 CUIT, 96 DNI, 99 consumidor final). */
+export interface ParteComprobante {
+  doc_tipo: number | null;
+  doc_nro: string;
+  nombre: string;
+}
+
+/** Un comprobante leído de un PDF, foto, CSV o planilla, para revisar antes de subirlo a Xubio. */
+export interface ComprobanteExtraido {
+  id: string;
+  archivo: string;
+  pagina: number | null;
+  /** Cómo se leyó: el QR de ARCA es exacto; el OCR conviene revisarlo. */
+  metodo: 'planilla' | 'qr' | 'pdf' | 'ocr' | 'manual';
+  incluir: boolean;
+  operacion: 'Ventas' | 'Compras' | null;
+  /** El cliente del estudio (la empresa en Xubio). */
+  cliente: string;
+  /** AAAA-MM-DD. */
+  fecha: string;
+  tipo: number | null;
+  punto_venta: number | null;
+  numero: number | null;
+  cae: string;
+  emisor: ParteComprobante;
+  receptor: ParteComprobante;
+  moneda: string;
+  tipo_cambio: number;
+  /** Con las columnas del CSV de Mis Comprobantes («IVA 21%», «Imp. Total»…). */
+  importes: Record<string, number | null>;
+  avisos: string[];
+}
+
+/** Qué pasó con cada archivo al leerlo: los AUX van por «Convertir AUX». */
+export interface ArchivoLeido {
+  nombre: string;
+  tipo: 'aux' | 'comprobantes' | 'error';
+  cantidad: number;
+  avisos: string[];
+}
+
 /** Un AUX subido: nombre y contenido en base64. */
 export interface ArchivoSubido {
   nombre: string;

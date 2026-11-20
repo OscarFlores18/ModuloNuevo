@@ -1,6 +1,6 @@
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Cliente, ClienteEntrada, mensajeDeError } from '../models';
-import { ApiService, ResultadoPrecarga } from './api.service';
+import { ApiService, ResultadoImportacion, ResultadoPrecarga } from './api.service';
 
 /** La lista de clientes (config.json), compartida por «Nuevo control» y «Clientes». */
 @Injectable({ providedIn: 'root' })
@@ -38,6 +38,13 @@ export class ClientesStore {
 
   async precargar(): Promise<ResultadoPrecarga> {
     const r = await this.api.precargarClientes();
+    this.lista.set(r.clientes);
+    this.cargado.set(true);
+    return r;
+  }
+
+  async importar(texto: string): Promise<ResultadoImportacion> {
+    const r = await this.api.importarClientes(texto);
     this.lista.set(r.clientes);
     this.cargado.set(true);
     return r;

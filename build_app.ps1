@@ -94,6 +94,37 @@ $argumentos = @(
     # Lo que usan los diálogos «Guardar como» del backend.
     '--hidden-import', 'tkinter.filedialog'
 )
+# Lectura de PDF (pypdfium2 trae su propia DLL de PDFium).
+$argumentos += @('--collect-all', 'pypdfium2', '--collect-all', 'pypdfium2_raw')
+
+# OCR de fotos y PDF escaneados: Tesseract va adentro de la app (<_internal>\tesseract,
+# ver backend/app/extraccion/ocr.py). Se toma de vendor\tesseract o del Tesseract
+# instalado en esta PC (instalador de UB Mannheim). Solo el .exe, sus DLL y los
+# idiomas español e inglés, para no inflar el instalador.
+$origenTess = @(
+    (Join-Path $raiz 'vendor\tesseract'),
+    (Join-Path $env:ProgramFiles 'Tesseract-OCR'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Tesseract-OCR')
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'tesseract.exe')) } | Select-Object -First 1
+if ($origenTess) {
+    $tess = Join-Path $raiz 'build\tesseract'
+    if (Test-Path $tess) { Remove-Item $tess -Recurse -Force }
+    New-Item -ItemType Directory -Force (Join-Path $tess 'tessdata') | Out-Null
+    Copy-Item (Join-Path $origenTess 'tesseract.exe') $tess
+    Copy-Item (Join-Path $origenTess '*.dll') $tess
+    foreach ($idioma in 'spa', 'eng', 'osd') {
+        $datos = Join-Path $origenTess "tessdata\$idioma.traineddata"
+        if (Test-Path $datos) { Copy-Item $datos (Join-Path $tess 'tessdata') }
+    }
+    if (-not (Test-Path (Join-Path $tess 'tessdata\spa.traineddata'))) {
+        Write-Host 'Tesseract sin el idioma español (spa.traineddata): el OCR va a leer peor los acentos.' -ForegroundColor Yellow
+    }
+    $argumentos += @('--add-data', "$tess;tesseract")
+    Write-Host "Tesseract incluido desde $origenTess"
+} else {
+    Write-Host 'Sin Tesseract (vendor\tesseract ni instalado): de fotos y PDF escaneados solo se va a leer el QR de ARCA.' -ForegroundColor Yellow
+}
+
 # Ícono del .exe, del acceso directo y de la ventana (assets\icono.ico).
 $icono = Join-Path $raiz 'assets\icono.ico'
 if (Test-Path $icono) { $argumentos += @('--icon', $icono) }

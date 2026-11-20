@@ -29,8 +29,11 @@ from ...core import acceso_clientes, config, dialogos, pegado
 from ...core.controles import resumen_controles
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
+from ...extraccion import servicio as extraccion_srv
+from ...extraccion.modelo import Comprobante
 from ...services import ejecuciones as ejecuciones_srv
 from ...services import importacion_xubio as importacion_srv
+from ...services import importar_clientes as importar_clientes_srv
 from ...services import precarga as precarga_srv
 from ..deps import exigir_acceso_clientes, get_clientes, get_credenciales_xubio
 
@@ -179,6 +182,49 @@ def precargar_clientes(
         _publico(nombre, datos) for nombre, datos in repo.listar_publico().items()
     ]
     return resultado
+
+
+class ImportarClientes(BaseModel):
+    texto: str = Field(max_length=2_000_000)
+
+
+@router.post("/clientes/importar", dependencies=[Depends(exigir_acceso_clientes)])
+def importar_clientes(
+    body: ImportarClientes,
+    repo: ClientesRepository = Depends(get_clientes),
+) -> dict:
+    """Varios clientes de una vez desde un JSON (ver services/importar_clientes.py).
+    Los nuevos se agregan; los que ya están (mismo nombre, sin importar mayúsculas)
+    se actualizan con lo que traiga el JSON (una clave vacía deja la que había)."""
+    try:
+        leidos = importar_clientes_srv.leer(body.texto)
+    except importar_clientes_srv.JsonInvalido as exc:
+        raise HTTPException(status_code=422, detail={"mensaje": str(exc)}) from None
+    existentes = {n.casefold(): n for n in repo.listar_publico()}
+    agregados: list[str] = []
+    actualizados: list[str] = []
+    errores: list[str] = []
+    for c in leidos:
+        try:
+            nombre = _validar_nombre(c["nombre"])
+        except HTTPException as exc:
+            errores.append(f"«{c['nombre']}»: {exc.detail['mensaje']}")
+            continue
+        entrada = ClienteEntrada(nombre=nombre, arca=DatosArca(**c["arca"]), **c["extras"])
+        previo_nombre = existentes.get(nombre.casefold())
+        if previo_nombre is None:
+            repo.guardar(nombre, _combinar({}, entrada))
+            existentes[nombre.casefold()] = nombre
+            agregados.append(nombre)
+        else:
+            repo.guardar(previo_nombre, _combinar(repo.obtener_publico(previo_nombre) or {}, entrada))
+            actualizados.append(previo_nombre)
+    return {
+        "agregados": agregados,
+        "actualizados": actualizados,
+        "errores": errores,
+        "clientes": [_publico(n, d) for n, d in repo.listar_publico().items()],
+    }
 
 
 @router.get("/clientes")
@@ -343,7 +389,11 @@ def convertir_aux(body: ConvertirAuxRequest) -> dict:
         if len(datos) > MAX_BYTES_AUX:
             raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
         archivos.append((a.nombre, datos))
-    resultados = convertir_auxiliares(archivos, excluir)
+    return {"resultados": _resultados_b64(convertir_auxiliares(archivos, excluir))}
+
+
+def _resultados_b64(resultados: list[dict]) -> list[dict]:
+    """Los .zip y el Excel de cada resultado, en base64 para el JSON."""
     def b64(archivo: dict) -> dict:
         return {"nombre": archivo["nombre"], "contenido": base64.b64encode(archivo["contenido"]).decode("ascii")}
 
@@ -351,13 +401,57 @@ def convertir_aux(body: ConvertirAuxRequest) -> dict:
         r["zips"] = {op: b64(z) for op, z in r["zips"].items()}
         if r.get("excel"):
             r["excel"] = b64(r["excel"])
-    return {"resultados": resultados}
+    return resultados
+
+
+# --- Comprobantes desde PDF, fotos, CSV y planillas -----------------------------
+#
+# Mismo paso a Xubio que «Convertir AUX»: se extraen, la persona los revisa en la
+# pantalla y /preparar devuelve el mismo ResultadoConversion (el .zip con el CSV
+# de Mis Comprobantes) que después carga /convertir-aux/xubio.
+
+
+class ArchivoComprobantes(BaseModel):
+    nombre: str = Field(min_length=1, max_length=260)
+    contenido: str  # base64
+
+
+class ExtraerRequest(BaseModel):
+    archivos: list[ArchivoComprobantes] = Field(min_length=1, max_length=MAX_AUX)
+
+
+@router.post("/comprobantes/extraer")
+def extraer_comprobantes(body: ExtraerRequest, clientes: ClientesRepository = Depends(get_clientes)) -> dict:
+    """Lee los comprobantes de cada archivo y los devuelve normalizados para revisar.
+    Los AUX del control vuelven marcados («aux») para que vayan por /convertir-aux."""
+    archivos: list[tuple[str, bytes]] = []
+    for a in body.archivos:
+        if Path(a.nombre).suffix.lower() not in extraccion_srv.FORMATOS:
+            raise HTTPException(status_code=422, detail={"mensaje": f"«{a.nombre}»: formato no soportado (Excel, CSV, PDF, JPG o PNG)."})
+        try:
+            datos = base64.b64decode(a.contenido, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=422, detail={"mensaje": f"No se pudo leer «{a.nombre}»."}) from exc
+        if len(datos) > MAX_BYTES_AUX:
+            raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
+        archivos.append((a.nombre, datos))
+    return extraccion_srv.extraer(archivos, clientes.listar_publico())
+
+
+class PrepararRequest(BaseModel):
+    comprobantes: list[Comprobante] = Field(min_length=1, max_length=5000)
+
+
+@router.post("/comprobantes/preparar")
+def preparar_comprobantes(body: PrepararRequest) -> dict:
+    """Los comprobantes revisados, por cliente, como «Convertir AUX»: un .zip por operación."""
+    return {"resultados": _resultados_b64(extraccion_srv.preparar(body.comprobantes))}
 
 
 class CargarEnXubioRequest(BaseModel):
     cliente: str = Field(min_length=1)
     operacion: str
-    zip: str  # base64 del .zip que devolvió /convertir-aux
+    zip: str  # base64 del .zip que devolvió /convertir-aux o /comprobantes/preparar
 
 
 @router.post("/convertir-aux/xubio")

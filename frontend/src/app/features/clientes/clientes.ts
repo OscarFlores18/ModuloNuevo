@@ -8,6 +8,7 @@ import { PerspectivaService } from '../../core/services/perspectiva.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Encabezado } from '../../core/ui/encabezado';
 import { ClienteForm } from './cliente-form';
+import { ResultadoImportacion } from '../../core/services/api.service';
 
 @Component({
   selector: 'app-clientes',
@@ -18,6 +19,11 @@ import { ClienteForm } from './cliente-form';
         @if (acceso.configurada()) {
           <button type="button" class="mf-btn mf-btn-suave" (click)="bloquear()" title="Vuelve a pedir la contraseña">Bloquear</button>
         }
+        <!-- Un .json con varios clientes: se cargan todos al listado -->
+        <label class="mf-btn mf-btn-suave" [class.cursor-pointer]="perspectiva.editaClientes() && !importando()" [class.opacity-50]="!perspectiva.editaClientes() || importando()" [attr.title]="bloqueoClientes() ?? 'Elegí un archivo .json con los clientes y se cargan todos juntos'">
+          {{ importando() ? 'Cargando…' : 'Cargar clientes' }}
+          <input type="file" accept=".json,application/json" class="sr-only" aria-label="Cargar clientes desde un archivo .json" [disabled]="!perspectiva.editaClientes() || importando()" (change)="cargarArchivo($event)" />
+        </label>
         <button type="button" class="mf-btn mf-btn-suave" (click)="precargar()" [disabled]="precargando() || !perspectiva.editaClientes()" [attr.title]="bloqueoClientes()">
           {{ precargando() ? 'Precargando…' : 'Precargar clientes del estudio' }}
         </button>
@@ -205,6 +211,8 @@ export class ClientesPantalla {
   protected readonly entrando = signal(false);
   protected readonly errorClave = signal<string | null>(null);
   protected readonly precargando = signal(false);
+  /** «Cargar clientes»: leyendo y guardando el .json elegido. */
+  protected readonly importando = signal(false);
   protected readonly avisoPrecarga = signal<{ nivel: 'ok' | 'info' | 'error'; mensajes: string[] } | null>(null);
 
   protected readonly sinClave = computed(() => this.store.lista().filter((c) => !c.arca.tiene_clave).length);
@@ -293,6 +301,38 @@ export class ClientesPantalla {
     } finally {
       this.precargando.set(false);
     }
+  }
+
+  /**
+   * «Cargar clientes»: el .json elegido va al backend, que agrega los nuevos y
+   * actualiza los que ya están (una clave vacía deja la que había).
+   * Formato: {"CLIENTES": {"NOMBRE": {"ARCA": {"cuit_login", "clave", "cuit_representado"}}}}.
+   */
+  protected async cargarArchivo(ev: Event): Promise<void> {
+    const input = ev.target as HTMLInputElement;
+    const archivo = input.files?.[0];
+    input.value = '';
+    if (!archivo || !this.perspectiva.editaClientes() || this.importando()) return;
+    this.importando.set(true);
+    this.avisoPrecarga.set(null);
+    try {
+      this.importado(await this.store.importar(await archivo.text()));
+    } catch (e) {
+      this.avisoPrecarga.set({ nivel: 'error', mensajes: [`«${archivo.name}»: ${mensajeDeError(e, 'No se pudieron cargar los clientes.')}`] });
+    } finally {
+      this.importando.set(false);
+    }
+  }
+
+  /** Qué se agregó, qué se actualizó y qué no se pudo. */
+  private importado(r: ResultadoImportacion): void {
+    const lista = (nombres: string[]) => nombres.join(', ');
+    const mensajes: string[] = [];
+    if (r.agregados.length) mensajes.push(`Se agregaron ${r.agregados.length}: ${lista(r.agregados)}.`);
+    if (r.actualizados.length) mensajes.push(`Se actualizaron ${r.actualizados.length}: ${lista(r.actualizados)}.`);
+    mensajes.push(...r.errores.map((e) => `No se cargó ${e}`));
+    const nivel = r.errores.length ? (r.agregados.length || r.actualizados.length ? 'info' : 'error') : 'ok';
+    this.avisoPrecarga.set({ nivel, mensajes: mensajes.length ? mensajes : ['No había nada para cargar.'] });
   }
 
   protected abrir(c: Cliente | null): void {

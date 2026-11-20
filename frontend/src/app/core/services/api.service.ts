@@ -2,7 +2,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido } from '../models';
+import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido } from '../models';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -24,6 +24,12 @@ export class ApiService {
   precargarClientes(): Promise<ResultadoPrecarga> {
     return firstValueFrom(this.http.post<ResultadoPrecarga>(`${this.url}/clientes/precargar`, {}));
   }
+  /** Varios clientes de una vez desde un JSON (pide la contraseña de Clientes). */
+  importarClientes(texto: string): Promise<ResultadoImportacion> {
+    return firstValueFrom(
+      this.http.post<ResultadoImportacion>(`${this.url}/clientes/importar`, { texto }).pipe(errorLegible('No se pudieron cargar los clientes.')),
+    );
+  }
   borrarCliente(nombre: string): Promise<void> {
     return firstValueFrom(this.http.delete<void>(`${this.url}/clientes/${encodeURIComponent(nombre)}`));
   }
@@ -37,6 +43,24 @@ export class ApiService {
   convertirAux(archivos: ArchivoSubido[]): Promise<{ resultados: ResultadoConversion[] }> {
     return firstValueFrom(
       this.http.post<{ resultados: ResultadoConversion[] }>(`${this.url}/convertir-aux`, { archivos }).pipe(errorLegible('No se pudieron convertir los AUX.')),
+    );
+  }
+
+  /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */
+  extraerComprobantes(archivos: ArchivoSubido[]): Promise<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }> {
+    return firstValueFrom(
+      this.http
+        .post<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }>(`${this.url}/comprobantes/extraer`, { archivos })
+        .pipe(errorLegible('No se pudieron leer los archivos.')),
+    );
+  }
+
+  /** Los comprobantes revisados, armados como «Convertir AUX» (un .zip por operación y cliente). */
+  prepararComprobantes(comprobantes: ComprobanteExtraido[]): Promise<{ resultados: ResultadoConversion[] }> {
+    return firstValueFrom(
+      this.http
+        .post<{ resultados: ResultadoConversion[] }>(`${this.url}/comprobantes/preparar`, { comprobantes })
+        .pipe(errorLegible('No se pudieron preparar los comprobantes.')),
     );
   }
 
@@ -116,6 +140,14 @@ export class ApiService {
   zip(id: string, indice: number): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
   }
+}
+
+/** «Cargar varios»: los nuevos, los que ya estaban (se actualizan) y los que no se pudieron cargar. */
+export interface ResultadoImportacion {
+  agregados: string[];
+  actualizados: string[];
+  errores: string[];
+  clientes: Cliente[];
 }
 
 export interface ResultadoPrecarga {

@@ -27,4 +27,6 @@ debug_log.txt
 /build/
 /backend/app/_compilacion.py
 /dist/
+# Tesseract para meter en el instalador (build_app.ps1): binarios, no van al repo.
+/vendor/
 ControlFCT.spec
