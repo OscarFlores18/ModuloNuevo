@@ -123,8 +123,28 @@ export class EjecucionPantalla {
 
   /** Lo que eligió el usuario; null = la que conviene (las tareas, si hay). */
   protected readonly pestana = signal<'tareas' | 'clientes' | null>(null);
-  /** Las tareas de un solo cliente (null = todos). */
-  protected readonly filtroCliente = signal<string | null>(null);
+  /** Lo que eligió el usuario en las píldoras: un cliente o «Todos» (null); undefined = todavía nada. */
+  private readonly eleccionCliente = signal<string | null | undefined>(undefined);
+  /**
+   * Las tareas de un solo cliente (null = todos). Sin elección, la lista arranca en
+   * el primer cliente con pendientes (o el primero): no se mezclan empresas.
+   */
+  protected readonly filtroCliente = computed<string | null>(() => {
+    const clientes = this.clientesConTareas();
+    if (clientes.length < 2) return null;
+    const e = this.eleccionCliente();
+    if (e === null || (e !== undefined && clientes.includes(e))) return e;
+    return clientes.find((c) => this.pendientesDe(c) > 0) ?? clientes[0];
+  });
+  protected elegirCliente(cliente: string | null): void {
+    this.eleccionCliente.set(cliente);
+  }
+  /** Las tareas que se ven (las del cliente elegido) y cuántas faltan: para «quedan X de Y». */
+  protected readonly tareasVista = computed(() => {
+    const solo = this.filtroCliente();
+    return solo ? this.tareas().filter((t) => t.cliente === solo) : this.tareas();
+  });
+  protected readonly pendientesVista = computed(() => this.tareasVista().filter((t) => !this.estaHecha(t)).length);
 
   /** Terminado y con algo para hacer o ya corregido: hay pestañas. */
   protected readonly hayTareas = computed(() => !this.activa() && (this.tareas().length > 0 || this.corregidos().length > 0));
@@ -132,7 +152,7 @@ export class EjecucionPantalla {
 
   /** «Ver sus tareas» desde un cliente: la pestaña de tareas con solo las de él. */
   protected verTareasDe(cliente: string): void {
-    this.filtroCliente.set(this.clientes().length > 1 ? cliente : null);
+    this.eleccionCliente.set(cliente);
     this.pestana.set('tareas');
     this.alInicio();
   }
@@ -186,8 +206,7 @@ export class EjecucionPantalla {
   protected readonly hechas = signal<ReadonlySet<string>>(new Set());
   protected readonly pendientes = computed(() => this.tareas().filter((t) => !this.estaHecha(t)).length);
   protected readonly gruposTareas = computed(() => {
-    const solo = this.filtroCliente();
-    const visibles = solo ? this.tareas().filter((t) => t.cliente === solo) : this.tareas();
+    const visibles = this.tareasVista();
     return GRUPOS.map((g) => ({ ...g, tareas: visibles.filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length);
   });
   /** Para el filtro: los clientes que tienen tareas. */
@@ -638,7 +657,7 @@ export class EjecucionPantalla {
   protected verErrores(): void {
     const a = this.ej()?.advertencias;
     if (a?.length || this.hojas().sinLibro.size || this.hojas().sinArca.size)
-      void mostrarVentanaDeErrores(a ?? [], this.ej()?.resumenes ?? [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojas(), this.aplicarDesdeVentana, this.contextoVentana());
+      void mostrarVentanaDeErrores(a ?? [], this.ej()?.resumenes ?? [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojas(), this.aplicarDesdeVentana, this.contextoVentana(), this.filtroCliente() ?? undefined);
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -691,7 +710,7 @@ export class EjecucionPantalla {
   private async abrir(id: string | undefined): Promise<void> {
     this.carpetasPlegadas.set(new Set());
     this.pestana.set(null);
-    this.filtroCliente.set(null);
+    this.eleccionCliente.set(undefined);
     this.errorDescarga.set(null);
     if (id) {
       this.store.seguir(id);

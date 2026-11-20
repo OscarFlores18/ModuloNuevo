@@ -8,73 +8,89 @@ const comprobante = (origen: 'arca' | 'xubio', nro: string, total = 100) => ({
   origen,
   fila: fila([['Fecha', '01/11/2026'], ['Tipo', 'Factura A'], ['Comprobante', nro], ['CUIT', '30707310657'], ['Razón social', 'NOVIT'], ['Total', total]]),
 });
-const hallazgo = (cliente: string, tipo: string, operacion: Op, comprobantes: unknown[], total: number) =>
-  ({ tipo, gravedad: 'corregir', cliente, operacion, titulo: '', detalle: '', acciones: [], total, comprobantes, hoja: null }) as unknown as Advertencia;
+const hallazgo = (cliente: string, tipo: string, operacion: Op | null, comprobantes: unknown[], total: number, gravedad = 'corregir') =>
+  ({ tipo, gravedad, cliente, operacion, titulo: 'Hallazgo', detalle: '', acciones: [], total, comprobantes, hoja: null }) as unknown as Advertencia;
 const resumen = (cliente: string, operacion: Op): ResumenOperacion => ({ cliente, operacion, arca: 10, xubio: 10, coinciden: 8, a_corregir: 0 });
+
+const abrir = async (errores: Advertencia[], resumenes: ResumenOperacion[], clienteInicial?: string) => {
+  void mostrarVentanaDeErrores(errores, resumenes, true, undefined, undefined, undefined, undefined, undefined, clienteInicial);
+  await new Promise((r) => setTimeout(r, 0));
+  const popup = Swal.getPopup()!;
+  return {
+    popup,
+    chip: (ver: string) => popup.querySelector<HTMLButtonElement>(`button[data-ver="${ver}"]`)!,
+    num: (ver: string) => popup.querySelector(`button[data-ver="${ver}"] .ve-chip-num`)!.textContent,
+    grupo: (cliente: string) => popup.querySelector<HTMLElement>(`.ve-grupo[data-cliente="${cliente}"]`)!,
+    tarjeta: (cliente: string) => popup.querySelector<HTMLElement>(`[data-tarjeta="${cliente}"]`)!,
+    guia: () => popup.querySelector<HTMLElement>('[data-guia]')!,
+    barra: () => popup.querySelector<HTMLElement>('.ve-barra')!,
+  };
+};
 
 describe('Tarjetas por cliente y filtros de la ventana de hallazgos', () => {
   afterEach(() => Swal.close());
 
-  it('una tarjeta por cliente; «Error» primero si hay; cliente, operación y estado combinados', async () => {
-    void mostrarVentanaDeErrores(
-      [
-        hallazgo('Alfa', 'faltante_en_xubio', 'Compras', [comprobante('arca', 'A-0001-00000001')], 1),
-        hallazgo('Alfa', 'faltante_en_arca', 'Ventas', [comprobante('xubio', 'A-0002-00000001'), comprobante('xubio', 'A-0002-00000002')], 2),
-        hallazgo('Beta', 'importe_distinto', 'Ventas', [comprobante('arca', 'A-0003-00000001', 100), comprobante('xubio', 'A-0003-00000001', 90)], 1),
-      ],
-      [resumen('Alfa', 'Ventas'), resumen('Alfa', 'Compras'), resumen('Beta', 'Ventas')],
-    );
-    await new Promise((r) => setTimeout(r, 0));
-    const popup = Swal.getPopup()!;
-    const chip = (ver: string) => popup.querySelector<HTMLButtonElement>(`button[data-ver="${ver}"]`)!;
-    const chipOp = (op: string) => popup.querySelector<HTMLButtonElement>(`button[data-op-filtro="${op}"]`)!;
-    const num = (b: HTMLElement) => b.querySelector('.ve-chip-num')!.textContent;
-    const grupo = (cliente: string) => popup.querySelector<HTMLElement>(`.ve-grupo[data-cliente="${cliente}"]`)!;
-    const bloque = (cliente: string, id: string) => grupo(cliente).querySelector<HTMLElement>(`.ve-bloque[data-bloque="${id}"]`)!;
-    const tarjeta = (cliente: string) => popup.querySelector<HTMLElement>(`[data-tarjeta="${cliente}"]`)!;
-    const grupoOp = popup.querySelector<HTMLElement>('[data-filtros-op]')!;
+  const errores = [
+    hallazgo('Alfa', 'faltante_en_xubio', 'Compras', [comprobante('arca', 'A-0001-00000001')], 1),
+    hallazgo('Alfa', 'faltante_en_arca', 'Ventas', [comprobante('xubio', 'A-0002-00000001'), comprobante('xubio', 'A-0002-00000002')], 2),
+    hallazgo('Beta', 'importe_distinto', 'Ventas', [comprobante('arca', 'A-0003-00000001', 100), comprobante('xubio', 'A-0003-00000001', 90)], 1),
+    // Un error grave suelto (un paso que falló): cuenta en «Error».
+    hallazgo('Beta', 'arca_vacio', 'Compras', [], 0, 'grave'),
+  ];
+  const resumenes = [resumen('Alfa', 'Ventas'), resumen('Alfa', 'Compras'), resumen('Beta', 'Ventas')];
 
-    // Una tarjeta por cliente, con sus módulos adentro.
-    expect(popup.querySelectorAll('.ve-kpi')).toHaveLength(2);
-    expect(tarjeta('Alfa').querySelectorAll('.ve-kpi-mod')).toHaveLength(2);
-    expect(tarjeta('Beta').querySelectorAll('.ve-kpi-mod')).toHaveLength(1);
+  it('sin cliente elegido: tarjetas normales, guía y ni filtros ni lista', async () => {
+    const v = await abrir(errores, resumenes);
+    expect(v.popup.querySelectorAll('.ve-kpi')).toHaveLength(2);
+    expect(v.tarjeta('Alfa').querySelectorAll('.ve-kpi-mod')).toHaveLength(2);
+    expect(v.tarjeta('Alfa').textContent).toContain('8 de 10 comprobantes de ARCA coinciden con Xubio');
+    expect(v.popup.querySelector('.ve-kpi-barra')).toBeNull();
+    expect([...v.popup.querySelectorAll('[data-tarjeta]')].every((t) => t.getAttribute('aria-pressed') === 'false')).toBe(true);
+    expect(v.popup.querySelector('.ve-kpis')!.hasAttribute('data-filtrando')).toBe(false);
+    expect(v.guia().hidden).toBe(false);
+    expect(v.barra().hidden).toBe(true);
+    expect(v.grupo('Alfa').hidden && v.grupo('Beta').hidden).toBe(true);
+  });
 
-    // Al abrir: hay un error, así que «Error» queda elegido y solo se ve Beta.
-    expect(chip('error').hidden).toBe(false);
-    expect(chip('error').getAttribute('aria-pressed')).toBe('true');
-    expect(grupo('Alfa').hidden).toBe(true);
-    expect(grupo('Beta').hidden).toBe(false);
-    expect(grupoOp.hidden).toBe(false);
-    expect([num(chipOp('')), num(chipOp('Ventas')), num(chipOp('Compras'))]).toEqual(['4', '3', '1']);
+  it('elegir un cliente muestra sus filtros y su lista; los graves cuentan en «Error», que se elige solo', async () => {
+    const v = await abrir(errores, resumenes);
+
+    v.tarjeta('Beta').click();
+    expect(v.guia().hidden).toBe(true);
+    expect(v.barra().hidden).toBe(false);
+    expect(v.grupo('Beta').hidden).toBe(false);
+    expect(v.grupo('Alfa').hidden).toBe(true);
+    // 1 importe distinto + 1 grave suelto; «Todos» es la suma.
+    expect([v.num(''), v.num('error')]).toEqual(['2', '2']);
+    expect(v.chip('error').hidden).toBe(false);
+    expect(v.chip('error').getAttribute('aria-pressed')).toBe('true');
+    expect(v.grupo('Beta').querySelector<HTMLElement>('details[data-suelta="error"]')!.hidden).toBe(false);
 
     // Alfa no tiene errores: «Error» desaparece y vuelve a «Todos».
-    tarjeta('Alfa').click();
-    expect(tarjeta('Alfa').getAttribute('aria-pressed')).toBe('true');
-    expect(chip('error').hidden).toBe(true);
-    expect(chip('').getAttribute('aria-pressed')).toBe('true');
-    expect(num(chip(''))).toBe('3');
-    expect(grupo('Beta').hidden).toBe(true);
-    expect(grupo('Alfa').hidden).toBe(false);
+    v.tarjeta('Alfa').click();
+    expect(v.chip('error').hidden).toBe(true);
+    expect(v.chip('').getAttribute('aria-pressed')).toBe('true');
+    expect([v.num(''), v.num('subir'), v.num('revisar')]).toEqual(['3', '1', '2']);
+    v.chip('subir').click();
+    expect(v.grupo('Alfa').querySelector<HTMLElement>('.ve-bloque[data-bloque="revisar"]')!.hidden).toBe(true);
 
-    // Operación Compras dentro de Alfa: solo «Subir a Xubio».
-    chipOp('Compras').click();
-    expect([num(chip('')), num(chip('subir')), num(chip('revisar'))]).toEqual(['1', '1', '0']);
-    expect(chip('revisar').disabled).toBe(true);
-    expect(bloque('Alfa', 'subir').hidden).toBe(false);
-    expect(bloque('Alfa', 'revisar').hidden).toBe(true);
+    // Otro clic en la misma: sin elegir, vuelve la guía.
+    v.tarjeta('Alfa').click();
+    expect(v.guia().hidden).toBe(false);
+    expect(v.barra().hidden).toBe(true);
+    expect(v.grupo('Alfa').hidden).toBe(true);
+  });
 
-    // Beta tiene errores y una sola operación: «Error» elegido y sin filtro de operación.
-    tarjeta('Beta').click();
-    expect(chip('error').getAttribute('aria-pressed')).toBe('true');
-    expect(grupoOp.hidden).toBe(true);
-    expect(grupo('Alfa').hidden).toBe(true);
+  it('abre con el cliente pedido ya elegido', async () => {
+    const v = await abrir(errores, resumenes, 'Beta');
+    expect(v.tarjeta('Beta').getAttribute('aria-pressed')).toBe('true');
+    expect(v.chip('error').getAttribute('aria-pressed')).toBe('true');
+    expect(v.guia().hidden).toBe(true);
+  });
 
-    // Otro clic en Beta: todos los clientes otra vez.
-    tarjeta('Beta').click();
-    expect(popup.querySelector('.ve-kpis')!.hasAttribute('data-filtrando')).toBe(false);
-    expect(popup.querySelector<HTMLElement>('[data-filtro-tarjeta]')!.hidden).toBe(true);
-    chip('').click();
-    expect(grupo('Alfa').hidden).toBe(false);
-    expect(grupo('Beta').hidden).toBe(false);
+  it('sin tarjetas (un solo hallazgo) se ve todo, sin guía', async () => {
+    const v = await abrir([errores[0]], []);
+    expect(v.popup.querySelector('[data-guia]')).toBeNull();
+    expect(v.grupo('Alfa').hidden).toBe(false);
   });
 });
