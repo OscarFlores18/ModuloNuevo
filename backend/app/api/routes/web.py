@@ -22,7 +22,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...auditor.csv_arca import convertir_auxiliares, filas_para_mostrar, libro_sin_arca
+from ...auditor.csv_arca import (
+    PREFIJO_CSV,
+    convertir_auxiliares,
+    datos_del_nombre,
+    excel_de,
+    filas_para_mostrar,
+    leer_faltantes_de_control,
+    libro_sin_arca,
+)
 from ...version import COMPILADO, VERSION
 from ...bots.navegador import chrome_disponible
 from ...core import acceso_clientes, config, dialogos, pegado
@@ -585,6 +593,35 @@ def faltantes_ejecucion(ejecucion_id: str, indice: int) -> dict:
     except ejecuciones_srv.ErrorEjecucion as exc:
         raise _http_error(exc) from exc
     return salida
+
+
+@router.get("/ejecuciones/{ejecucion_id}/clientes/{indice}/faltantes-excel")
+def faltantes_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str | None = None) -> dict:
+    """Las partidas de ARCA no encontradas en el Libro IVA en un .xlsx (una hoja por
+    operación, columnas de «Mis Comprobantes»), para adjuntar al mail que le pide al
+    cliente que las cargue. Con ``operacion``, solo esa. {nombre, contenido (base64)}."""
+    if operacion is not None and operacion not in ("Ventas", "Compras"):
+        raise HTTPException(status_code=422, detail={"mensaje": "Operación desconocida."})
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        if not 0 <= indice < len(ej.clientes):
+            raise ejecuciones_srv.ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
+        tablas = {}
+        periodo = ""
+        for op, nombre in _aux_activos([a["nombre"] for a in ej.clientes[indice].archivos]).items():
+            if operacion and op != operacion:
+                continue
+            tabla = leer_faltantes_de_control(ejecuciones_srv.ruta_archivo(ej, indice, nombre), op)
+            if len(tabla):
+                tablas[op] = tabla
+                periodo = periodo or datos_del_nombre(nombre)[1]
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    if not tablas:
+        raise HTTPException(status_code=404, detail={"mensaje": "No hay partidas de ARCA no encontradas en el Libro IVA."})
+    cliente = ej.clientes[indice].nombre
+    nombre = f"{PREFIJO_CSV} - {cliente}" + (f" - {periodo}" if periodo else "") + ".xlsx"
+    return {"nombre": nombre, "contenido": base64.b64encode(excel_de(tablas)).decode("ascii")}
 
 
 class CambioElegido(BaseModel):

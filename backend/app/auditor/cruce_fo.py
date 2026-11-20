@@ -427,6 +427,9 @@ def _columnas_mail_arca(df_arca, operacion, col_fecha, col_cuit, col_prov, col_t
         return None
 
     parte = "Emisor" if operacion == "Compras" else "Receptor"
+    # El IVA de cada alícuota («IVA 21%», «IVA 10,5%»…): en el mail, la celda IVA dice
+    # el porcentaje de cada uno. Van después de «IVA» con su título tal cual.
+    alicuotas = [(c, c) for c in columnas if re.match(r"^\s*(imp\.?\s*)?iva\s*\d", c, re.IGNORECASE)]
     return [
         ("Fecha", col_fecha),
         ("Tipo", buscar("tipo de comprobante") or ("Tipo" if "Tipo" in columnas else None)),
@@ -439,6 +442,7 @@ def _columnas_mail_arca(df_arca, operacion, col_fecha, col_cuit, col_prov, col_t
         ("Imp. Neto Gravado", buscar("neto gravado total") or buscar("neto gravado", evitar=("no gravado", "iva "))),
         ("Imp. Op. Exentas", buscar("exent")),
         ("IVA", buscar("total iva") or next((c for c in columnas if c.strip().lower() == "iva"), None)),
+        *alicuotas,
         ("Imp. Total", col_total),
     ]
 

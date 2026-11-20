@@ -145,7 +145,7 @@ def test_faltante_trae_las_columnas_de_arca_para_el_mail(tmp_path: Path):
     assert list(mail) == [
         "Fecha", "Tipo", "Punto de Venta", "Número Desde", "Cód. Autorización",
         "Tipo Doc. Emisor", "Nro. Doc. Emisor", "Denominación Emisor",
-        "Imp. Neto Gravado", "Imp. Op. Exentas", "IVA", "Imp. Total",
+        "Imp. Neto Gravado", "Imp. Op. Exentas", "IVA", "IVA 21%", "Imp. Total",
     ]
     assert str(mail["Número Desde"]) == "400205"
     assert float(mail["Imp. Total"]) == 1210

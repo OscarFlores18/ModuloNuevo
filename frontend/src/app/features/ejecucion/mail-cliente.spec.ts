@@ -1,5 +1,5 @@
-import { Advertencia } from '../../core/models';
-import { abrirMail, armarMail, copiarMail } from './ventana-errores';
+import { Advertencia, FilaConError } from '../../core/models';
+import { abrirMail, armarMail, copiarMail, saludoFinal, tablaMail } from './ventana-errores';
 
 const fila = (pares: [string, string | number | null][]) => pares.map(([columna, valor]) => ({ columna, valor }));
 
@@ -22,8 +22,8 @@ describe('Mail «Consultar al cliente»', () => {
     ],
   } as unknown as Advertencia;
 
-  it('usa la plantilla oficial y una tabla con bordes con las 12 columnas de ARCA', () => {
-    const m = armarMail(faltante, { emails: { 'PICCININI y ASOCIADOS S.A': 'a@b.com' }, periodo: '10/2025' });
+  it('usa la plantilla oficial y una tabla con bordes con las columnas de ARCA (comprobante en una, CUIT con guiones)', () => {
+    const m = armarMail(faltante, { emails: { 'PICCININI y ASOCIADOS S.A': 'a@b.com' }, periodo: '10/2025', hoy: new Date(2026, 10, 16) });
     expect(m.texto).toBe(
       [
         'Estimados buenos días, ¿cómo están?',
@@ -32,8 +32,8 @@ describe('Mail «Consultar al cliente»', () => {
         '',
         'También aclarar en la factura a qué centro de costo imputamos y, en el caso que fueron abonadas, aclarar de qué forma fueron canceladas.',
         '',
-        'Fecha | Tipo | Punto de Venta | Número Desde | Cód. Autorización | Tipo Doc. Emisor | Nro. Doc. Emisor | Denominación Emisor | Imp. Neto Gravado | Imp. Op. Exentas | IVA | Imp. Total',
-        '01/10/2025 | 1 - Factura A | 4 | 400205 | 74517958652179 | CUIT | 30707310657 | NOVIT S. A. | 62.502,25 | - | 13.125,47 | 75.627,72',
+        'Fecha | Comprobante | Cód. Autorización | Tipo Doc. Emisor | Nro. Doc. Emisor | Denominación Emisor | Imp. Neto Gravado | Imp. Op. Exentas | IVA | Imp. Total',
+        '01/10/2025 | Factura A-00004-00400205 | 74517958652179 | CUIT | 30-70731065-7 | NOVIT S. A. | 62.502,25 | - | 13.125,47 | 75.627,72',
         '',
         'Quedamos a la espera, muchas gracias.',
         '',
@@ -60,6 +60,36 @@ describe('Mail «Consultar al cliente»', () => {
       comprobantes: [{ origen: 'arca', fila: [], mail: fila([['Tipo', '11 - Factura C'], ['Imp. Neto Gravado', null], ['IVA', ''], ['Imp. Total', 105000]]) }],
     } as unknown as Advertencia;
     expect(armarMail(c, { emails: {}, periodo: '10/2025' }).texto).toContain('11 - Factura C | - | - | 105.000,00');
+  });
+
+  it('el saludo final cambia con el día', () => {
+    expect(saludoFinal(new Date(2026, 10, 16))).toBe('Saludos cordiales y buen comienzo de semana!!'); // lunes
+    expect(saludoFinal(new Date(2026, 10, 18))).toBe('Saludos cordiales y buena semana!!'); // miércoles
+    expect(saludoFinal(new Date(2026, 10, 20))).toBe('Saludos cordiales y buen fin de semana!!'); // viernes
+    expect(saludoFinal(new Date(2026, 10, 22))).toBe('Saludos cordiales y buen fin de semana!!'); // domingo
+  });
+
+  it('«Pedir que las carguen»: le dice al cliente que las cargue él, con otro asunto', () => {
+    const m = armarMail(faltante, { emails: {}, periodo: '10/2025', hoy: new Date(2026, 10, 18) }, undefined, 'a_cargar');
+    expect(m.texto).toContain('todavía no figuran en Xubio. Por favor cargarlas en cuanto puedan');
+    expect(m.texto).not.toContain('fueron cargadas a Xubio');
+    expect(m.texto).toContain('buena semana!!');
+    expect(new URL(m.url).searchParams.get('su')).toBe('Comprobantes de compras para cargar en Xubio · 10/2025 · PICCININI y ASOCIADOS S.A');
+  });
+
+  it('IVA: el porcentaje de cada alícuota, varias juntas en la misma celda', () => {
+    const iva = (pares: [string, number][]) =>
+      tablaMail([{ origen: 'arca', fila: [], mail: fila([['IVA', pares.reduce((s, [, n]) => s + n, 0)], ...pares]) } as unknown as FilaConError]);
+    const una = iva([['IVA 21%', 2100], ['IVA 10,5%', 0]]);
+    expect(una.columnas).toEqual(['IVA']);
+    expect(una.datos[0][0]).toBe('21%: 2.100,00');
+    expect(iva([['IVA 21%', 2100], ['IVA 10,5%', 525]]).datos[0][0]).toBe('21%: 2.100,00\n10,5%: 525,00');
+    const m = armarMail(
+      { ...faltante, comprobantes: [{ origen: 'arca', fila: [], mail: fila([['IVA', 2625], ['IVA 21%', 2100], ['IVA 10,5%', 525]]) }] } as unknown as Advertencia,
+      { emails: {}, periodo: '10/2025' },
+    );
+    expect(m.html).toContain('21%: 2.100,00<br>10,5%: 525,00');
+    expect(m.texto).toContain('21%: 2.100,00 / 10,5%: 525,00');
   });
 
   it('abre Gmail con la cuenta configurada (authuser), el destinatario y el asunto', () => {

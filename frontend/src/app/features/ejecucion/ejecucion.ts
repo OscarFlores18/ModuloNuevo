@@ -643,7 +643,17 @@ export class EjecucionPantalla {
     const cuenta = this.ej()?.parametros?.xubio_usuario?.trim() || this.cuentaXubio();
     // Backend en esta PC: aprieta Ctrl+V en Gmail por nosotros.
     const pegarEnGmail = this.enEstaPc() ? () => this.api.pegarMail() : undefined;
-    return { emails, periodo: this.ej()?.periodo ?? '', cuenta, pegarEnGmail };
+    return { emails, periodo: this.ej()?.periodo ?? '', cuenta, pegarEnGmail, descargarExcelFaltantes: (c, op) => this.descargarExcelFaltantes(c, op) };
+  }
+
+  /** «Pedir que las carguen»: baja el Excel de las partidas de ARCA no encontradas para adjuntarlo. */
+  private async descargarExcelFaltantes(cliente: string, operacion: string | null): Promise<void> {
+    const e = this.ej();
+    const indice = e?.detalle_clientes.findIndex((c) => c.nombre === cliente) ?? -1;
+    if (!e || indice < 0) throw new Error('Cliente no encontrado');
+    const { nombre, contenido } = await this.api.faltantesExcel(e.id, indice, operacion);
+    const bytes = Uint8Array.from(atob(contenido), (c) => c.charCodeAt(0));
+    descargarBlob(nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   }
 
   /** Usuario de Xubio guardado en Ajustes (la cuenta de la empresa), de respaldo para `authuser`. */
