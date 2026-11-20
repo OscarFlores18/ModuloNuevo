@@ -454,7 +454,7 @@ class SesionArca:
 
         if portal.locator("#buscadorInput").count() == 0:
             self._ir(portal, URL_PORTAL)
-            portal.wait_for_selector("#buscadorInput", timeout=30000)
+            portal.wait_for_selector("#buscadorInput", timeout=config.PLAYWRIGHT_ESPERA_MS)
 
         buscador = portal.locator("#buscadorInput")
         buscador.click()
@@ -479,7 +479,7 @@ class SesionArca:
         )
         try:
             servicio.locator("#btnEmitidos").or_(titulo_eleccion).first.wait_for(
-                state="visible", timeout=20000
+                state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS
             )
         except Exception:
             pass
@@ -513,7 +513,7 @@ class SesionArca:
                 if titulo_eleccion.is_visible():
                     tarjeta_empresa.evaluate("nodo => nodo.click()", timeout=5000)
             try:
-                servicio.wait_for_load_state("domcontentloaded", timeout=20000)
+                servicio.wait_for_load_state("domcontentloaded", timeout=config.PLAYWRIGHT_ESPERA_MS)
             except Exception:
                 pass  # Lo que importa es que aparezca «Emitidos», que se espera abajo.
             servicio.wait_for_timeout(500)
@@ -526,7 +526,7 @@ class SesionArca:
             )
 
         try:
-            servicio.wait_for_selector("#btnEmitidos", state="visible", timeout=20000)
+            servicio.wait_for_selector("#btnEmitidos", state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
         except Exception as exc:
             if self._es_sesion_vencida(servicio):
                 raise SesionVencida(
@@ -559,7 +559,7 @@ class SesionArca:
         filtro no aparece en unos segundos, se vuelve a apretar (hasta 3 veces).
         """
         try:
-            servicio.wait_for_load_state("load", timeout=15000)
+            servicio.wait_for_load_state("load", timeout=config.PLAYWRIGHT_ESPERA_MS)
         except Exception:
             pass
         fecha = servicio.locator("#fechaEmision")
@@ -637,7 +637,7 @@ class SesionArca:
         """
         for intento in (1, 2, 3):
             try:
-                caja_fecha.wait_for(state="visible", timeout=20000)
+                caja_fecha.wait_for(state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
                 caja_fecha.click(timeout=10000)
                 servicio.wait_for_timeout(800)
                 caja_fecha.click(click_count=3, timeout=10000)
@@ -727,7 +727,7 @@ class SesionArca:
             fecha_hasta, "%d/%m/%Y"
         ):
             if not primer_vuelta:
-                servicio.wait_for_selector("#fechaEmision", timeout=20000)
+                servicio.wait_for_selector("#fechaEmision", timeout=config.PLAYWRIGHT_ESPERA_MS)
             primer_vuelta = False
             rango_fechas = f"{fecha_desde_actual} - {fecha_hasta_actual}"
             self.log(f"   -> Solicitando periodo en ARCA: {rango_fechas}")
@@ -753,7 +753,7 @@ class SesionArca:
                     boton_csv = servicio.wait_for_selector(
                         'button[title="Exportar como CSV"], button:has-text("CSV")',
                         state="visible",
-                        timeout=25000,
+                        timeout=config.PLAYWRIGHT_ESPERA_MS,
                     )
                     with servicio.expect_download() as download_info:
                         boton_csv.click()
@@ -785,7 +785,7 @@ class SesionArca:
 
             try:
                 boton_excel = servicio.wait_for_selector(
-                    "button.buttons-excel", state="visible", timeout=20000
+                    "button.buttons-excel", state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS
                 )
 
                 with servicio.expect_download() as download_info:

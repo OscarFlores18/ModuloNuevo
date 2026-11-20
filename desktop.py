@@ -40,6 +40,7 @@ PANTALLA_CARGA = """<!doctype html>
     background:linear-gradient(135deg,#0f2a5c 0%,#1e40af 55%,#0e7490 100%)}
   h1{font-size:26px;font-weight:600;margin:0}
   p{margin:0;opacity:.8;font-size:14px}
+  .v{position:fixed;bottom:14px;font-size:12px;opacity:.6}
   .r{width:38px;height:38px;border:4px solid rgba(255,255,255,.25);border-top-color:#fff;
     border-radius:50%;animation:g 0.9s linear infinite}
   @keyframes g{to{transform:rotate(360deg)}}
@@ -47,7 +48,15 @@ PANTALLA_CARGA = """<!doctype html>
   <div class="r"></div>
   <h1>Control de Facturas</h1>
   <p>Abriendo…</p>
+  <p class="v">__VERSION__</p>
 </body></html>"""
+
+
+def _texto_version() -> str:
+    """«Versión 1.1.0 · armada el 20/11/2026 14:30» (liviano: no carga el backend)."""
+    from backend.app.version import COMPILADO, VERSION
+
+    return f"Versión {VERSION}" + (f" · armada el {COMPILADO}" if COMPILADO else "")
 
 
 def _salidas_sin_consola() -> None:
@@ -241,7 +250,7 @@ def main() -> int:
     backend = _Backend()
     ventana = webview.create_window(
         TITULO,
-        html=PANTALLA_CARGA,
+        html=PANTALLA_CARGA.replace("__VERSION__", _texto_version()),
         width=1280,
         height=800,
         min_size=(1024, 680),

@@ -148,6 +148,7 @@ Queda en <http://localhost:4210> y consume la API de `http://localhost:8000/api`
 | `MODULONUEVO_ARCA_RENOVAR_MIN` | `50` | a los cuántos minutos se renueva el login de ARCA |
 | `MODULONUEVO_HEADLESS` | `1` | los bots corren sin ventana; `0` muestra Chrome («Cargar en Xubio» siempre lo muestra) |
 | `MODULONUEVO_VIEWPORT` | `1366x768` | resolución fija de la página de los bots |
+| `MODULONUEVO_ESPERA_S` | `60` | cuánto esperan los bots a que ARCA o Xubio carguen una página, abran una pestaña o entreguen una descarga |
 | `MODULONUEVO_CHROME_CHANNEL` | `chrome` | canal de Chromium; vacío usa el que instala Playwright |
 | `MODULONUEVO_BASIC_AUTH` | vacío | `usuario:clave` para proteger un despliegue público |
 | `MODULONUEVO_DIALOGOS` | `1` en Windows local; `0` con `HEADLESS` o `BASIC_AUTH` | `1`: «Descargar» abre ventanas de Windows en la PC del backend. `0` (servidor): se baja por el navegador y «Descargar todos» da un `.zip` con `<Cliente>/<MMAAAA>/(Ventas\|Compras)` |

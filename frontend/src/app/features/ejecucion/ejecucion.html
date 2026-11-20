@@ -439,12 +439,15 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" /></svg>
                 </button>
               }
-              <a [routerLink]="['/ejecuciones', h.id]" class="ej-hist-item" [class.activo]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null" [title]="(h.nombres ?? []).join(', ')">
+              <a [routerLink]="['/ejecuciones', h.id]" class="ej-hist-item" [class.activo]="h.id === e?.id" [attr.aria-current]="h.id === e?.id ? 'page' : null" [title]="tituloHist(h) + (h.nombres?.length ? ' · ' + clientesHist(h) : '')">
                 <span class="ej-hist-fila">
                   <span class="ej-hist-periodo">{{ tituloHist(h) }}</span>
                   <span class="mf-punto shrink-0" [class]="'ej-hist-punto ej-hist-' + h.estado" [class.mf-latido]="insH.latido" [title]="insH.texto"></span>
                 </span>
-                <span class="ej-hist-meta first-letter:uppercase">@if (h.nombres?.length) { {{ periodoLegibleDe(h.periodo) }} · }{{ horaDe(h.creada) }}</span>
+                <span class="ej-hist-meta">{{ metaHist(h) }}</span>
+                @if (h.nombres?.length) {
+                  <span class="ej-hist-clientes">{{ clientesHist(h) }}</span>
+                }
                 <span class="ej-hist-res" [class]="'ej-hist-res ' + claseResultado(h)">{{ textoResultado(h) }}</span>
               </a>
             </li>

@@ -577,11 +577,24 @@ export class EjecucionPantalla {
     return grupos;
   });
 
-  /** «PICCININI y ASOCIADOS S.A.» o «PICCININI… y 2 más»; sin nombres (control viejo), el período. */
+  /**
+   * El historial es de EJECUCIONES: el título es el período del control
+   * («Septiembre 2026»), no uno de sus clientes. Los clientes van abajo, todos, en chico.
+   */
   protected tituloHist(h: ResumenEjecucion): string {
-    const n = h.nombres ?? [];
-    if (!n.length) return periodoLegibleDe(h.periodo);
-    return n.length === 1 ? n[0] : `${n[0]} y ${n.length - 1} más`;
+    const p = periodoLegibleDe(h.periodo);
+    return p.charAt(0).toUpperCase() + p.slice(1);
+  }
+
+  /** «7 clientes · 17:26». */
+  protected metaHist(h: ResumenEjecucion): string {
+    const n = h.nombres?.length || h.clientes;
+    return [n ? `${n} ${n === 1 ? 'cliente' : 'clientes'}` : '', this.horaDe(h.creada)].filter(Boolean).join(' · ');
+  }
+
+  /** Los clientes del control, separados por coma (la línea se corta con «…»; el título del ítem los tiene todos). */
+  protected clientesHist(h: ResumenEjecucion): string {
+    return (h.nombres ?? []).join(', ');
   }
 
   protected horaDe(iso: string): string {

@@ -60,7 +60,7 @@ def login_xubio(page, usuario, password, matar_popup, log: Callable[[str], None]
             pass
 
     # Sin esperas fijas: se sigue apenas aparece el campo de usuario (o el cartel de cookies).
-    page.locator("#Username").or_(cookies).first.wait_for(timeout=30000)
+    page.locator("#Username").or_(cookies).first.wait_for(timeout=config.PLAYWRIGHT_ESPERA_MS)
     aceptar_cookies()
     page.fill("#Username", usuario)
     try:
@@ -175,6 +175,13 @@ def _abrir_selector_compania(page, matar_popup, log: Callable[[str], None]):
         ("click sobre la fila de la compañía", lambda: fila.click(timeout=4000)),
         ("click sobre el icono del selector", lambda: icono.click(timeout=4000)),
     )
+
+    # Con Xubio lento la barra de la compañía tarda en aparecer: se la espera una vez
+    # (hasta la espera configurada) en vez de agotar los intentos de 4 s en vacío.
+    try:
+        contenedor.wait_for(state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
+    except Exception:
+        pass
 
     for descripcion, accion in estrategias:
         matar_popup()
@@ -354,7 +361,7 @@ def cambiar_empresa(page, nombre_cliente, matar_popup, log: Callable[[str], None
     app no coincide con el nombre real de la compañía en Xubio.
     """
     # 1) Leer la empresa actualmente activa
-    page.wait_for_selector('#resaltarCompania', state="visible", timeout=30000)
+    page.wait_for_selector('#resaltarCompania', state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
     empresa_actual = _texto_seguro(page.locator('#resaltarCompania').first)
 
     if _coincide(nombre_cliente, empresa_actual):

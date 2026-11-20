@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...auditor.csv_arca import convertir_auxiliares, filas_para_mostrar, libro_sin_arca
+from ...version import COMPILADO, VERSION
 from ...bots.navegador import chrome_disponible
 from ...core import acceso_clientes, config, dialogos
 from ...core.controles import resumen_controles
@@ -390,6 +391,8 @@ def ajustes(
         "pausa_segundos": config.PAUSA_ENTRE_CLIENTES_S,
         "dialogos_locales": config.DIALOGOS_LOCALES,
         "chrome_instalado": chrome_disponible(),
+        "version": VERSION,
+        "compilado": COMPILADO,
         "xubio": {
             "usuario": datos["user"],
             "tiene_clave": datos["tiene_pass"],

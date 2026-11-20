@@ -210,6 +210,9 @@ def nuevo_contexto(browser, log: Callable[[str], None] = print, **opciones):
         ancho, alto = config.PLAYWRIGHT_VIEWPORT
         opciones.setdefault("viewport", {"width": ancho, "height": alto})
     context = browser.new_context(**opciones)
+    # Lo que no pide un tiempo propio (pestañas nuevas, descargas, goto) espera lo mismo.
+    context.set_default_timeout(config.PLAYWRIGHT_ESPERA_MS)
+    context.set_default_navigation_timeout(config.PLAYWRIGHT_ESPERA_MS)
     _instalar_filtro_salida(context, log)
     return context
 

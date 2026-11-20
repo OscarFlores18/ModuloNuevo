@@ -7,7 +7,12 @@
   <div class="cf-header-interior">
     <!-- Fila superior: título e información -->
     <div class="mb-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-1">
-      <h1 class="m-0 text-[1.45rem] font-extrabold tracking-tight" title="Mis Comprobantes de ARCA contra los Libros IVA de Xubio">Control de Facturas</h1>
+      <h1 class="m-0 text-[1.45rem] font-extrabold tracking-tight" title="Mis Comprobantes de ARCA contra los Libros IVA de Xubio">
+        Control de Facturas
+        @if (version()) {
+          <span class="cf-version" [title]="compilado() ? 'Versión ' + version() + ', armada el ' + compilado() : 'Versión ' + version()">v{{ version() }}</span>
+        }
+      </h1>
       <div class="flex items-center text-sm text-slate-200">
         Actualizado:&nbsp;
         <span class="font-extrabold text-white">{{ ultimaActualizacion() ? formatearFecha(ultimaActualizacion()!) : '—' }}</span>
@@ -75,7 +80,7 @@
   }
 
   <footer class="mf-pie">
-    <span>Control de Facturas V-1.0.0</span>
+    <span>Control de Facturas{{ version() ? ' · versión ' + version() : '' }}{{ compilado() ? ' · armada el ' + compilado() : '' }}</span>
     <span class="mf-sep">·</span>
     <span>{{ enEstaPc() ? 'Los bots usan Google Chrome de esta computadora' : 'Los bots corren en el servidor' }}</span>
     @if (!sesion.conectado()) {

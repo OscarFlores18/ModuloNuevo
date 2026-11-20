@@ -25,5 +25,6 @@ debug_log.txt
 
 # App de escritorio (build_app.ps1 / PyInstaller)
 /build/
+/backend/app/_compilacion.py
 /dist/
 ControlFCT.spec

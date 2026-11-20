@@ -48,6 +48,15 @@ if (-not (Test-Path $python)) {
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear .venv (¿está instalado Python?).' }
 }
 
+# --- Versión ----------------------------------------------------------------------
+# El número sale de VERSION; la fecha y hora del armado van adentro del .exe para
+# distinguir dos instaladores del mismo número (se ve en el pie de la app).
+$version = (Get-Content (Join-Path $raiz 'VERSION') -Raw).Trim()
+$compilado = Get-Date -Format 'dd/MM/yyyy HH:mm'
+$archivoCompilacion = Join-Path $raiz 'backend\app\_compilacion.py'
+[IO.File]::WriteAllText($archivoCompilacion, "VERSION = '$version'`nCOMPILADO = '$compilado'`n", (New-Object Text.UTF8Encoding $false))
+Write-Host "Versión $version (armada el $compilado)"
+
 # --- 1. Angular -----------------------------------------------------------------
 Paso '1/4 Compilando Angular (producción)'
 Push-Location (Join-Path $raiz 'frontend')
@@ -91,6 +100,8 @@ if (Test-Path $icono) { $argumentos += @('--icon', $icono) }
 
 & $python @argumentos
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller falló.' }
+# Ya quedó adentro del .exe: afuera, la app corriendo desde el código vuelve a ser «sin fecha».
+Remove-Item $archivoCompilacion -Force -ErrorAction SilentlyContinue
 
 $exe = Join-Path $raiz 'dist\ControlFCT\ControlFCT.exe'
 if (-not (Test-Path $exe)) { throw "No se generó $exe" }
@@ -121,7 +132,7 @@ $setup = Join-Path $raiz 'dist\ControlFCT-Setup.exe'
 if (Test-Path $setup) { Remove-Item $setup -Force }
 if ($iscc) {
     Paso '4/4 Armando el instalador (Inno Setup)'
-    & $iscc /Q (Join-Path $raiz 'installer\ControlFCT.iss')
+    & $iscc /Q "/DVersion=$version" (Join-Path $raiz 'installer\ControlFCT.iss')
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup falló.' }
 } else {
     Write-Host "`nSin Inno Setup 6: no se arma ControlFCT-Setup.exe (opcional)." -ForegroundColor Yellow

@@ -33,6 +33,9 @@ export class App {
   protected readonly enEstaPc = signal(true);
   /** Los bots necesitan Google Chrome y no está instalado donde corre el backend. */
   protected readonly faltaChrome = signal(false);
+  /** «1.1.0» y cuándo se armó ese instalador: para no confundir versiones. */
+  protected readonly version = signal('');
+  protected readonly compilado = signal<string | null>(null);
 
   /** Cuándo se trajeron por última vez los clientes y las ejecuciones del servidor. */
   protected readonly ultimaActualizacion = signal<Date | null>(null);
@@ -57,6 +60,8 @@ export class App {
       (a) => {
         this.enEstaPc.set(a.dialogos_locales);
         this.faltaChrome.set(a.chrome_instalado === false);
+        this.version.set(a.version ?? '');
+        this.compilado.set(a.compilado ?? null);
       },
       () => undefined,
     );

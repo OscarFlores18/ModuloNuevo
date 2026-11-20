@@ -77,6 +77,11 @@ def _tamano(valor: str, por_defecto: tuple[int, int]) -> tuple[int, int]:
 
 
 PLAYWRIGHT_VIEWPORT = _tamano(os.getenv("MODULONUEVO_VIEWPORT", ""), (1366, 768))
+# Cuánto esperan los bots a que ARCA o Xubio carguen una página, abran una pestaña
+# o entreguen una descarga. Con muchos controles seguidos los sitios se ponen lentos
+# y 20-30 s no alcanzaban (errores de «Timeout»). Las comprobaciones rápidas
+# (¿hay un cartel?, ¿se abrió el menú?) siguen cortas.
+PLAYWRIGHT_ESPERA_MS = max(10, int(os.getenv("MODULONUEVO_ESPERA_S", "60") or 60)) * 1000
 PLAYWRIGHT_CHANNEL = (os.getenv("MODULONUEVO_CHROME_CHANNEL", "chrome") or "").strip() or None
 
 # Protección opcional para despliegues públicos: "usuario:clave".

@@ -34,6 +34,9 @@ export interface Ajustes {
   dialogos_locales: boolean;
   /** false: los bots usan Google Chrome y la PC donde corre el backend no lo tiene. */
   chrome_instalado: boolean;
+  /** Número de versión (archivo VERSION) y, en el instalador, fecha y hora del armado. */
+  version?: string;
+  compilado?: string | null;
   xubio: { usuario: string; tiene_clave: boolean; recordar: boolean; del_servidor: boolean };
 }
 
