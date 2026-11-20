@@ -1083,7 +1083,7 @@ function botonesYEtiquetas(e: Advertencia, canEdit: boolean): { botones: string;
 function botonSubir(e: Advertencia, indice: number, canEdit: boolean, conOp: boolean, tildadas = aCorregir(e)): string {
   const texto = `⬆ Subir${conOp && e.operacion ? ` ${e.operacion}` : ''} a Xubio`;
   const op = esc(e.operacion ?? '');
-  if (!canEdit) return `<button type="button" class="ve-boton ve-boton-chico" disabled title="${BLOQUEADO}">${esc(texto)}</button>`;
+  if (!canEdit) return `<button type="button" class="ve-boton ve-boton-chico" data-subir-op="${op}" disabled title="${BLOQUEADO}">${esc(texto)}</button>`;
   return `<button type="button" class="ve-boton ve-boton-chico" data-subir="${indice}" data-subir-op="${op}"${tildadas ? '' : ' disabled'} title="Lleva los comprobantes tildados a «Subir a Xubio», listos para cargar">${esc(texto)}</button>`;
 }
 
@@ -1185,7 +1185,7 @@ function bloqueSubir(
     const tildadas = grupos.filter((g) => g.subir?.op === op && g.subir.incluida).length;
     if (conSubida) botones.push(botonSubir(a, registrar(a), canEdit, porOp.size > 1, tildadas));
     // Avisarle al cliente: percepciones, centro de costo y forma de pago de estas facturas.
-    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) botones.push(botonMail(adv, canEdit, undefined, porOp.size > 1));
+    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) botones.push(`<span data-op-mail="${op}">${botonMail(adv, canEdit, undefined, porOp.size > 1)}</span>`);
   }
   const tildadas = grupos.filter((g) => g.subir?.incluida).length;
   const meta = `<span class="ve-meta" data-cuenta>${tildadas} de ${grupos.length} para subir</span>${ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : ''}`;
@@ -1337,7 +1337,7 @@ function tarjeta(e: Advertencia, canEdit: boolean): string {
   const { botones, etiquetas } = botonesYEtiquetas(e, canEdit);
   const orden = ordenDe(e);
   return `
-    <details class="ve-error ve-${clase}" open>
+    <details class="ve-error ve-${clase}"${e.operacion ? ` data-op="${esc(e.operacion)}"` : ''} open>
       <summary>
         <span class="ve-insignias"><span class="ve-insignia">${clase === 'grave' ? 'Grave' : clase === 'aviso' ? 'A revisar' : 'Error'}</span></span>
         <span class="ve-cab">
@@ -1379,21 +1379,40 @@ const ESTILOS = `
     .ve-grave-aviso { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 16px; border: 1px solid #fecaca; border-radius: 12px; background: #fef2f2; color: #7f1d1d; font-size: 14.5px; line-height: 1.4; }
     .ve-grave-icono { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: #dc2626; color: #fff; font-weight: 900; }
 
-    /* Resumen: una tarjeta por operación, con cuánto coincide y una barra. */
-    .ve-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; margin: 0 0 18px; padding: 0; list-style: none; }
-    .ve-kpi { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
+    /* Resumen: una tarjeta por cliente, con Ventas y Compras adentro. */
+    .ve-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; margin: 0 0 18px; padding: 0; list-style: none; }
+    .ve-kpi { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
     .ve-kpi-cab { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .ve-kpi-op { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
-    .ve-kpi-cliente { font-weight: 700; color: #334155; text-transform: none; letter-spacing: 0; }
-    .ve-kpi-num { font-size: 14px; color: #475569; }
-    .ve-kpi-num b { margin-right: 2px; font-size: 24px; color: #0f172a; font-variant-numeric: tabular-nums; }
-    .ve-kpi-barra { display: block; height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
+    .ve-kpi-nombre { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 800; color: #0f172a; }
+    .ve-kpi-mods { display: flex; flex-direction: column; gap: 10px; }
+    .ve-kpi-mod { display: flex; flex-direction: column; gap: 5px; }
+    .ve-kpi-mod-cab { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+    .ve-kpi-op { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
+    .ve-kpi-num { font-size: 13.5px; color: #475569; white-space: nowrap; }
+    .ve-kpi-num b { margin-right: 2px; font-size: 18px; color: #0f172a; font-variant-numeric: tabular-nums; }
+    .ve-kpi-barra { display: block; height: 7px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
     .ve-kpi-barra > span { display: block; height: 100%; border-radius: inherit; background: #16a34a; }
-    .ve-kpi-mal .ve-kpi-barra > span { background: #f59e0b; }
-    .ve-kpi-estado { display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .ve-kpi-mod-mal .ve-kpi-barra > span { background: #f59e0b; }
+    .ve-kpi-estado { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; white-space: nowrap; }
     .ve-kpi-ok .ve-kpi-estado { background: #e7f5ec; color: #166534; }
     .ve-kpi-mal { border-color: #fcd9a0; }
     .ve-kpi-mal .ve-kpi-estado { background: #fdf0d9; color: #7a4f0f; }
+    /* Tarjeta como filtro: clic para ver solo ese cliente, otro clic para ver todos. */
+    .ve-kpi[data-tarjeta] { cursor: pointer; transition: border-color .15s, box-shadow .15s, background-color .15s, opacity .15s; }
+    .ve-kpi[data-tarjeta]:hover { border-color: #93c5fd; box-shadow: 0 2px 10px rgba(37, 99, 235, 0.12); }
+    .ve-kpi[data-tarjeta]:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .ve-kpi[aria-pressed='true'] { border: 2px solid #2563eb; padding: 13px 15px; background: #eff6ff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
+    /* Con una elegida, las demás quedan iguales: atenuadas, borde neutro, sin azul. */
+    .ve-kpis[data-filtrando] .ve-kpi:not([aria-pressed='true']),
+    .ve-kpis[data-filtrando] .ve-kpi:not([aria-pressed='true']):hover { opacity: .65; border-color: #e2e8f0; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
+    .ve-kpis[data-filtrando] .ve-kpi:not([aria-pressed='true']):hover { opacity: .85; }
+    .ve-fuera-op { display: none !important; }
+    .ve-error[hidden] { display: none; }
+    .ve-filtro-tarjeta { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13.5px; font-weight: 600; color: #1e3a8a; }
+    .ve-filtro-tarjeta[hidden] { display: none; }
+    .ve-limpiar { min-height: 34px; border: 1px solid #bfdbfe; background: #fff; color: #1d4ed8; font: inherit; font-size: 13.5px; font-weight: 700; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+    .ve-limpiar:hover { background: #eff6ff; border-color: #2563eb; }
+    .ve-limpiar:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 
     /* Filtros (Todos | Error | Subir a Xubio | A revisar): pestañas grandes, una por tipo. */
     /* top negativo = el relleno de arriba del contenedor: sin eso la barra se pega 16 px
@@ -1408,6 +1427,14 @@ const ESTILOS = `
     .ve-chip:focus-visible, .ve-pill:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
     .ve-chip[aria-pressed='true'], .ve-pill[aria-pressed='true'] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
     .ve-chip:disabled { opacity: .45; cursor: not-allowed; }
+    .ve-chip[hidden], .ve-filtros[hidden], .ve-divisor[hidden] { display: none; }
+    /* «Error» solo aparece si hay: en rojo, para resolverlo primero. */
+    .ve-chip-error { border-color: #fca5a5; background: #fef2f2; color: #b91c1c; }
+    .ve-chip-error:hover:not(:disabled) { border-color: #dc2626; background: #fee2e2; }
+    .ve-chip-error .ve-chip-num { background: #fee2e2; color: #b91c1c; }
+    .ve-chip-error[aria-pressed='true'] { background: #dc2626; border-color: #dc2626; color: #fff; }
+    /* Entre los filtros de estado y los de operación. */
+    .ve-divisor { align-self: stretch; width: 1px; margin: 4px 0; background: #cbd5e1; }
     .ve-chip-num { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: #eef2f7; color: #334155; font-size: 12.5px; font-weight: 800; }
     .ve-chip[aria-pressed='true'] .ve-chip-num { background: rgba(255, 255, 255, 0.22); color: #fff; }
 
@@ -1582,55 +1609,120 @@ export function contarErrores(errores: readonly Advertencia[]): Record<Advertenc
  * comprobantes, sin las que el control ya explicó (tiques, extractos, exterior, o ya en «Error»).
  */
 export function pendientesDe(errores: readonly Advertencia[], cliente: string, operacion: string, hojas?: HojasExcel): number {
+  const n = conteoDe(errores, cliente, operacion, hojas);
+  return n.error + n.soloArca + n.soloXubio - n.explicadas;
+}
+
+/** Los bloques de un cliente y una operación. */
+function conteoDe(errores: readonly Advertencia[], cliente: string, operacion: string, hojas?: HojasExcel): ConteoBloques {
   const clave = claveExcel(cliente, operacion);
   const solo = (h: FaltantesDelExcel | undefined) => (h?.get(clave) ? new Map([[clave, h.get(clave)!]]) : undefined);
-  const n = contarBloques(
+  return contarBloques(
     errores.filter((e) => e.cliente === cliente && e.operacion === operacion),
     solo(hojas?.sinLibro),
     solo(hojas?.sinArca),
   );
-  return n.error + n.soloArca + n.soloXubio - n.explicadas;
 }
 
-/** La tira de KPIs: una tarjeta por operación con cuántos coinciden y cuántos hay que gestionar. */
-function bloqueResumen(resumenes: readonly ResumenOperacion[], varios: boolean, errores: readonly Advertencia[], hojas?: HojasExcel): string {
-  if (!resumenes.length) return '';
-  const tarjetas = resumenes
-    .map((r) => {
-      const pendientes = pendientesDe(errores, r.cliente, r.operacion, hojas);
-      const ok = pendientes === 0;
-      const estado = ok ? '✓ Sin pendientes' : `${pendientes} a gestionar`;
-      const quien = varios ? `<span class="ve-kpi-cliente">${esc(r.cliente)} · </span>` : '';
-      const pct = r.arca ? Math.round((r.coinciden / r.arca) * 100) : 100;
-      return `<li class="ve-kpi ${ok ? 've-kpi-ok' : 've-kpi-mal'}">
-        <span class="ve-kpi-cab"><span class="ve-kpi-op">${quien}${esc(r.operacion)}</span><span class="ve-kpi-estado">${estado}</span></span>
-        <span class="ve-kpi-num"><b>${r.coinciden}</b> de ${r.arca} comprobantes de ARCA coinciden con Xubio</span>
-        <span class="ve-kpi-barra" role="img" aria-label="${pct}% coincide"><span style="width:${pct}%"></span></span>
-      </li>`;
-    })
-    .join('');
-  return `<ul class="ve-kpis" aria-label="Resumen por operación">${tarjetas}</ul>`;
+type Operacion = 'Ventas' | 'Compras';
+const OPERACIONES: readonly Operacion[] = ['Ventas', 'Compras'];
+
+/** Los números de los filtros de estado (Todos | Error | Subir a Xubio | A revisar). */
+type ConteoFiltros = Record<'todos' | 'error' | 'subir' | 'revisar', number>;
+
+/** Lo que se ve con un cliente (o todos) y una operación (o las dos) elegidos. */
+interface Contexto {
+  cliente: string | null;
+  op: Operacion | null;
+}
+
+function claveContexto({ cliente, op }: Contexto): string {
+  return `${cliente ?? ''}|${op ?? ''}`;
 }
 
 /**
- * Filtros globales, por gravedad. Los que no tienen nada quedan deshabilitados.
- * `sueltas`: los hallazgos fuera de los bloques (un paso que falló, por ejemplo), que
- * se ven con cualquier filtro: entran en «Todos» para que el número coincida con lo
- * que hay en la lista.
+ * Los números de los filtros en un contexto. Las sueltas (un paso que falló…) se ven
+ * con cualquier filtro de estado: entran en «Todos»; las que no tienen operación, en las dos.
  */
-function filtrosGlobales(n: ConteoBloques, sueltas: number): string {
+function conteoContexto(errores: readonly Advertencia[], hojas: HojasExcel | undefined, { cliente, op }: Contexto): ConteoFiltros {
+  const delCliente = (c: string) => !cliente || c === cliente;
+  const hoja = (h: FaltantesDelExcel | undefined) =>
+    h &&
+    new Map(
+      [...h].filter(([clave]) => {
+        const corte = clave.lastIndexOf('|');
+        return delCliente(clave.slice(0, corte)) && (!op || clave.slice(corte + 1) === op);
+      }),
+    );
+  const n = contarBloques(
+    errores.filter((e) => delCliente(e.cliente) && (!op || e.operacion === op)),
+    hoja(hojas?.sinLibro),
+    hoja(hojas?.sinArca),
+  );
+  const sueltas = errores.filter((e) => esSuelta(e) && delCliente(e.cliente) && (!op || !e.operacion || e.operacion === op)).length;
+  return { todos: sueltas + n.error + n.soloArca + n.soloXubio, error: n.error, subir: n.soloArca, revisar: n.soloXubio };
+}
+
+/**
+ * La tira de KPIs: una tarjeta por cliente con cuánto hay que gestionar (Ventas y
+ * Compras juntos) y, adentro, cuánto coincide en cada operación que se corrió.
+ * `interactivo`: la tarjeta filtra la lista de abajo a ese cliente.
+ */
+function bloqueResumen(resumenes: readonly ResumenOperacion[], errores: readonly Advertencia[], hojas?: HojasExcel, interactivo = false): string {
+  if (!resumenes.length) return '';
+  const porCliente = new Map<string, ResumenOperacion[]>();
+  for (const r of resumenes) porCliente.set(r.cliente, [...(porCliente.get(r.cliente) ?? []), r]);
+  const tarjetas = [...porCliente]
+    .map(([cliente, ops]) => {
+      const modulos = OPERACIONES.flatMap((op) => ops.filter((r) => r.operacion === op)).map((r) => {
+        const pendientes = pendientesDe(errores, cliente, r.operacion, hojas);
+        const pct = r.arca ? Math.round((r.coinciden / r.arca) * 100) : 100;
+        return {
+          pendientes,
+          html: `<span class="ve-kpi-mod${pendientes ? ' ve-kpi-mod-mal' : ''}">
+            <span class="ve-kpi-mod-cab"><span class="ve-kpi-op">${esc(r.operacion)}</span><span class="ve-kpi-num"><b>${r.coinciden}</b> de ${r.arca} coinciden</span></span>
+            <span class="ve-kpi-barra" role="img" aria-label="${esc(r.operacion)}: ${pct}% coincide"><span style="width:${pct}%"></span></span>
+          </span>`,
+        };
+      });
+      const pendientes = modulos.reduce((s, m) => s + m.pendientes, 0);
+      const ok = pendientes === 0;
+      const filtro = interactivo
+        ? ` data-tarjeta="${esc(cliente)}" role="button" tabindex="0" aria-pressed="false" title="Ver solo los hallazgos de ${esc(cliente)} (otro clic: todos)"`
+        : '';
+      return `<li class="ve-kpi ${ok ? 've-kpi-ok' : 've-kpi-mal'}"${filtro}>
+        <span class="ve-kpi-cab"><span class="ve-kpi-nombre" title="${esc(cliente)}">${esc(cliente)}</span><span class="ve-kpi-estado">${ok ? '✓ Sin pendientes' : `${pendientes} a gestionar`}</span></span>
+        <span class="ve-kpi-mods">${modulos.map((m) => m.html).join('')}</span>
+      </li>`;
+    })
+    .join('');
+  return `<ul class="ve-kpis" aria-label="Resumen por cliente">${tarjetas}</ul>`;
+}
+
+/**
+ * La barra de filtros: el estado (Todos | Error | Subir a Xubio | A revisar) y la
+ * operación (Todas | Ventas | Compras). Los números y qué se ve los ajusta la ventana
+ * al abrir y con cada clic.
+ */
+function filtrosGlobales(n: ConteoFiltros): string {
   const chips: [string, string, number][] = [
-    ['', 'Todos', sueltas + n.error + n.soloArca + n.soloXubio],
+    ['', 'Todos', n.todos],
     ['error', 'Error', n.error],
-    ['subir', 'Subir a Xubio', n.soloArca],
-    ['revisar', 'A revisar', n.soloXubio],
+    ['subir', 'Subir a Xubio', n.subir],
+    ['revisar', 'A revisar', n.revisar],
   ];
-  return `<div class="ve-filtros" role="group" aria-label="Filtrar hallazgos">${chips
+  const estado = chips
     .map(
       ([id, nombre, k]) =>
-        `<button type="button" class="ve-chip" data-ver="${id}" aria-pressed="${id === ''}"${id && !k ? ' disabled' : ''}>${nombre} <span class="ve-chip-num">${k}</span></button>`,
+        `<button type="button" class="ve-chip${id === 'error' ? ' ve-chip-error' : ''}" data-ver="${id}" aria-pressed="${id === ''}">${nombre} <span class="ve-chip-num">${k}</span></button>`,
     )
-    .join('')}</div>`;
+    .join('');
+  const operacion = [['', 'Todas'], ...OPERACIONES.map((op) => [op, op])]
+    .map(([id, nombre]) => `<button type="button" class="ve-chip" data-op-filtro="${id}" aria-pressed="${id === ''}">${nombre} <span class="ve-chip-num"></span></button>`)
+    .join('');
+  return `<div class="ve-filtros" role="group" aria-label="Filtrar por estado">${estado}</div>
+    <span class="ve-divisor" data-divisor-op aria-hidden="true"></span>
+    <div class="ve-filtros" data-filtros-op role="group" aria-label="Filtrar por operación">${operacion}</div>`;
 }
 
 /** Botones que eligen uno de varios (pills, pestañas, filtros): marca el elegido y avisa. */
@@ -1687,8 +1779,18 @@ export function mostrarVentanaDeErrores(
   // hay ninguno (por ejemplo, solo fallaron los bots) no hay nada que filtrar: antes
   // aparecía «Todos (0)» al lado de tres errores graves.
   const hayComprobantes = conteo.error + conteo.soloArca + conteo.soloXubio > 0;
-  const filtros = hayAlgo && hayComprobantes ? filtrosGlobales(conteo, errores.filter(esSuelta).length) : '';
-  const barra = filtros ? `<div class="ve-barra">${filtros}</div>` : '';
+  // Los números de cada combinación de cliente y operación, para los filtros.
+  const contextos = new Map<string, ConteoFiltros>();
+  for (const cliente of [null, ...porCliente.keys()]) {
+    for (const op of [null, ...OPERACIONES]) contextos.set(claveContexto({ cliente, op }), conteoContexto(errores, hojas, { cliente, op }));
+  }
+  const conteoTotal = contextos.get(claveContexto({ cliente: null, op: null }))!;
+  const filtros = hayAlgo && hayComprobantes ? filtrosGlobales(conteoTotal) : '';
+  // Con un solo cliente no hay nada que elegir en las tarjetas.
+  const tarjetasFiltran = !!filtros && new Set(resumenes.map((r) => r.cliente)).size > 1;
+  const barra = filtros
+    ? `<div class="ve-barra">${filtros}<span class="ve-filtro-tarjeta" data-filtro-tarjeta hidden>Solo <b data-filtro-nombre></b><button type="button" class="ve-limpiar" data-limpiar>Mostrar todos ✕</button></span></div>`
+    : '';
   // Debajo del título: de quién y de qué período (con un solo cliente, su nombre).
   const sub = [unSoloCliente ? [...porCliente.keys()][0] : porCliente.size ? `${porCliente.size} clientes` : '', ctx.periodo && `Período ${ctx.periodo}`]
     .filter(Boolean)
@@ -1719,7 +1821,7 @@ export function mostrarVentanaDeErrores(
             ? `<div class="ve-grave-aviso" role="alert"><span class="ve-grave-icono" aria-hidden="true">!</span><span><strong>El control terminó con ${graves === 1 ? 'un error grave' : `${graves} errores graves`}.</strong> Hasta corregirlo, el resultado no es confiable.</span></div>`
             : ''
         }
-        ${bloqueResumen(resumenes, new Set(resumenes.map((r) => r.cliente)).size > 1, errores, hojas)}
+        ${bloqueResumen(resumenes, errores, hojas, tarjetasFiltran)}
         ${barra}
         ${lista}
       </div>`,
@@ -1741,14 +1843,108 @@ export function mostrarVentanaDeErrores(
           if (a && alSubirAXubio) alSubirAXubio(a);
         });
       }
-      // Filtros globales: muestran un solo bloque (lo grave queda siempre a la vista).
-      grupoDeBotones(popup.querySelectorAll<HTMLButtonElement>('button[data-ver]'), 'aria-pressed', (b) => {
-        const ver = b.dataset['ver'];
-        for (const bloque of popup.querySelectorAll<HTMLElement>('.ve-bloque')) bloque.hidden = !!ver && bloque.dataset['bloque'] !== ver;
-        for (const grupo of popup.querySelectorAll<HTMLElement>('.ve-grupo')) {
-          grupo.hidden = !!ver && !grupo.querySelector(`.ve-bloque[data-bloque="${ver}"], details:not(.ve-bloque)`);
+      // Filtros: el cliente (tarjeta del resumen), la operación y el estado, combinados.
+      // Lo grave (tarjetas sueltas sin operación) queda siempre a la vista.
+      const filtro: Contexto & { ver: string } = { cliente: null, op: null, ver: '' };
+      const chips = popup.querySelectorAll<HTMLButtonElement>('button[data-ver]');
+      const chipsOp = popup.querySelectorAll<HTMLButtonElement>('button[data-op-filtro]');
+      const tarjetas = popup.querySelectorAll<HTMLElement>('[data-tarjeta]');
+      const conteoEn = (c: Contexto) => contextos.get(claveContexto(c)) ?? conteoTotal;
+      /** Si hay errores en lo que se ve, «Error» va primero: se elige solo. */
+      const priorizarError = () => {
+        if (conteoEn(filtro).error > 0) filtro.ver = 'error';
+      };
+      const numero = (chip: HTMLElement, k: number) => {
+        const num = chip.querySelector('.ve-chip-num');
+        if (num) num.textContent = String(k);
+      };
+      const filtrar = () => {
+        // Operación: con una sola en el cliente no hay nada que elegir (el grupo se oculta).
+        const delCliente = conteoEn({ cliente: filtro.cliente, op: null });
+        const conDatos = OPERACIONES.filter((op) => conteoEn({ cliente: filtro.cliente, op }).todos > 0);
+        const conOps = conDatos.length > 1;
+        if (!conOps || (filtro.op && !conDatos.includes(filtro.op))) filtro.op = null;
+        for (const chip of chipsOp) {
+          const id = (chip.dataset['opFiltro'] || null) as Operacion | null;
+          const k = id ? conteoEn({ cliente: filtro.cliente, op: id }).todos : delCliente.todos;
+          numero(chip, k);
+          chip.disabled = !!id && !k;
+          chip.setAttribute('aria-pressed', String(id === filtro.op));
         }
+        for (const el of popup.querySelectorAll<HTMLElement>('[data-filtros-op], [data-divisor-op]')) el.hidden = !conOps;
+        // Estado: «Error» desaparece en 0; los otros se deshabilitan.
+        const n = conteoEn(filtro);
+        for (const chip of chips) {
+          const id = chip.dataset['ver'] ?? '';
+          const k = n[(id || 'todos') as keyof ConteoFiltros] ?? 0;
+          numero(chip, k);
+          chip.disabled = !!id && !k;
+          if (id === 'error') chip.hidden = !k;
+        }
+        if (filtro.ver && !n[filtro.ver as keyof ConteoFiltros]) filtro.ver = '';
+        for (const chip of chips) chip.setAttribute('aria-pressed', String((chip.dataset['ver'] ?? '') === filtro.ver));
+        const { cliente, op, ver } = filtro;
+        const deOtraOp = (valor: string | undefined) => !!op && !!valor && valor !== op;
+        // Tarjetas: la elegida resaltada, las otras atenuadas por igual.
+        for (const t of tarjetas) t.setAttribute('aria-pressed', String(t.dataset['tarjeta'] === cliente));
+        popup.querySelector('.ve-kpis')?.toggleAttribute('data-filtrando', !!cliente);
+        const aviso = popup.querySelector<HTMLElement>('[data-filtro-tarjeta]');
+        if (aviso) {
+          aviso.hidden = !cliente;
+          const nombre = aviso.querySelector('[data-filtro-nombre]');
+          if (nombre) nombre.textContent = cliente ?? '';
+        }
+        // Filas y botones de la otra operación.
+        for (const el of popup.querySelectorAll<HTMLElement>('tbody[data-op], [data-op-mail], [data-subir-op]')) {
+          el.classList.toggle('ve-fuera-op', deOtraOp(el.dataset['op'] ?? el.dataset['opMail'] ?? el.dataset['subirOp']));
+        }
+        // «A revisar» con Ventas y Compras: si la barra ya eligió la operación, sus pills sobran.
+        for (const pills of popup.querySelectorAll<HTMLElement>('[data-pills-op]')) {
+          pills.classList.toggle('ve-fuera-op', !!op);
+          if (op) pills.querySelector<HTMLButtonElement>(`button[data-op-pill="${op}"]`)?.click();
+        }
+        for (const d of popup.querySelectorAll<HTMLElement>('.ve-grupo > details')) {
+          if (!d.classList.contains('ve-bloque')) d.hidden = deOtraOp(d.dataset['op']);
+          else d.hidden = (!!ver && d.dataset['bloque'] !== ver) || (!!op && !!d.querySelector('tbody[data-op]') && !d.querySelector(`tbody[data-op="${op}"]`));
+        }
+        const filtrando = !!(cliente || op || ver);
+        for (const grupo of popup.querySelectorAll<HTMLElement>('.ve-grupo')) {
+          grupo.hidden = (!!cliente && grupo.dataset['cliente'] !== cliente) || (filtrando && !grupo.querySelector(':scope > details:not([hidden])'));
+        }
+      };
+      grupoDeBotones(chips, 'aria-pressed', (b) => {
+        filtro.ver = b.dataset['ver'] ?? '';
+        filtrar();
       });
+      grupoDeBotones(chipsOp, 'aria-pressed', (b) => {
+        filtro.op = (b.dataset['opFiltro'] || null) as Operacion | null;
+        filtrar();
+      });
+      const alternarTarjeta = (t: HTMLElement) => {
+        filtro.cliente = filtro.cliente === t.dataset['tarjeta'] ? null : (t.dataset['tarjeta'] ?? null);
+        filtro.op = null;
+        if (filtro.cliente) priorizarError();
+        filtrar();
+      };
+      for (const t of tarjetas) {
+        t.addEventListener('click', () => alternarTarjeta(t));
+        t.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Enter' && ev.key !== ' ') return;
+          ev.preventDefault();
+          alternarTarjeta(t);
+        });
+      }
+      popup.querySelector('[data-limpiar]')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        filtro.cliente = null;
+        filtro.op = null;
+        filtrar();
+      });
+      // Al abrir: si hay errores, se empieza por ellos.
+      if (chips.length) {
+        priorizarError();
+        filtrar();
+      }
       // Pills del bloque «Error»: Letra / Tipo / Importe…
       for (const pills of popup.querySelectorAll<HTMLElement>('.ve-pills')) {
         const bloque = pills.closest('.ve-bloque');

@@ -1,6 +1,6 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { carpetaDelPeriodo, periodoLegible, periodoLegibleDe, tamanoLegible } from '../../core/fechas';
+import { periodoLegible, periodoLegibleDe, tamanoLegible } from '../../core/fechas';
 import { Advertencia, ArchivoGenerado, ClienteEjecucion, Corregido, FilaFaltanteExcel, PasoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../../core/models';
 import { descargarBlob } from '../../core/descargar';
 import { reintentoDe } from '../../core/reintento';
@@ -763,16 +763,31 @@ export class EjecucionPantalla {
     }
   }
 
-  /** Un .zip con Cliente/mmaaaa/Control de facturas/N° control, por el panel de descargas. */
+  /**
+   * Sin .zip. En esta PC (app de escritorio): los archivos van a las carpetas de
+   * siempre, Descargas/Cliente/mmaaaa/Control de facturas/N° control. Con el backend
+   * en un servidor el navegador no puede armar carpetas: cada archivo suelto a Descargas.
+   */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/*`);
     this.errorDescarga.set(null);
     try {
-      // Mismo nombre que arma el backend: sin caracteres inválidos ni punto final («S.A.»).
-      const cliente = c.nombre.replace(/[\\/*?:"<>|]/g, '').trim().replace(/[. ]+$/, '') || 'Cliente';
-      descargarBlob(`${cliente} - ${carpetaDelPeriodo(e.parametros.desde)}.zip`, await this.api.zip(e.id, c.indice));
+      if (this.enEstaPc()) {
+        const r = await this.api.exportar(e.id, c.indice);
+        if (r.fallas.length) {
+          this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
+          this.toast.error(`${r.fallas.length} ${r.fallas.length === 1 ? 'archivo no se pudo guardar' : 'archivos no se pudieron guardar'}`, r.fallas[0].motivo);
+        }
+        if (r.copiados.length) this.toast.ok('Archivos guardados', r.carpeta);
+        return;
+      }
+      for (const [i, archivo] of c.archivos.entries()) {
+        // Una pausa corta entre descargas para que el navegador no las corte.
+        if (i) await new Promise((r) => setTimeout(r, 400));
+        descargarBlob(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
+      }
     } catch (err) {
       const msg = mensajeDeError(err, `No se pudieron descargar los archivos de ${c.nombre}.`);
       this.errorDescarga.set(msg);

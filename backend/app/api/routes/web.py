@@ -663,16 +663,19 @@ def guardar_archivo_ejecucion(ejecucion_id: str, indice: int, nombre: str) -> di
 
 
 @router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/exportar")
-def exportar_archivos_ejecucion(ejecucion_id: str, indice: int) -> dict:
+def exportar_archivos_ejecucion(ejecucion_id: str, indice: int, ventana: bool = True) -> dict:
     """Abre en la PC del servidor la ventana para elegir carpeta. Con una carpeta
     elegida, los archivos van a `<elegida>/<mmaaaa>/`; si se cierra sin elegir,
-    a `<Descargas>/<Cliente>/<mmaaaa>/`."""
+    a `<Descargas>/<Cliente>/<mmaaaa>/`. Con `ventana=false` van directo a Descargas
+    («Descargar todos»: las carpetas de siempre, sin .zip)."""
     _solo_local()
     try:
         ej = ejecuciones_srv.obtener(ejecucion_id)
         ejecuciones_srv.archivos_del_cliente(ej, indice)  # que haya algo antes de abrir la ventana
-        destino = dialogos.elegir_carpeta(
-            "Elegí la carpeta del cliente (o cerrá para crearla en Descargas)"
+        destino = (
+            dialogos.elegir_carpeta("Elegí la carpeta del cliente (o cerrá para crearla en Descargas)")
+            if ventana
+            else None
         )
         return ejecuciones_srv.exportar_archivos(ej, indice, destino)
     except ejecuciones_srv.ErrorEjecucion as exc:

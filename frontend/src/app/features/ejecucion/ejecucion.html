@@ -381,8 +381,8 @@
                       <span class="mf-tenue text-xs font-semibold">{{ carpetaAbierta(c.nombre) ? 'Ocultar ▴' : 'Mostrar ▾' }}</span>
                     </button>
                     <button type="button" class="mf-btn mf-btn-suave mf-btn-chico ml-auto" (click)="descargarTodos(c)" [disabled]="descargando() === c.indice + '/*'"
-                      title="Un .zip con las carpetas del cliente, del período y de este control.">
-                      {{ descargando() === c.indice + '/*' ? 'Descargando…' : 'Descargar todos (.zip)' }}
+                      title="Guarda los archivos en Descargas, en la carpeta del cliente y del período.">
+                      {{ descargando() === c.indice + '/*' ? 'Descargando…' : 'Descargar todos' }}
                     </button>
                   </div>
                   @if (carpetaAbierta(c.nombre)) {

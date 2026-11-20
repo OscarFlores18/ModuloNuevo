@@ -101,6 +101,17 @@ export class ApiService {
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
   }
+  /**
+   * Con el backend en esta PC: copia los archivos del cliente a
+   * Descargas/Cliente/mmaaaa/Control de facturas/N° control (sin .zip ni ventanas).
+   */
+  exportar(id: string, indice: number): Promise<ResultadoExportar> {
+    return firstValueFrom(
+      this.http
+        .post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}, { params: { ventana: false } })
+        .pipe(errorLegible('No se pudieron guardar los archivos.')),
+    );
+  }
   /** Todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas/N° control. */
   zip(id: string, indice: number): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
@@ -153,6 +164,15 @@ ${cuerpo}`.trim();
   else if (e.status >= 500) mensaje = delBackend || 'El servidor tuvo un error interno. Probá de nuevo; si sigue, pasá el detalle técnico.';
   else mensaje = delBackend || porDefecto;
   return new ErrorApi(mensaje, tecnico, e.status);
+}
+
+export interface ResultadoExportar {
+  /** Dónde quedaron (…\Cliente\mmaaaa\Control de facturas\N° control). */
+  carpeta: string;
+  elegida: boolean;
+  copiados: string[];
+  /** Los que no se pudieron copiar (por ejemplo, abiertos en Excel). */
+  fallas: { nombre: string; motivo: string }[];
 }
 
 export interface ResultadoCargaXubio {
