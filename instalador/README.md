@@ -8,7 +8,7 @@ menú Inicio.
 |---|---|
 | Versión | 1.0.0 |
 | Tamaño | 67,6 MB |
-| SHA-256 | `C6F8811FBE7D88F738F0847D33B8E0F61B1C9A6ABAC365646F68B5CA80DBB329` |
+| SHA-256 | `51397CE5B552294F19D5C68B710BB18FFB6B8A5181F72DEF4982CE95CE6B63B7` |
 
 ---
 
@@ -91,6 +91,7 @@ borrala a mano.
 | Problema | Qué hacer |
 |---|---|
 | «Windows protegió su PC» | **Más información** → **Ejecutar de todas formas**. |
+| «Una directiva de Control de aplicaciones bloqueó este archivo» | Es el Control inteligente de aplicaciones de Windows 11 con un programa nuevo sin firma. Volvé a abrirlo: suele pasar solo la primera vez. Si sigue, avisá. |
 | El antivirus lo bloquea o lo borra | Es un falso positivo común en programas sin firma. Agregá una excepción para la carpeta del programa o avisá para revisarlo. |
 | Aviso rojo «Falta Google Chrome» | Instalá Chrome y volvé a abrir la app. |
 | La ventana queda en «Abriendo…» mucho tiempo | Esperá hasta un minuto la primera vez. Si no abre, cerrala y abrila de nuevo; si sigue, mandá el archivo `Documentos\ControlFCT\logs\backend.log`. |
