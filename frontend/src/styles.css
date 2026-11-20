@@ -3142,3 +3142,9 @@ app-clientes section:has(#t-candado) .mf-btn {
   padding-right: 76px;
   text-overflow: ellipsis;
 }
+
+/* Edge/WebView2 agrega su propio ojito en los campos de contraseña: ya está nuestro «Ver». */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
