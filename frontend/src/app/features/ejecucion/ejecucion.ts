@@ -26,6 +26,7 @@ import {
   faltantesParaCargar,
   filasDelExcel,
   mostrarVentanaDeErrores,
+  registroDeHallazgos,
 } from './ventana-errores';
 import { CorreccionElegida, elegirParaAplicar, estaIncluida, excluidasDe, guardarPrecarga, incluir, paraAplicar } from './seleccion';
 import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
@@ -643,7 +644,21 @@ export class EjecucionPantalla {
     const cuenta = this.ej()?.parametros?.xubio_usuario?.trim() || this.cuentaXubio();
     // Backend en esta PC: aprieta Ctrl+V en Gmail por nosotros.
     const pegarEnGmail = this.enEstaPc() ? () => this.api.pegarMail() : undefined;
-    return { emails, periodo: this.ej()?.periodo ?? '', cuenta, pegarEnGmail, descargarExcelFaltantes: (c, op) => this.descargarExcelFaltantes(c, op), descargarErroresExcel: (c, op) => this.descargarErroresExcel(c, op) };
+    return { emails, periodo: this.ej()?.periodo ?? '', cuenta, pegarEnGmail, descargarExcelFaltantes: (c, op) => this.descargarExcelFaltantes(c, op),
+      descargarErroresExcel: (c, op) => this.descargarErroresExcel(c, op),
+      descargarHallazgos: (c) => this.descargarHallazgos(c),
+    };
+  }
+
+  /** «Descargar hallazgos»: los avisos del control en un Excel, como registro. */
+  private async descargarHallazgos(cliente: string | null): Promise<void> {
+    const e = this.ej();
+    if (!e) throw new Error('Sin control');
+    const bloques = registroDeHallazgos(e.advertencias ?? [], cliente);
+    if (!bloques.length) throw new Error('Sin hallazgos');
+    const { nombre, contenido } = await this.api.hallazgosExcel(e.id, cliente, bloques);
+    const bytes = Uint8Array.from(atob(contenido), (c) => c.charCodeAt(0));
+    descargarBlob(nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
   }
 
   /** «Pedir que las carguen»: baja el Excel de las partidas de ARCA no encontradas para adjuntarlo. */

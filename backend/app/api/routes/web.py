@@ -757,6 +757,43 @@ def errores_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str) -> d
     return {"nombre": nombre, "contenido": base64.b64encode(contenido).decode("ascii")}
 
 
+class BloqueHallazgo(BaseModel):
+    """Un hallazgo tal como se ve en la ventana (lo arma el frontend)."""
+
+    cliente: str = Field(default="", max_length=200)
+    operacion: str = Field(default="", max_length=20)
+    insignia: str = Field(default="", max_length=40)
+    titulo: str = Field(default="", max_length=500)
+    que_hacer: str = Field(default="", max_length=1000)
+    detalle: str = Field(default="", max_length=5000)
+    columnas: list[str] = Field(default_factory=list, max_length=60)
+    filas: list[list[str | float | int | None]] = Field(default_factory=list, max_length=5000)
+
+
+class HallazgosExcelRequest(BaseModel):
+    cliente: str | None = Field(default=None, max_length=200)
+    bloques: list[BloqueHallazgo] = Field(min_length=1, max_length=2000)
+
+
+@router.post("/ejecuciones/{ejecucion_id}/hallazgos-excel")
+def hallazgos_excel_ejecucion(ejecucion_id: str, pedido: HallazgosExcelRequest) -> dict:
+    """Los hallazgos del control en un .xlsx, para guardarlos como registro: cada uno
+    como se ve en la ventana, sin estilos. {nombre, contenido (base64)}."""
+    from ...auditor.registro_hallazgos import excel_hallazgos
+
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    desde, hasta = str(ej.parametros.get("desde") or ""), str(ej.parametros.get("hasta") or "")
+    periodo = f"{desde} al {hasta}" if desde and hasta else desde or hasta
+    mes = f"{hasta[3:5]}-{hasta[8:10]}" if len(hasta) == 10 else ""
+    cliente = pedido.cliente
+    nombre = "Hallazgos" + (f" - {cliente}" if cliente else "") + (f" - {mes}" if mes else "") + ".xlsx"
+    contenido = excel_hallazgos([b.model_dump() for b in pedido.bloques], periodo)
+    return {"nombre": nombre, "contenido": base64.b64encode(contenido).decode("ascii")}
+
+
 class CambioElegido(BaseModel):
     """Un dato de ARCA para escribir en el Libro IVA (un par de «Error»)."""
 

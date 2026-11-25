@@ -761,6 +761,8 @@ export interface ContextoVentana {
    * archivo, o null si no hay partidas (no se descarga nada).
    */
   descargarErroresExcel?: (cliente: string, operacion: string) => Promise<string | null>;
+  /** «Descargar hallazgos»: baja los avisos en un Excel (del cliente elegido, o de todos). */
+  descargarHallazgos?: (cliente: string | null) => Promise<void>;
 }
 
 /**
@@ -1434,74 +1436,36 @@ function bloqueError(items: readonly Advertencia[], marcado: Marcado): string {
 }
 
 /** Lo que no es un comprobante (ARCA vacío, un paso que falló…): una tarjeta suelta, arriba. */
-/** Las columnas de «Mis Comprobantes» que forman el Imp. Total (como `COLUMNAS_QUE_SUMAN` en cruce_fo.py). */
-const COLUMNAS_QUE_SUMAN = new Set(['neto gravado total', 'neto no gravado', 'op. exentas', 'otros tributos', 'total iva']);
+/** Las columnas que forman el Imp. Total: neto e IVA de cada alícuota («Neto
+ * gravado 21%», «IVA 21%»…) o los totales, más no gravado, exento y otros tributos. */
+const COLUMNA_QUE_SUMA = /^(neto gravado \d|iva \d|neto gravado total$|total iva$|neto no gravado$|op\. exentas$|otros tributos$)/i;
 
 /**
- * «Las columnas no suman el total»: cada factura tal cual está en el Excel de
- * ARCA («Mis Comprobantes»), sin columnas calculadas. Para que se vea de un
- * golpe: las columnas que se suman van agrupadas con «+», el Imp. Total con «≠»
- * y en naranja, y debajo cuánto quedó sin discriminar (no es una columna).
+ * «Las columnas no suman el total»: cada factura de ARCA con el neto y el IVA
+ * de cada alícuota que usa, el no gravado, el exento y los otros tributos, el Imp.
+ * Total, la diferencia (lo que ARCA no discrimina) y cómo quedó en Xubio.
  */
 function grillaSuma(e: Advertencia): string {
   const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f);
   if (!filas.length) return '';
-  const columnas = filas[0].fila.map((c) => c.columna);
-  const numerica = (col: string) => filas.some((f) => typeof f.fila.find((c) => c.columna === col)?.valor === 'number');
-  const esNum = columnas.map((c) => numerica(c) && c !== 'Nro. Doc.');
-  const suma = columnas.map((c) => COLUMNAS_QUE_SUMAN.has(c.trim().toLowerCase()));
-  const esTotal = columnas.map((c) => c === 'Imp. Total');
-  const nSuman = suma.filter(Boolean).length;
-  const primeraSuma = suma.indexOf(true);
-  const conGrupos = nSuman > 0 && esTotal.includes(true);
-  // Fila de grupos: «Comprobante» | «Lo que ARCA discrimina (se suma)» | «Total».
-  const grupos = conGrupos
-    ? `<tr class="ve-suma-grupos">${columnas
-        .map((_, i) => {
-          if (suma[i]) return i === primeraSuma ? `<th colspan="${nSuman}" class="g-suma">Lo que ARCA discrimina (se suma)</th>` : '';
-          if (esTotal[i]) return '<th class="g-total">Total</th>';
-          return '<th></th>';
-        })
-        .join('')}</tr>`
-    : '';
-  const cab = columnas
-    .map((c, i) => {
-      const signo = suma[i] && i !== primeraSuma ? '<span class="ve-signo">+</span>' : esTotal[i] && conGrupos ? '<span class="ve-signo ve-distinto">≠</span>' : '';
-      const clase = [esNum[i] ? 'num' : '', suma[i] ? 'c-suma' : '', esTotal[i] && conGrupos ? 'c-total' : ''].filter(Boolean).join(' ');
-      return `<th${clase ? ` class="${clase}"` : ''}>${signo}${esc(c)}</th>`;
-    })
+  const partes = filas[0].fila.map((c) => c.columna).filter((c) => COLUMNA_QUE_SUMA.test(c.trim()));
+  const cab = ['Fecha', 'Comprobante', 'Razón social', ...partes, 'Imp. Total', 'Diferencia', 'En Xubio']
+    .map((c, i) => `<th${i >= 3 ? ' class="num"' : ''}>${esc(c)}</th>`)
     .join('');
   const cuerpo = filas
     .map((f) => {
+      const d = normalizar(f.fila);
       const v: Record<string, CeldaVista['valor']> = {};
       for (const c of f.fila) v[c.columna] = c.valor;
-      const sumado = columnas.reduce((t, c, i) => t + (suma[i] ? (aNumero(v[c]) ?? 0) : 0), 0);
-      const total = aNumero(v['Imp. Total']);
-      const falta = total === null ? null : Math.round((total - sumado) * 100) / 100;
-      const celdas = columnas
-        .map((col, i) => {
-          const valor = v[col];
-          if (esTotal[i] && conGrupos) {
-            const nota = falta ? `<span class="ve-falta">sin discriminar ${esc(pesos(falta))}</span>` : '';
-            return `<td class="num c-total" title="${esc(`Las columnas suman ${pesos(sumado)}`)}">${esc(importe(valor))}${nota}</td>`;
-          }
-          if (esNum[i]) {
-            const cero = (aNumero(valor) ?? 0) === 0;
-            return `<td class="num${suma[i] ? ' c-suma' : ''}${cero ? ' ve-cero' : ''}">${esc(importe(valor))}</td>`;
-          }
-          if (col === 'Nro. Doc.') return `<td>${esc(cuit(valor))}</td>`;
-          // Tipo y denominación pueden ir en dos líneas; fecha y comprobante, no.
-          const clase = col === 'Comprobante' ? 'comp' : col === 'Fecha' ? '' : 've-texto';
-          return `<td${clase ? ` class="${clase}"` : ''}>${esc(texto(valor))}</td>`;
-        })
-        .join('');
-      return `<tr>${celdas}</tr>`;
+      const enXubio = v['Total Xubio'];
+      const bienEnXubio = typeof enXubio === 'number' && typeof d.Total === 'number' && Math.abs(Math.abs(enXubio) - Math.abs(d.Total)) <= 1;
+      const xubio = enXubio === null || enXubio === undefined ? '<td class="num">No está</td>' : `<td class="num${bienEnXubio ? ' marca ok' : ' marca error'}">${esc(importe(enXubio))}</td>`;
+      // Como en el Excel: la alícuota que no usa el comprobante, con «-».
+      const columnas = partes.map((p) => `<td class="num">${v[p] ? esc(importe(v[p])) : '-'}</td>`).join('');
+      return `<tr><td>${esc(texto(d.Fecha))}</td><td class="comp">${esc(texto(d.Comprobante))}</td><td title="${esc(texto(d.Tipo))} · CUIT ${esc(cuit(d.CUIT))}">${esc(texto(d['Razón social']))}</td>${columnas}<td class="num">${esc(importe(d.Total))}</td><td class="num marca aviso">${esc(importe(v['Diferencia']))}</td>${xubio}</tr>`;
     })
     .join('');
-  const leyenda = conGrupos
-    ? '<p class="ve-suma-leyenda">Las columnas en celeste <b>no llegan</b> al Imp. Total. Lo que falta (en naranja) es lo que ARCA no discrimina.</p>'
-    : '';
-  return `${leyenda}<div class="ve-grilla ve-suma"><table><thead>${grupos}<tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
+  return `<div class="ve-grilla"><table class="ve-suma"><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
 }
 
 /** El filtro de estado de una tarjeta suelta: la misma insignia que muestra. */
@@ -1551,6 +1515,9 @@ const ESTILOS = `
     .ve { text-align: left; color: #1f2a37; font-size: 14px; }
 
     /* Debajo del título: cliente y período. */
+    .ve-cabeza { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
+    .ve-cabeza .ve-sub { margin: 0; }
+    .ve-descargar:disabled { opacity: .6; cursor: progress; }
     .ve-sub { margin: 0 0 14px; color: #64748b; font-size: 14.5px; font-weight: 600; }
 
     /* Solo si hay errores graves: el resultado no es confiable. */
@@ -1728,6 +1695,8 @@ const ESTILOS = `
     .ve-grilla col.c-corr-ancha { width: 312px; }
     .ve-grilla th { background: #f8fafc; color: #475569; font-size: 12.5px; font-weight: 700; text-align: left; padding: 9px 10px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ve-grilla th.num { text-align: right; }
+    /* «Columnas no suman»: los títulos de ARCA van enteros (en dos renglones si hace falta). */
+    .ve-grilla table.ve-suma th { white-space: normal; vertical-align: bottom; line-height: 1.25; }
     .ve-grilla th.h-corr { color: #9b2c2c; border-left: 1px solid #e2e8f0; }
     .ve-grilla td { padding: 8px 10px; border-bottom: 1px solid #eef2f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ve-grilla tbody:last-child tr:last-child td { border-bottom: 0; }
@@ -1748,26 +1717,6 @@ const ESTILOS = `
     .ve-grilla td.marca.error { background: #fdeaea; box-shadow: inset 0 0 0 1.5px #c53030; }
     .ve-grilla td.marca.ok { background: #e7f5ec; box-shadow: inset 0 0 0 1.5px #15803d; }
     .ve-grilla td.marca.aviso { background: #fff7e6; }
-    /* «Las columnas no suman el total»: grupos, signos y lo que falta. */
-    .ve-suma-leyenda { margin: 0 0 8px; font-size: 13px; color: #475569; }
-    .ve-grilla.ve-suma { overflow-x: auto; }
-    .ve-grilla.ve-suma table { table-layout: auto; font-size: 13px; }
-    .ve-grilla.ve-suma th, .ve-grilla.ve-suma td { overflow: visible; padding-left: 8px; padding-right: 8px; }
-    /* Que entre entera (con el Imp. Total a la vista): los encabezados largos van en dos líneas. */
-    .ve-grilla.ve-suma table { word-break: normal; overflow-wrap: normal; }
-    .ve-grilla.ve-suma thead th { white-space: normal; vertical-align: bottom; line-height: 1.25; }
-    .ve-grilla.ve-suma td.ve-texto { white-space: normal; min-width: 70px; }
-    .ve-grilla.ve-suma td.c-total { min-width: 112px; }
-    .ve-grilla.ve-suma tr.ve-suma-grupos th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 5px 10px; border-bottom: 0; background: #fff; }
-    .ve-grilla.ve-suma th.g-suma { background: #e0f2fe; color: #075985; text-align: center; border-radius: 6px 6px 0 0; }
-    .ve-grilla.ve-suma th.g-total { background: #ffedd5; color: #9a3412; text-align: center; border-radius: 6px 6px 0 0; }
-    .ve-grilla.ve-suma th.c-suma, .ve-grilla.ve-suma td.c-suma { background: #f0f9ff; }
-    .ve-grilla.ve-suma th.c-total { background: #ffedd5; color: #9a3412; }
-    .ve-grilla.ve-suma td.c-total { background: #fff7ed; font-weight: 700; color: #9a3412; box-shadow: inset 2px 0 0 #fb923c; }
-    .ve-grilla.ve-suma td.ve-cero { color: #94a3b8; }
-    .ve-signo { display: inline-block; margin-right: 5px; color: #0284c7; font-weight: 800; }
-    .ve-signo.ve-distinto { color: #c2410c; }
-    .ve-falta { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 600; color: #c2410c; white-space: normal; }
     /* La corrección en una sola línea (el importe con su diferencia incluido). */
     .ve-grilla td.corr { white-space: nowrap; text-overflow: clip; vertical-align: middle; background: #fffafa; border-left: 1px solid #e2e8f0; font-size: 12.5px; font-weight: 600; line-height: 1.9; }
     .ve-corr-et { color: #475569; }
@@ -2045,7 +1994,15 @@ export function mostrarVentanaDeErrores(
     title: hayAlgo ? 'Hallazgos del control' : 'Control sin hallazgos',
     html: `${ESTILOS}
       <div class="ve">
-        ${sub ? `<p class="ve-sub">${sub}</p>` : ''}
+        ${
+          sub || (hayAlgo && ctx.descargarHallazgos)
+            ? `<div class="ve-cabeza">${sub ? `<p class="ve-sub">${sub}</p>` : '<span></span>'}${
+                errores.length && ctx.descargarHallazgos
+                  ? '<button type="button" class="ve-limpiar ve-descargar" data-descargar-hallazgos title="Baja los hallazgos en un Excel para guardarlos como registro">⬇ Descargar hallazgos (Excel)</button>'
+                  : ''
+              }</div>`
+            : ''
+        }
         ${
           graves
             ? `<div class="ve-grave-aviso" role="alert"><span class="ve-grave-icono" aria-hidden="true">!</span><span><strong>El control terminó con ${graves === 1 ? 'un error grave' : `${graves} errores graves`}.</strong> Hasta corregirlo, el resultado no es confiable.</span></div>`
@@ -2145,6 +2102,27 @@ export function mostrarVentanaDeErrores(
         filtro.cliente = null;
         filtrar();
       });
+      // «Descargar hallazgos»: del cliente elegido arriba, o de todos.
+      const botonDescargar = popup.querySelector<HTMLButtonElement>('[data-descargar-hallazgos]');
+      const textoDescargar = () => {
+        if (botonDescargar) botonDescargar.textContent = filtro.cliente || unSoloCliente ? '⬇ Descargar hallazgos (Excel)' : '⬇ Descargar hallazgos de todos (Excel)';
+      };
+      botonDescargar?.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        if (!contexto.descargarHallazgos) return;
+        botonDescargar.disabled = true;
+        try {
+          await contexto.descargarHallazgos(filtro.cliente);
+          avisoMail('Se descargó el Excel con los hallazgos.');
+        } catch {
+          avisoMail('No se pudo descargar el Excel de los hallazgos.', 'error');
+        } finally {
+          botonDescargar.disabled = false;
+        }
+      });
+      for (const t of tarjetas) t.addEventListener('click', textoDescargar);
+      popup.querySelector('[data-limpiar]')?.addEventListener('click', textoDescargar);
+      textoDescargar();
       // Al abrir: si hay errores en lo que se ve, se empieza por ellos.
       if (!conTarjetas || filtro.cliente) priorizarError();
       filtrar();
@@ -2313,4 +2291,99 @@ export function mostrarVentanaDeErrores(
     showClass: { popup: '', backdrop: 'swal2-backdrop-show', icon: '' },
     hideClass: { popup: '', backdrop: '', icon: '' },
   });
+}
+
+// --- «Descargar hallazgos»: lo mismo que la ventana, en filas para un Excel sin estilos ---
+
+export type CeldaRegistro = string | number | null;
+
+/** Un hallazgo como se ve en la ventana: insignia, título, qué hacer, detalle y su tabla. */
+export interface BloqueRegistro {
+  cliente: string;
+  operacion: string;
+  insignia: string;
+  titulo: string;
+  que_hacer: string;
+  detalle: string;
+  columnas: string[];
+  filas: CeldaRegistro[][];
+}
+
+function numeroORaya(v: CeldaVista['valor'] | undefined): CeldaRegistro {
+  if (v === null || v === undefined || v === '') return '-';
+  return aNumero(v) ?? String(v);
+}
+
+function insigniaDe(e: Advertencia): string {
+  if (e.tipo === 'total_no_cierra' && e.gravedad !== 'info') return 'A revisar';
+  const clase = claseDe(e);
+  return clase === 'grave' ? 'Grave' : clase === 'aviso' ? 'A revisar' : clase === 'info' ? 'Info' : 'Error';
+}
+
+/** Las filas de un hallazgo: «Letra distinta» trae ARCA y Xubio juntas. */
+function filasRegistro(e: Advertencia): { origen: 'ARCA' | 'Xubio'; celdas: CeldaVista[]; nota: string }[] {
+  return e.comprobantes.flatMap((c) =>
+    'fila_arca' in c
+      ? [
+          { origen: 'ARCA' as const, celdas: c.fila_arca ?? [], nota: '' },
+          { origen: 'Xubio' as const, celdas: c.fila_xubio ?? [], nota: '' },
+        ]
+      : [{ origen: c.origen === 'arca' ? ('ARCA' as const) : ('Xubio' as const), celdas: c.fila ?? [], nota: c.motivo ? (NOTA_MOTIVO[c.motivo]?.texto ?? '') : '' }],
+  );
+}
+
+function tablaRegistro(e: Advertencia): { columnas: string[]; filas: CeldaRegistro[][] } {
+  const filas = filasRegistro(e);
+  if (!filas.length) return { columnas: [], filas: [] };
+  if (e.tipo === 'total_no_cierra') {
+    // Igual que la grilla de la ventana: cada alícuota y lo que suma, el total, la diferencia y Xubio.
+    const partes = filas[0].celdas.map((c) => c.columna).filter((c) => COLUMNA_QUE_SUMA.test(c.trim()));
+    return {
+      columnas: ['Fecha', 'Comprobante', 'Razón social', ...partes, 'Imp. Total', 'Diferencia', 'En Xubio'],
+      filas: filas.map(({ celdas }) => {
+        const d = normalizar(celdas);
+        const v: Record<string, CeldaVista['valor']> = {};
+        for (const c of celdas) v[c.columna] = c.valor;
+        const xubio = v['Total Xubio'];
+        return [
+          texto(d.Fecha), texto(d.Comprobante), texto(d['Razón social']),
+          ...partes.map((p) => (v[p] ? numeroORaya(v[p]) : '-')),
+          numeroORaya(d.Total), numeroORaya(v['Diferencia']),
+          xubio === null || xubio === undefined ? 'No está' : numeroORaya(xubio),
+        ];
+      }),
+    };
+  }
+  const conOrigen = new Set(filas.map((f) => f.origen)).size > 1;
+  const conNota = filas.some((f) => f.nota);
+  return {
+    columnas: [...(conOrigen ? ['Origen'] : []), 'Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', ...(conNota ? ['Observación'] : []), 'Total'],
+    filas: filas.map((f) => {
+      const d = normalizar(f.celdas);
+      return [
+        ...(conOrigen ? [f.origen] : []),
+        texto(d.Fecha), abreviarTipo(texto(d.Tipo)), texto(d.Comprobante), cuit(d.CUIT), texto(d['Razón social']),
+        ...(conNota ? [f.nota] : []),
+        numeroORaya(d.Total),
+      ];
+    }),
+  };
+}
+
+/** Los hallazgos (del cliente elegido o de todos) como se ven en la ventana, para el Excel. */
+export function registroDeHallazgos(errores: readonly Advertencia[], cliente: string | null = null): BloqueRegistro[] {
+  return ordenarHallazgos(errores.filter((e) => !cliente || e.cliente === cliente))
+    .sort((a, b) => a.cliente.localeCompare(b.cliente))
+    .map((e) => {
+      const n = e.total;
+      return {
+        cliente: e.cliente,
+        operacion: e.operacion ?? '',
+        insignia: insigniaDe(e),
+        titulo: `${e.titulo}${n ? ` (${plural(n, 'comprobante', 'comprobantes')})` : ''}`,
+        que_hacer: ordenDe(e)?.orden ?? '',
+        detalle: e.detalle,
+        ...tablaRegistro(e),
+      };
+    });
 }

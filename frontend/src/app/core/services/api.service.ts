@@ -3,6 +3,7 @@ import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido, LecturaExcel, Verificacion } from '../models';
+import type { BloqueRegistro } from '../../features/ejecucion/ventana-errores';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -131,6 +132,11 @@ export class ApiService {
   /** Las partidas de ARCA no encontradas en el Libro IVA, leídas de la hoja «Faltantes» de cada AUX. */
   faltantes(id: string, indice: number): Promise<FaltantesExcel> {
     return firstValueFrom(this.http.get<FaltantesExcel>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes`));
+  }
+
+  /** Los hallazgos del control en un .xlsx, como registro; con cliente, solo los suyos. */
+  hallazgosExcel(id: string, cliente: string | null, bloques: BloqueRegistro[]): Promise<{ nombre: string; contenido: string }> {
+    return firstValueFrom(this.http.post<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/hallazgos-excel`, { cliente, bloques }));
   }
 
   /** Las partidas de ARCA no encontradas en un .xlsx (formato «Mis Comprobantes»), para adjuntar al mail. */
