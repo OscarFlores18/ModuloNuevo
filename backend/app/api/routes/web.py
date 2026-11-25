@@ -27,6 +27,7 @@ from ...auditor.csv_arca import (
     convertir_auxiliares,
     datos_del_nombre,
     excel_de,
+    excel_errores,
     filas_para_mostrar,
     leer_faltantes_de_control,
     libro_sin_arca,
@@ -724,6 +725,36 @@ def faltantes_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str | N
     cliente = ej.clientes[indice].nombre
     nombre = f"{PREFIJO_CSV} - {cliente}" + (f" - {periodo}" if periodo else "") + ".xlsx"
     return {"nombre": nombre, "contenido": base64.b64encode(excel_de(tablas)).decode("ascii")}
+
+
+@router.get("/ejecuciones/{ejecucion_id}/clientes/{indice}/errores-excel")
+def errores_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str) -> dict:
+    """«Descargar errores Excel» (bloque «A revisar» de la ventana de hallazgos): las
+    partidas del Libro IVA no encontradas en ARCA de ese cliente y operación, leídas
+    del AUX con `libro_sin_arca` (solo lectura: el AUX no se toca), en un .xlsx.
+    {nombre, contenido (base64)}; 404 si no hay partidas."""
+    if operacion not in ("Ventas", "Compras"):
+        raise HTTPException(status_code=422, detail={"mensaje": "Operación desconocida."})
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        if not 0 <= indice < len(ej.clientes):
+            raise ejecuciones_srv.ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
+        nombre_aux = _aux_activos([a["nombre"] for a in ej.clientes[indice].archivos]).get(operacion)
+        ruta = ejecuciones_srv.ruta_archivo(ej, indice, nombre_aux) if nombre_aux else None
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    try:
+        filas = libro_sin_arca(ruta, operacion) if ruta else []
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"mensaje": f"No se pudo leer el AUX de {operacion}: {exc}"}) from exc
+    if not filas:
+        raise HTTPException(status_code=404, detail={"mensaje": f"No hay partidas del Libro IVA de {operacion} no encontradas en ARCA."})
+    nombre = f"Errores - {operacion} - {ej.clientes[indice].nombre}.xlsx"
+    try:
+        contenido = excel_errores(filas, operacion)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail={"mensaje": f"No se pudo armar el Excel de errores: {exc}"}) from exc
+    return {"nombre": nombre, "contenido": base64.b64encode(contenido).decode("ascii")}
 
 
 class CambioElegido(BaseModel):

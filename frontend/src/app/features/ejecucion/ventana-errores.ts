@@ -755,6 +755,12 @@ export interface ContextoVentana {
    * (formato «Mis Comprobantes») para adjuntarlo; con operación, solo esa.
    */
   descargarExcelFaltantes?: (cliente: string, operacion: string | null) => Promise<void>;
+  /**
+   * «Descargar errores Excel» (bloque «A revisar»): descarga el .xlsx de las partidas del
+   * Libro IVA no encontradas en ARCA de ese cliente y operación. Devuelve el nombre del
+   * archivo, o null si no hay partidas (no se descarga nada).
+   */
+  descargarErroresExcel?: (cliente: string, operacion: string) => Promise<string | null>;
 }
 
 /**
@@ -1055,7 +1061,7 @@ export async function copiarMailConFormato(m: Pick<MailArmado, 'html' | 'texto'>
 }
 
 /** Aviso discreto abajo a la derecha, por encima de la ventana de hallazgos. */
-export function avisoMail(texto: string, tipo: 'ok' | 'error' = 'ok'): HTMLElement {
+export function avisoMail(texto: string, tipo: 'ok' | 'error' | 'info' = 'ok'): HTMLElement {
   document.querySelector('.ve-aviso-mail')?.remove();
   const aviso = document.createElement('div');
   aviso.className = 've-aviso-mail';
@@ -1064,7 +1070,7 @@ export function avisoMail(texto: string, tipo: 'ok' | 'error' = 'ok'): HTMLEleme
   aviso.style.cssText =
     'position:fixed;right:20px;bottom:20px;z-index:2000;max-width:min(420px,calc(100vw - 40px));padding:12px 16px;' +
     'border-radius:10px;font:600 14px/1.4 system-ui,sans-serif;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);' +
-    `background:${tipo === 'ok' ? '#15803d' : '#b91c1c'}`;
+    `background:${tipo === 'ok' ? '#15803d' : tipo === 'info' ? '#334155' : '#b91c1c'}`;
   document.body.appendChild(aviso);
   setTimeout(() => aviso.remove(), 6000);
   return aviso;
@@ -1132,6 +1138,22 @@ function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail, conOpera
   return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" title="${esc(ayuda)}">${texto}</a>`;
 }
 
+/** Ícono de planilla con flecha de descarga (para «Descargar errores Excel»). */
+const ICONO_EXCEL =
+  '<svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/><path d="M12 12v6"/><path d="m9 15 3 3 3-3"/></svg>';
+
+/**
+ * «Descargar errores Excel» del bloque «A revisar»: baja las partidas del Libro IVA no
+ * encontradas en ARCA de esa operación. Sin la función en el contexto (sin control), no va.
+ */
+function botonErroresExcel(cliente: string, op: string, canEdit: boolean, conOperacion: boolean): string {
+  if (!contexto.descargarErroresExcel) return '';
+  const texto = `${ICONO_EXCEL}<span data-texto>Descargar errores Excel${conOperacion ? ` · ${esc(op)}` : ''}</span>`;
+  if (!canEdit) return `<button type="button" class="ve-boton ve-boton-excel" disabled title="${BLOQUEADO}">${texto}</button>`;
+  const ayuda = `Descarga un Excel con las partidas del Libro IVA de ${op} no encontradas en ARCA (fecha, tipo, comprobante, CUIT, razón social y total)`;
+  return `<button type="button" class="ve-boton ve-boton-excel" data-errores-excel data-cliente="${esc(cliente)}" data-op="${esc(op)}" title="${esc(ayuda)}">${texto}</button>`;
+}
 
 function destinoDe(accion: string, canEdit: boolean): { href: string } | null {
   const a = accion.toLowerCase();
@@ -1326,20 +1348,22 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
   // mail de las dos, o una operación, con sus filas y su mail.
   const separar = porOp.size > 1;
   const todas = tablaRevisar(grupos, true);
+  // Debajo de cada mail, «Descargar errores Excel» de esa operación (en «Todos», de cada una).
+  const excelDe = (op: string) => botonErroresExcel(cliente, op, marcado.canEdit, separar);
   const mailTodos =
     separar && todas.datos.length
       ? `<span class="ve-mail-op" data-op-mail="">${botonMail(
           { ...(porOp.values().next().value!.adv ?? faltanteDesdeExcel(cliente, ops[0], n)), tipo: 'faltante_en_arca', cliente, operacion: null } as Advertencia,
           marcado.canEdit,
           todas,
-        )}</span>`
+        )}${[...porOp.keys()].map(excelDe).join('')}</span>`
       : '';
   const mails = mailTodos + [...porOp]
     .map(([op, { n: k, adv }]) => {
       const tabla = tablaRevisar(grupos.filter((g) => g.filas[0].op === op));
       if (!tabla.datos.length) return '';
       const a: Advertencia = { ...(adv ?? faltanteDesdeExcel(cliente, op, k)), tipo: 'faltante_en_arca', cliente, operacion: op };
-      const boton = botonMail(a, marcado.canEdit, tabla, separar);
+      const boton = botonMail(a, marcado.canEdit, tabla, separar) + excelDe(op);
       return separar ? `<span class="ve-mail-op" data-op-mail="${op}" hidden>${boton}</span>` : boton;
     })
     .join('');
@@ -1361,7 +1385,7 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
           <span class="ve-titulo">Partidas del ${esc(libroDe(ops))} no encontradas en ARCA${cantidadTexto(n)}</span>
           <span class="ve-que-hacer">${queHacer}</span>
         </span>
-        <span class="ve-derecha">${meta}${mails ? `<span class="ve-acciones">${mails}</span>` : ''}${plegar(n)}</span>
+        <span class="ve-derecha">${meta}${mails ? `<span class="ve-acciones ve-acciones-revisar">${mails}</span>` : ''}${plegar(n)}</span>
       </summary>
       <div class="ve-cuerpo">${pills}${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
     </details>`;
@@ -1410,9 +1434,14 @@ function bloqueError(items: readonly Advertencia[], marcado: Marcado): string {
 }
 
 /** Lo que no es un comprobante (ARCA vacío, un paso que falló…): una tarjeta suelta, arriba. */
+/** Las columnas de «Mis Comprobantes» que forman el Imp. Total (como `COLUMNAS_QUE_SUMAN` en cruce_fo.py). */
+const COLUMNAS_QUE_SUMAN = new Set(['neto gravado total', 'neto no gravado', 'op. exentas', 'otros tributos', 'total iva']);
+
 /**
  * «Las columnas no suman el total»: cada factura tal cual está en el Excel de
- * ARCA («Mis Comprobantes»): sus columnas y sus títulos, sin columnas calculadas.
+ * ARCA («Mis Comprobantes»), sin columnas calculadas. Para que se vea de un
+ * golpe: las columnas que se suman van agrupadas con «+», el Imp. Total con «≠»
+ * y en naranja, y debajo cuánto quedó sin discriminar (no es una columna).
  */
 function grillaSuma(e: Advertencia): string {
   const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f);
@@ -1420,23 +1449,59 @@ function grillaSuma(e: Advertencia): string {
   const columnas = filas[0].fila.map((c) => c.columna);
   const numerica = (col: string) => filas.some((f) => typeof f.fila.find((c) => c.columna === col)?.valor === 'number');
   const esNum = columnas.map((c) => numerica(c) && c !== 'Nro. Doc.');
-  const cab = columnas.map((c, i) => `<th${esNum[i] ? ' class="num"' : ''}>${esc(c)}</th>`).join('');
+  const suma = columnas.map((c) => COLUMNAS_QUE_SUMAN.has(c.trim().toLowerCase()));
+  const esTotal = columnas.map((c) => c === 'Imp. Total');
+  const nSuman = suma.filter(Boolean).length;
+  const primeraSuma = suma.indexOf(true);
+  const conGrupos = nSuman > 0 && esTotal.includes(true);
+  // Fila de grupos: «Comprobante» | «Lo que ARCA discrimina (se suma)» | «Total».
+  const grupos = conGrupos
+    ? `<tr class="ve-suma-grupos">${columnas
+        .map((_, i) => {
+          if (suma[i]) return i === primeraSuma ? `<th colspan="${nSuman}" class="g-suma">Lo que ARCA discrimina (se suma)</th>` : '';
+          if (esTotal[i]) return '<th class="g-total">Total</th>';
+          return '<th></th>';
+        })
+        .join('')}</tr>`
+    : '';
+  const cab = columnas
+    .map((c, i) => {
+      const signo = suma[i] && i !== primeraSuma ? '<span class="ve-signo">+</span>' : esTotal[i] && conGrupos ? '<span class="ve-signo ve-distinto">≠</span>' : '';
+      const clase = [esNum[i] ? 'num' : '', suma[i] ? 'c-suma' : '', esTotal[i] && conGrupos ? 'c-total' : ''].filter(Boolean).join(' ');
+      return `<th${clase ? ` class="${clase}"` : ''}>${signo}${esc(c)}</th>`;
+    })
+    .join('');
   const cuerpo = filas
     .map((f) => {
       const v: Record<string, CeldaVista['valor']> = {};
       for (const c of f.fila) v[c.columna] = c.valor;
+      const sumado = columnas.reduce((t, c, i) => t + (suma[i] ? (aNumero(v[c]) ?? 0) : 0), 0);
+      const total = aNumero(v['Imp. Total']);
+      const falta = total === null ? null : Math.round((total - sumado) * 100) / 100;
       const celdas = columnas
         .map((col, i) => {
           const valor = v[col];
-          if (esNum[i]) return `<td class="num">${esc(importe(valor))}</td>`;
+          if (esTotal[i] && conGrupos) {
+            const nota = falta ? `<span class="ve-falta">sin discriminar ${esc(pesos(falta))}</span>` : '';
+            return `<td class="num c-total" title="${esc(`Las columnas suman ${pesos(sumado)}`)}">${esc(importe(valor))}${nota}</td>`;
+          }
+          if (esNum[i]) {
+            const cero = (aNumero(valor) ?? 0) === 0;
+            return `<td class="num${suma[i] ? ' c-suma' : ''}${cero ? ' ve-cero' : ''}">${esc(importe(valor))}</td>`;
+          }
           if (col === 'Nro. Doc.') return `<td>${esc(cuit(valor))}</td>`;
-          return `<td${col === 'Comprobante' ? ' class="comp"' : ''}>${esc(texto(valor))}</td>`;
+          // Tipo y denominación pueden ir en dos líneas; fecha y comprobante, no.
+          const clase = col === 'Comprobante' ? 'comp' : col === 'Fecha' ? '' : 've-texto';
+          return `<td${clase ? ` class="${clase}"` : ''}>${esc(texto(valor))}</td>`;
         })
         .join('');
       return `<tr>${celdas}</tr>`;
     })
     .join('');
-  return `<div class="ve-grilla"><table><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
+  const leyenda = conGrupos
+    ? '<p class="ve-suma-leyenda">Las columnas en celeste <b>no llegan</b> al Imp. Total. Lo que falta (en naranja) es lo que ARCA no discrimina.</p>'
+    : '';
+  return `${leyenda}<div class="ve-grilla ve-suma"><table><thead>${grupos}<tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
 }
 
 /** El filtro de estado de una tarjeta suelta: la misma insignia que muestra. */
@@ -1588,6 +1653,12 @@ const ESTILOS = `
     .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
     .ve-boton-chico { background: #15803d; box-shadow: 0 2px 8px rgba(21, 128, 61, 0.25); }
     .ve-boton-chico:hover:not(:disabled) { background: #166534; }
+    /* «A revisar»: «Consultar al cliente» y, debajo, «Descargar errores Excel», a la derecha. */
+    .ve-acciones-revisar, .ve-acciones-revisar > [data-op-mail] { flex-direction: column; align-items: stretch; flex-wrap: nowrap; }
+    .ve-acciones-revisar .ve-boton { min-width: 230px; }
+    .ve-boton-excel { background: #15803d; box-shadow: 0 2px 8px rgba(21, 128, 61, 0.25); }
+    .ve-boton-excel:hover:not(:disabled) { background: #166534; }
+    .ve-boton-excel[aria-busy="true"] { cursor: progress; opacity: .8; }
     .ve-boton:disabled { background: #cbd5e1; color: #f8fafc !important; cursor: not-allowed; box-shadow: none; }
     .ve-plegar { display: inline-flex; align-items: center; min-height: 36px; padding: 4px 12px; border: 1px solid #dbe3ee; border-radius: 8px; background: #fff; font-size: 13.5px; font-weight: 700; color: #1d4ed8; white-space: nowrap; }
     .ve-error summary:hover .ve-plegar { border-color: #2563eb; background: #eff6ff; }
@@ -1677,6 +1748,26 @@ const ESTILOS = `
     .ve-grilla td.marca.error { background: #fdeaea; box-shadow: inset 0 0 0 1.5px #c53030; }
     .ve-grilla td.marca.ok { background: #e7f5ec; box-shadow: inset 0 0 0 1.5px #15803d; }
     .ve-grilla td.marca.aviso { background: #fff7e6; }
+    /* «Las columnas no suman el total»: grupos, signos y lo que falta. */
+    .ve-suma-leyenda { margin: 0 0 8px; font-size: 13px; color: #475569; }
+    .ve-grilla.ve-suma { overflow-x: auto; }
+    .ve-grilla.ve-suma table { table-layout: auto; font-size: 13px; }
+    .ve-grilla.ve-suma th, .ve-grilla.ve-suma td { overflow: visible; padding-left: 8px; padding-right: 8px; }
+    /* Que entre entera (con el Imp. Total a la vista): los encabezados largos van en dos líneas. */
+    .ve-grilla.ve-suma table { word-break: normal; overflow-wrap: normal; }
+    .ve-grilla.ve-suma thead th { white-space: normal; vertical-align: bottom; line-height: 1.25; }
+    .ve-grilla.ve-suma td.ve-texto { white-space: normal; min-width: 70px; }
+    .ve-grilla.ve-suma td.c-total { min-width: 112px; }
+    .ve-grilla.ve-suma tr.ve-suma-grupos th { font-size: 11px; text-transform: uppercase; letter-spacing: .03em; padding: 5px 10px; border-bottom: 0; background: #fff; }
+    .ve-grilla.ve-suma th.g-suma { background: #e0f2fe; color: #075985; text-align: center; border-radius: 6px 6px 0 0; }
+    .ve-grilla.ve-suma th.g-total { background: #ffedd5; color: #9a3412; text-align: center; border-radius: 6px 6px 0 0; }
+    .ve-grilla.ve-suma th.c-suma, .ve-grilla.ve-suma td.c-suma { background: #f0f9ff; }
+    .ve-grilla.ve-suma th.c-total { background: #ffedd5; color: #9a3412; }
+    .ve-grilla.ve-suma td.c-total { background: #fff7ed; font-weight: 700; color: #9a3412; box-shadow: inset 2px 0 0 #fb923c; }
+    .ve-grilla.ve-suma td.ve-cero { color: #94a3b8; }
+    .ve-signo { display: inline-block; margin-right: 5px; color: #0284c7; font-weight: 800; }
+    .ve-signo.ve-distinto { color: #c2410c; }
+    .ve-falta { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 600; color: #c2410c; white-space: normal; }
     /* La corrección en una sola línea (el importe con su diferencia incluido). */
     .ve-grilla td.corr { white-space: nowrap; text-overflow: clip; vertical-align: middle; background: #fffafa; border-left: 1px solid #e2e8f0; font-size: 12.5px; font-weight: 600; line-height: 1.9; }
     .ve-corr-et { color: #475569; }
@@ -1712,6 +1803,8 @@ const ESTILOS = `
       .ve-cab { flex-basis: 100%; }
       .ve-derecha { width: 100%; justify-content: flex-start; }
       .ve-metas { justify-content: flex-start; }
+      .ve-acciones-revisar, .ve-acciones-revisar > [data-op-mail] { align-items: stretch; width: 100%; }
+      .ve-acciones-revisar .ve-boton { min-width: 0; white-space: normal; }
       /* En pantallas angostas la CUIT cede su lugar (está en el Excel de la auditoría). */
       .ve-grilla col.c-cuit { width: 0; }
       .ve-grilla td.cuit, .ve-grilla th.h-cuit { padding: 0; }
@@ -1850,6 +1943,30 @@ function grupoDeBotones(botones: NodeListOf<HTMLButtonElement>, atributo: 'aria-
  * `canEdit` false (vista Empleado): los botones de resolución quedan deshabilitados y
  * «Volver a correr» pasa a ser una etiqueta (no hay Nuevo control).
  */
+/** Clic en «Descargar errores Excel»: descarga, avisa y evita el doble clic. */
+export async function descargarErrores(boton: HTMLButtonElement): Promise<void> {
+  const descargar = contexto.descargarErroresExcel;
+  if (!descargar || boton.disabled || boton.getAttribute('aria-busy') === 'true') return;
+  const cliente = boton.dataset['cliente'] ?? '';
+  const op = boton.dataset['op'] ?? '';
+  const etiqueta = boton.querySelector<HTMLElement>('[data-texto]');
+  const antes = etiqueta?.textContent ?? '';
+  boton.disabled = true;
+  boton.setAttribute('aria-busy', 'true');
+  if (etiqueta) etiqueta.textContent = 'Descargando…';
+  try {
+    const nombre = await descargar(cliente, op);
+    if (nombre) avisoMail(`Se descargó «${nombre}».`);
+    else avisoMail(`${cliente} no tiene partidas del Libro IVA de ${op} sin encontrar en ARCA: no hay nada para descargar.`, 'info');
+  } catch (e) {
+    avisoMail(`No se pudo descargar el Excel de errores: ${e instanceof Error ? e.message : 'probá de nuevo'}.`, 'error');
+  } finally {
+    boton.disabled = false;
+    boton.removeAttribute('aria-busy');
+    if (etiqueta) etiqueta.textContent = antes;
+  }
+}
+
 export function mostrarVentanaDeErrores(
   errores: readonly Advertencia[],
   resumenes: readonly ResumenOperacion[] = [],
@@ -2164,6 +2281,13 @@ export function mostrarVentanaDeErrores(
             avisoMail('No se pudo descargar el Excel de las partidas para adjuntar.', 'error'),
           );
         }
+      });
+      // «Descargar errores Excel»: uno a la vez por botón, con «Descargando…» mientras tanto.
+      popup.addEventListener('click', (ev) => {
+        const boton = (ev.target as HTMLElement).closest<HTMLButtonElement>('button[data-errores-excel]');
+        if (!boton) return;
+        ev.preventDefault(); // está en el <summary>: que no pliegue el bloque
+        void descargarErrores(boton);
       });
       // Copia rápida: clic en el comprobante o la CUIT.
       popup.addEventListener('click', (ev) => {
