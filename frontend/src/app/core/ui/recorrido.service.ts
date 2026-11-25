@@ -18,6 +18,10 @@ const RECORRIDOS: Record<string, PasoRecorrido[]> = {
   ],
   ejecuciones: [
     { objetivo: 'estado', titulo: 'El control', texto: 'Qué mes, cuándo empezó, cuántos clientes y comprobantes. Mientras corre ves quién se está procesando y cuánto falta.' },
+    { objetivo: 'hallazgos', titulo: 'Ver todos los hallazgos', texto: 'Abre la ventana con todo lo que encontró el control, por cliente y operación. Arriba, las tarjetas filtran por cliente o por estado. Cada bloque dice qué hacer: «Subir a Xubio» (de ARCA y no está en el libro; las liquidaciones bancarias vienen destildadas con un aviso, porque ya están en Xubio dentro del extracto del banco), «A revisar» (del libro y no está en ARCA) y «Error» (está en los dos pero distinto: tildalo y «Aplicar cambios» lo corrige con el dato de ARCA). Clic en un comprobante o CUIT la copia.' },
+    { objetivo: 'hallazgos', titulo: 'Consultar al cliente', texto: 'En «A revisar», «✉ Consultar al cliente» abre Gmail con el mail ya armado (saludo, tabla de comprobantes y período) al mail cargado en el cliente. Si la app corre en esta PC, también pega la tabla sola. En «Subir a Xubio», «Pedir que las carguen» adjunta el Excel de lo que falta.' },
+    { objetivo: 'hallazgos', titulo: 'Las columnas no suman el total', texto: 'Las facturas de ARCA donde neto + IVA + no gravado + exento + otros tributos no da el Imp. Total. Se ven el neto y el IVA de cada alícuota que usa (21%, 10,5%…), el Imp. Total, la Diferencia (lo que ARCA no discrimina) y En Xubio: verde si Xubio tiene el total bien, rojo si no, «No está» si falta.' },
+    { objetivo: 'hallazgos', titulo: 'Descargar hallazgos', texto: 'Abajo de la ventana, «⬇ Descargar hallazgos (Excel)» baja todos los avisos tal como se ven, para guardarlos como registro: del cliente que elegiste arriba o, sin elegir, de todos.' },
     { objetivo: 'tareas', titulo: 'Qué hay que hacer', texto: 'Al terminar, esta pestaña es lo primero: las tareas en orden. Lo que falta en Xubio se sube con «⬆ Subir a Xubio» (destildá lo que no va); los errores de carga se corrigen con «Aplicar cambios». El número es lo que queda por hacer.' },
     { objetivo: 'clientes-ej', titulo: 'Clientes y archivos', texto: 'Cada cliente con sus pasos (ARCA, Xubio, auditoría), el Excel del control para descargar y lo que bajaron los bots.' },
     { objetivo: 'historial', titulo: 'Historial', texto: 'Los controles anteriores, por día y con sus clientes. Buscá por cliente o mes; con el tachito lo sacás de la lista (los Excel quedan en las carpetas).' },
@@ -26,8 +30,15 @@ const RECORRIDOS: Record<string, PasoRecorrido[]> = {
     { objetivo: 'elegir', titulo: '1. Elegí los Excel del control', texto: 'Lo más fácil: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel «AUX - Control de facturas…» que dejó el control en la carpeta del cliente.' },
     { objetivo: 'resultado', titulo: 'Subilos a Xubio', texto: 'Revisá los comprobantes, confirmá la empresa y tocá «Subir a Xubio»: el bot carga el archivo en Xubio, aprieta «Importar» y te avisa lo que contestó Xubio. Si preferís, descargá el archivo y lo importás a mano.' },
   ],
+  'pasar-a-excel': [
+    { objetivo: 'ax-archivos', titulo: '1. Subí los archivos', texto: 'Arrastrá o elegí fotos de celular, capturas, PDF (de ARCA, de Xubio o escaneados), CSV o XLS. Si subís varios, arriba aparece uno por pestaña. Las fotos se leen con OCR en español: andá más derecho y con buena luz para que lea mejor.' },
+    { objetivo: 'ax-verificar', titulo: '2. Verificá lo que leí', texto: 'A la izquierda el archivo, a la derecha lo leído, que podés editar: emisor y receptor con su CUIT, tipo, número, fecha, CAE, importes y el detalle. Arriba, los controles: en rojo lo que seguro está mal (CUIT que no pasa el dígito verificador, importes que no suman el total, detalle que no da el neto); en amarillo lo que conviene mirar (lo que cada lectura dio distinto).' },
+    { objetivo: 'ax-verificar', titulo: 'Correcciones sugeridas', texto: 'Cuando las cuentas dan el valor correcto (por ejemplo, el lector confundió un 9 con un 3 en el IVA), aparece «Usar …»: un clic y queda corregido. Los importes en 0 nunca se tocan.' },
+    { objetivo: 'ax-generar', titulo: '3. Generar Excel', texto: 'Arma el .xlsx con el encabezado, los importes y el detalle. Si quedan errores sin corregir te avisa, pero lo podés generar igual.' },
+  ],
   clientes: [
     { objetivo: 'nuevo-cliente', titulo: 'Nuevo cliente', texto: 'Cargá el nombre tal como figura en Xubio, la CUIT con la que se entra a ARCA, la clave fiscal y la CUIT de la empresa que se controla.' },
+    { objetivo: 'json-clientes', titulo: 'Cargar desde JSON', texto: 'Para cargar muchos de una vez: pegá el JSON de clientes (el formato del config.json). Mientras escribís muestra cuántos detectó, cuáles son nuevos y cuáles ya existen (a esos se les actualizan los datos de ARCA, no se duplican). Con «Cargar» se guardan.' },
     { objetivo: 'lista-clientes', titulo: 'Listado', texto: 'Tocá un cliente para editarlo. «Faltan» quiere decir que le faltan datos para correr el control.' },
   ],
 };

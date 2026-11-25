@@ -185,7 +185,7 @@ import { leerClientesJson } from './clientes-json';
 
     <!-- Pegar clientes en JSON (formato del config.json): se ve qué detectó y se guarda con «Cargar». -->
     <ng-template #cuadroJson>
-      <section class="mf-panel cl-json" aria-labelledby="t-json">
+      <section class="mf-panel cl-json" aria-labelledby="t-json" data-tour="json-clientes">
         <header class="cl-json-cab">
           <span class="cl-json-icono" aria-hidden="true">{{ '{ }' }}</span>
           <div>

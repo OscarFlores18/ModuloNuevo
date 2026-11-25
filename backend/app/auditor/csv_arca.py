@@ -507,52 +507,6 @@ def excel_de(tablas: dict[str, pd.DataFrame]) -> bytes:
     return buffer.getvalue()
 
 
-# Las partidas del Libro IVA no encontradas en ARCA («A revisar» en la ventana de
-# hallazgos), para bajarlas en un .xlsx: (encabezado, clave de `libro_sin_arca`, ancho).
-COLUMNAS_ERRORES = (
-    ("Fecha", "fecha", 12),
-    ("Tipo", "tipo", 26),
-    ("Comprobante", "comprobante", 20),
-    ("CUIT", "cuit", 14),
-    ("Razón social", "razon", 40),
-    ("Total", "total", 16),
-)
-
-
-def excel_errores(filas: list[dict], operacion: str) -> bytes:
-    """Un .xlsx con las filas de `libro_sin_arca` tal cual: la fecha como fecha, el
-    comprobante y la CUIT como texto (no pierden los ceros de adelante) y el total
-    como número. Sin columnas calculadas."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
-    from openpyxl.utils import get_column_letter
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = operacion
-    ws.append([c for c, _, _ in COLUMNAS_ERRORES])
-    for celda in ws[1]:
-        celda.font = Font(bold=True, color="FFFFFF")
-        celda.fill = PatternFill("solid", fgColor="15803D")
-    for f in filas:
-        fecha = f.get("fecha") or ""
-        m = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", str(fecha))
-        if m:
-            fecha = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-        ws.append([fecha, f.get("tipo") or "", f.get("comprobante") or "", f.get("cuit") or "",
-                   f.get("razon") or "", f.get("total")])
-    for i, (_, clave, ancho) in enumerate(COLUMNAS_ERRORES, start=1):
-        letra = get_column_letter(i)
-        ws.column_dimensions[letra].width = ancho
-        formato = {"fecha": "dd/mm/yyyy", "total": "#,##0.00"}.get(clave, "@")
-        for celda in ws[letra][1:]:
-            celda.number_format = formato
-    ws.freeze_panes = "A2"
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
-
-
 # --- Convertir AUX sueltos (pestaña «Convertir AUX») ------------------------------------
 #
 # Independiente de los controles: se suben los AUX, se convierten en memoria y se
