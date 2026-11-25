@@ -413,7 +413,8 @@ export interface Verificacion {
 export interface LecturaExcel {
   archivo: string;
   tipo: 'comprobante' | 'tabla';
-  metodo: 'planilla' | 'pdf' | 'ocr';
+  /** «ia»: imagen leída con Gemini. */
+  metodo: 'planilla' | 'pdf' | 'ocr' | 'ia';
   encabezado: Record<string, string>;
   items: ItemLeido[];
   totales: Record<string, number | null>;

@@ -96,6 +96,8 @@ $argumentos = @(
 )
 # Lectura de PDF (pypdfium2 trae su propia DLL de PDFium).
 $argumentos += @('--collect-all', 'pypdfium2', '--collect-all', 'pypdfium2_raw')
+# Imágenes del Conversor De Facturas con Gemini (se importa adentro de una función).
+$argumentos += @('--collect-submodules', 'google.genai')
 
 # OCR de fotos y PDF escaneados: Tesseract va adentro de la app (<_internal>\tesseract,
 # ver backend/app/extraccion/ocr.py). Se toma de vendor\tesseract o del Tesseract

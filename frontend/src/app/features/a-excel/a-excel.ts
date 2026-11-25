@@ -1,4 +1,4 @@
-import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, OnDestroy, computed, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { descargarBlob } from '../../core/descargar';
 import { ItemLeido, LecturaExcel, Verificacion, mensajeDeError } from '../../core/models';
@@ -94,26 +94,13 @@ import {
       bajada="Fotos, capturas, PDF, CSV o Excel viejo (.xls) a un Excel. Antes de armarlo te muestro lo que leí para que lo verifiques."
     />
 
-<<<<<<< HEAD
     <!-- Izquierda: elegir los archivos. Derecha: el archivo elegido, paso a paso. Abajo: corregir lo leído -->
     <div class="fx-grilla">
-      <section class="mf-panel" aria-labelledby="t-elegir">
+      <section class="mf-panel" aria-labelledby="t-elegir" data-tour="ax-archivos">
         <div class="fx-cab">
-          <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Se leen apenas los soltás. De las fotos se lee el texto con OCR (tres veces, para comparar); de los PDF digitales, su texto; de CSV y planillas, las celdas." /></h2>
+          <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Se leen apenas los soltás. Las fotos y capturas las lee la IA (Gemini) y, si no está disponible, el OCR; de los PDF digitales se lee su texto; de CSV y planillas, las celdas. Una captura también la podés pegar con Ctrl+V." /></h2>
           <p class="mf-sub m-0 mt-1">Facturas o tablas: fotos o capturas (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX. Hasta 20 por vez.</p>
         </div>
-=======
-    <section class="mf-panel" data-tour="ax-archivos">
-      <label class="zona" [class.encima]="encima()" (dragover)="$event.preventDefault(); encima.set(true)" (dragleave)="encima.set(false)" (drop)="soltar($event)">
-        <strong>Arrastrá los archivos acá o tocá para elegirlos</strong>
-        <span class="mf-sub">Foto o captura (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX · hasta 20 por vez</span>
-        <input type="file" multiple class="sr-only" [attr.accept]="acepta" (change)="elegir($event)" />
-        @if (leyendo()) {
-          <span class="inline-flex items-center gap-2 font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo… (las fotos tardan unos segundos: se leen tres veces para comparar)</span>
-        }
-      </label>
-      @if (error(); as err) { <app-alerta class="mt-3 block" nivel="error" [mensajes]="[err]" /> }
->>>>>>> 56de416a15944c1127d504bcf5bb507209b5ee8c
 
         <div class="fx-cuerpo">
           <div
@@ -158,10 +145,10 @@ import {
               </div>
             } @else if (leyendo()) {
               <span class="inline-flex items-center gap-2 font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</span>
-              <span class="mf-tenue text-sm">Las fotos tardan unos segundos: se leen tres veces para comparar.</span>
+              <span class="mf-tenue text-sm">Las fotos tardan unos segundos.</span>
             } @else {
               <span class="font-semibold">Arrastrá los archivos acá</span>
-              <span class="mf-tenue text-sm">Fotos, capturas, PDF, CSV o planillas</span>
+              <span class="mf-tenue text-sm">Fotos, capturas, PDF, CSV o planillas · una captura, pegala con Ctrl+V</span>
               <span class="mf-tenue text-sm">o</span>
               <label class="mf-btn mf-btn-suave cursor-pointer">
                 Elegir archivos
@@ -201,7 +188,7 @@ import {
                   <div class="min-w-0">
                     <h3>Revisá lo que leí</h3>
                     <p class="mf-sub m-0 mb-2">
-                      Leído {{ l.metodo === 'ocr' ? 'con OCR (de la imagen)' : l.metodo === 'pdf' ? 'del texto del PDF' : 'de la planilla' }}
+                      Leído {{ l.metodo === 'ia' ? 'con IA (Gemini) de la imagen' : l.metodo === 'ocr' ? 'con OCR (de la imagen)' : l.metodo === 'pdf' ? 'del texto del PDF' : 'de la planilla' }}
                       @if (verificando()) { · <span class="ej-spinner" aria-hidden="true"></span> verificando… }
                     </p>
                     <div class="fx-estado">
@@ -216,7 +203,7 @@ import {
                   <span class="fx-num" aria-hidden="true">2</span>
                   <div class="min-w-0">
                     <h3>Generá el Excel</h3>
-                    <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()">
+                    <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
                       @if (generando()) {
                         <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
                         Armando…
@@ -244,15 +231,8 @@ import {
     </div>
 
     @if (actual(); as l) {
-<<<<<<< HEAD
       @if (!l.error) {
-        <section class="mf-panel" id="ax-revision" aria-labelledby="ax-titulo">
-=======
-      <section class="mf-panel mt-4" aria-labelledby="ax-titulo" data-tour="ax-verificar">
-        @if (l.error) {
-          <app-alerta nivel="error" [mensajes]="[l.error]" />
-        } @else {
->>>>>>> 56de416a15944c1127d504bcf5bb507209b5ee8c
+        <section class="mf-panel" id="ax-revision" aria-labelledby="ax-titulo" data-tour="ax-verificar">
           <div class="ax-grilla" [class.sin-vista]="!vista()">
             @if (vista(); as v) {
               <div class="ax-vista" aria-label="El archivo original">
@@ -348,16 +328,6 @@ import {
                   <div class="ax-texto mt-2">{{ l.texto }}</div>
                 </details>
               }
-<<<<<<< HEAD
-=======
-
-              <div class="ax-pie">
-                @if (errores(l)) { <span class="text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</span> }
-                <button type="button" class="mf-btn" (click)="generar()" [disabled]="generando() || verificando()" data-tour="ax-generar">
-                  {{ generando() ? 'Armando…' : errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
-                </button>
-              </div>
->>>>>>> 56de416a15944c1127d504bcf5bb507209b5ee8c
             </div>
           </div>
         </section>
@@ -397,6 +367,23 @@ export class PasarAExcel implements OnDestroy {
   protected readonly errores = (l: LecturaExcel) => contar(l, 'error');
   protected readonly avisos = (l: LecturaExcel) => contar(l, 'aviso');
   protected readonly texto = aTexto;
+
+  /** Ctrl+V con una captura (o una imagen copiada) en cualquier lugar de la pantalla. */
+  @HostListener('document:paste', ['$event'])
+  protected pegar(e: ClipboardEvent): void {
+    const destino = e.target as HTMLElement | null;
+    // Pegar texto en un campo de la revisión sigue siendo pegar texto.
+    if (destino?.closest('input, textarea, [contenteditable]')) return;
+    const imagenes = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
+    if (!imagenes.length) return;
+    e.preventDefault();
+    const hora = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
+    const archivos = imagenes.map((f, i) => {
+      const ext = f.type === 'image/jpeg' ? 'jpg' : (f.type.split('/')[1] ?? 'png');
+      return new File([f], `Captura ${hora}${imagenes.length > 1 ? `-${i + 1}` : ''}.${ext}`, { type: f.type });
+    });
+    void this.leer(archivos);
+  }
 
   ngOnDestroy(): void {
     Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));

@@ -99,7 +99,8 @@ class Lectura(BaseModel):
 
     archivo: str = Field(default="", max_length=260)
     tipo: Literal["comprobante", "tabla"] = "tabla"
-    metodo: Literal["planilla", "pdf", "ocr"] = "planilla"
+    # «ia»: imagen leída con Gemini (ver gemini.py).
+    metodo: Literal["planilla", "pdf", "ocr", "ia"] = "planilla"
     encabezado: dict[str, str] = Field(default_factory=dict)
     items: list[Item] = Field(default_factory=list, max_length=2000)
     totales: dict[str, float | None] = Field(default_factory=dict)
@@ -475,8 +476,70 @@ def _imagen_a_lectura(nombre: str, imagen, lectura: Lectura) -> Lectura:
     return _desde_texto(lectura, pasadas)
 
 
+def _numero(v) -> float | None:
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return importe(v)
+
+
+def _entero(v) -> int | None:
+    digitos = re.sub(r"\D", "", str(v if v is not None else ""))
+    return int(digitos) if digitos else None
+
+
+def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
+    """El JSON de Gemini (ver gemini.PROMPT) a una Lectura, con los mismos formatos
+    que la lectura por OCR: así pasa por las mismas verificaciones."""
+    lectura.metodo = "ia"
+    lectura.texto = str(datos.get("texto") or "")[:400_000]
+    if str(datos.get("tipo") or "").lower() == "tabla" or not isinstance(datos.get("encabezado"), dict):
+        filas = [[_celda(c) for c in f] for f in (datos.get("filas") or []) if isinstance(f, list)]
+        lectura.tipo = "tabla"
+        lectura.hojas = [Hoja(nombre="Imagen", filas=filas[:MAX_FILAS])] if filas else [hoja_de_texto(lectura.texto)]
+        return lectura
+
+    g = datos.get("encabezado") or {}
+    e: dict[str, str] = {}
+    for rol in ("emisor", "receptor"):
+        if nombre := str(g.get(rol) or "").strip():
+            e[rol] = nombre[:200]
+        if cuit := re.sub(r"\D", "", str(g.get(f"{rol}_cuit") or "")):
+            e[f"{rol}_cuit"] = cuit
+    if (codigo := _entero(g.get("tipo_codigo"))) in TIPOS:
+        e["tipo"] = nombre_tipo(codigo)
+    pv, nro = _entero(g.get("punto_de_venta")), _entero(g.get("numero"))
+    if nro is not None:
+        e["numero"] = f"{pv or 0:05d}-{nro:08d}"
+    if f := str(g.get("fecha") or "").strip():
+        iso = fecha_iso(f)
+        e["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else f
+    if cae := re.sub(r"\D", "", str(g.get("cae") or "")):
+        e["cae"] = cae
+    lectura.tipo = "comprobante"
+    lectura.encabezado = e
+    lectura.items = [
+        Item(
+            codigo=str(x.get("codigo") or "")[:40],
+            descripcion=str(x.get("descripcion") or "")[:300],
+            cantidad=_numero(x.get("cantidad")),
+            precio=_numero(x.get("precio")),
+            alicuota=_numero(x.get("alicuota")),
+            importe=_numero(x.get("importe")),
+        )
+        for x in (datos.get("items") or [])[:2000]
+        if isinstance(x, dict)
+    ]
+    t = datos.get("totales") or {}
+    lectura.totales = {k: _numero(t.get(k)) for k in TOTALES}
+    return lectura
+
+
 def _leer_imagen(nombre: str, contenido: bytes) -> Lectura:
     from PIL import Image, ImageOps, UnidentifiedImageError
+
+    from . import gemini
 
     try:
         imagen = Image.open(io.BytesIO(contenido))
@@ -484,7 +547,22 @@ def _leer_imagen(nombre: str, contenido: bytes) -> Lectura:
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError(f"«{nombre}» no es una imagen válida.") from exc
     imagen = ImageOps.exif_transpose(imagen).convert("RGB")
-    return _imagen_a_lectura(nombre, imagen, Lectura(archivo=nombre))
+    lectura = Lectura(archivo=nombre)
+    # Con clave de Gemini, la lee la IA; si falla, el OCR de siempre.
+    if gemini.disponible():
+        try:
+            return _desde_gemini(lectura, gemini.leer_imagen(imagen))
+        except gemini.GeminiNoDisponible as exc:
+            lectura.avisos.append(f"{exc} Se leyó con OCR.")
+    else:
+        lectura = _imagen_a_lectura(nombre, imagen, lectura)
+        if not lectura.texto:
+            lectura.avisos.append(
+                "Para leer imágenes con IA, poné la clave de Gemini (GEMINI_API_KEY) en el archivo .env "
+                "de la carpeta de datos de la app y volvé a subir la imagen."
+            )
+        return lectura
+    return _imagen_a_lectura(nombre, imagen, lectura)
 
 
 def _leer_pdf(nombre: str, contenido: bytes) -> Lectura:
@@ -850,8 +928,9 @@ def _verificar_tabla(lectura: Lectura) -> list[Verificacion]:
                     campo="hojas", nivel="aviso",
                     mensaje=f"«{h.nombre}», columna {col + 1}: casi todos son números pero {len(textos)} no ({', '.join(map(str, textos[:3]))}).",
                 ))
-    if lectura.metodo == "ocr":
-        v.append(Verificacion(campo="hojas", nivel="aviso", mensaje="Leído con OCR: compará el texto con la imagen antes de armar el Excel."))
+    if lectura.metodo in ("ocr", "ia"):
+        como = "con OCR" if lectura.metodo == "ocr" else "con IA (Gemini)"
+        v.append(Verificacion(campo="hojas", nivel="aviso", mensaje=f"Leído {como}: compará el texto con la imagen antes de armar el Excel."))
     return v
 
 
@@ -958,7 +1037,7 @@ def generar(lectura: Lectura) -> bytes:
         ws.cell(ws.max_row, 2).number_format = moneda
         ws.append([])
         ws.append(["Archivo", lectura.archivo])
-        ws.append(["Leído con", {"ocr": "OCR (foto o escaneo)", "pdf": "texto del PDF", "planilla": "planilla"}[lectura.metodo]])
+        ws.append(["Leído con", {"ocr": "OCR (foto o escaneo)", "ia": "IA (Gemini) de la imagen", "pdf": "texto del PDF", "planilla": "planilla"}[lectura.metodo]])
         anchos(ws, {1: 26, 2: 30})
 
         wd = wb.create_sheet("Detalle")

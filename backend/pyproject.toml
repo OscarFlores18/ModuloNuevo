@@ -21,6 +21,8 @@ dependencies = [
     "pillow>=10.0.0",
     "zxing-cpp>=2.2.0",
     "pytesseract>=0.3.10",
+    # Conversor De Facturas: imágenes leídas con Gemini si hay GEMINI_API_KEY.
+    "google-genai>=1.0.0",
 ]
 
 [dependency-groups]
