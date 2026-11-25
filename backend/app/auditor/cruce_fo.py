@@ -401,11 +401,13 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
         total_x = totales_x.get(clave)
         if total_x is not None and abs(abs(total_x) - abs(total)) <= TOLERANCIA_IMPORTE:
             bien_en_xubio += 1
-        fila = _fila_vista(fa, columnas_arca) + [
-            {"columna": "Suma columnas", "valor": suma},
-            {"columna": "Diferencia", "valor": diferencia},
-            {"columna": "Total Xubio", "valor": None if total_x is None else round(total_x, 2)},
-        ]
+        # La fila tal cual está en «Mis Comprobantes»: los importes con sus
+        # títulos de ARCA y sin columnas calculadas (suma, diferencia).
+        fila = (
+            _fila_vista(fa, [(t, c) for t, c in columnas_arca if t != "Imp. Total"])
+            + _fila_vista(fa, [(str(c), c) for c in partes])
+            + _fila_vista(fa, [("Imp. Total", col_total_arca)])
+        )
         salida.append({"origen": "arca", "fila": fila})
     return salida, bien_en_xubio
 

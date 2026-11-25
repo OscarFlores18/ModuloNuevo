@@ -76,10 +76,10 @@ export class ApiService {
     );
   }
 
-  /** Prueba: abre Xubio y carga el .zip en «Importar desde Mis Comprobantes (ARCA)», sin confirmar. */
+  /** Abre Xubio, carga el .zip en «Importar desde Mis Comprobantes (ARCA)», aprieta «Importar» y devuelve lo que dijo Xubio. */
   cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string): Promise<ResultadoCargaXubio> {
     return firstValueFrom(
-      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo abrir Xubio.')),
+      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo subir a Xubio.')),
     );
   }
 
@@ -223,5 +223,9 @@ export interface ResultadoCargaXubio {
   archivo: string;
   archivo_cargado: boolean;
   boton_importar_habilitado: boolean;
+  /** true: Xubio dijo que importó · false: no importó · null: no se reconoció la respuesta (mirar en Xubio). */
+  importado: boolean | null;
+  /** Lo que mostró Xubio después de «Importar». */
+  mensaje: string;
   log: string[];
 }

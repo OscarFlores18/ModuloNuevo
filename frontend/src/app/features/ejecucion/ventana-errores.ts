@@ -1411,25 +1411,29 @@ function bloqueError(items: readonly Advertencia[], marcado: Marcado): string {
 
 /** Lo que no es un comprobante (ARCA vacío, un paso que falló…): una tarjeta suelta, arriba. */
 /**
- * «Las columnas no suman el total»: cada factura de ARCA con la suma de sus
- * columnas, el Imp. Total, la diferencia (lo que ARCA no discrimina) y cómo
- * quedó en Xubio.
+ * «Las columnas no suman el total»: cada factura tal cual está en el Excel de
+ * ARCA («Mis Comprobantes»): sus columnas y sus títulos, sin columnas calculadas.
  */
 function grillaSuma(e: Advertencia): string {
   const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f);
   if (!filas.length) return '';
-  const cab = ['Fecha', 'Comprobante', 'Razón social', 'Suma de columnas', 'Imp. Total', 'Diferencia', 'En Xubio']
-    .map((c, i) => `<th${i >= 3 ? ' class="num"' : ''}>${esc(c)}</th>`)
-    .join('');
+  const columnas = filas[0].fila.map((c) => c.columna);
+  const numerica = (col: string) => filas.some((f) => typeof f.fila.find((c) => c.columna === col)?.valor === 'number');
+  const esNum = columnas.map((c) => numerica(c) && c !== 'Nro. Doc.');
+  const cab = columnas.map((c, i) => `<th${esNum[i] ? ' class="num"' : ''}>${esc(c)}</th>`).join('');
   const cuerpo = filas
     .map((f) => {
-      const d = normalizar(f.fila);
       const v: Record<string, CeldaVista['valor']> = {};
       for (const c of f.fila) v[c.columna] = c.valor;
-      const enXubio = v['Total Xubio'];
-      const bienEnXubio = typeof enXubio === 'number' && typeof d.Total === 'number' && Math.abs(Math.abs(enXubio) - Math.abs(d.Total)) <= 1;
-      const xubio = enXubio === null || enXubio === undefined ? '<td class="num">No está</td>' : `<td class="num${bienEnXubio ? ' marca ok' : ' marca error'}">${esc(importe(enXubio))}</td>`;
-      return `<tr><td>${esc(texto(d.Fecha))}</td><td class="comp">${esc(texto(d.Comprobante))}</td><td title="${esc(texto(d.Tipo))} · CUIT ${esc(cuit(d.CUIT))}">${esc(texto(d['Razón social']))}</td><td class="num">${esc(importe(v['Suma columnas']))}</td><td class="num">${esc(importe(d.Total))}</td><td class="num marca aviso">${esc(importe(v['Diferencia']))}</td>${xubio}</tr>`;
+      const celdas = columnas
+        .map((col, i) => {
+          const valor = v[col];
+          if (esNum[i]) return `<td class="num">${esc(importe(valor))}</td>`;
+          if (col === 'Nro. Doc.') return `<td>${esc(cuit(valor))}</td>`;
+          return `<td${col === 'Comprobante' ? ' class="comp"' : ''}>${esc(texto(valor))}</td>`;
+        })
+        .join('');
+      return `<tr>${celdas}</tr>`;
     })
     .join('');
   return `<div class="ve-grilla"><table><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;

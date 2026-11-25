@@ -476,8 +476,8 @@ def cargar_en_xubio(
     clientes: ClientesRepository = Depends(get_clientes),
     creds: CredencialesXubioRepository = Depends(get_credenciales_xubio),
 ) -> dict:
-    """Prueba: abre Xubio, va a «Importar desde Mis Comprobantes (ARCA)» de la
-    operación y carga el archivo. No aprieta «Importar»."""
+    """Abre Xubio, va a «Importar desde Mis Comprobantes (ARCA)» de la operación,
+    carga el archivo y aprieta «Importar». Devuelve lo que contestó Xubio."""
     try:
         datos = base64.b64decode(body.zip, validate=True)
     except (binascii.Error, ValueError) as exc:
