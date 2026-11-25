@@ -94,26 +94,13 @@ import {
       bajada="Fotos, capturas, PDF, CSV o Excel viejo (.xls) a un Excel. Antes de armarlo te muestro lo que leí para que lo verifiques."
     />
 
-<<<<<<< HEAD
     <!-- Izquierda: elegir los archivos. Derecha: el archivo elegido, paso a paso. Abajo: corregir lo leído -->
     <div class="fx-grilla">
-      <section class="mf-panel" aria-labelledby="t-elegir">
+      <section class="mf-panel" aria-labelledby="t-elegir" data-tour="ax-archivos">
         <div class="fx-cab">
           <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Se leen apenas los soltás. De las fotos se lee el texto con OCR (tres veces, para comparar); de los PDF digitales, su texto; de CSV y planillas, las celdas." /></h2>
           <p class="mf-sub m-0 mt-1">Facturas o tablas: fotos o capturas (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX. Hasta 20 por vez.</p>
         </div>
-=======
-    <section class="mf-panel" data-tour="ax-archivos">
-      <label class="zona" [class.encima]="encima()" (dragover)="$event.preventDefault(); encima.set(true)" (dragleave)="encima.set(false)" (drop)="soltar($event)">
-        <strong>Arrastrá los archivos acá o tocá para elegirlos</strong>
-        <span class="mf-sub">Foto o captura (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX · hasta 20 por vez</span>
-        <input type="file" multiple class="sr-only" [attr.accept]="acepta" (change)="elegir($event)" />
-        @if (leyendo()) {
-          <span class="inline-flex items-center gap-2 font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo… (las fotos tardan unos segundos: se leen tres veces para comparar)</span>
-        }
-      </label>
-      @if (error(); as err) { <app-alerta class="mt-3 block" nivel="error" [mensajes]="[err]" /> }
->>>>>>> 56de416a15944c1127d504bcf5bb507209b5ee8c
 
         <div class="fx-cuerpo">
           <div
@@ -216,7 +203,7 @@ import {
                   <span class="fx-num" aria-hidden="true">2</span>
                   <div class="min-w-0">
                     <h3>Generá el Excel</h3>
-                    <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()">
+                    <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
                       @if (generando()) {
                         <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
                         Armando…
@@ -244,15 +231,8 @@ import {
     </div>
 
     @if (actual(); as l) {
-<<<<<<< HEAD
       @if (!l.error) {
-        <section class="mf-panel" id="ax-revision" aria-labelledby="ax-titulo">
-=======
-      <section class="mf-panel mt-4" aria-labelledby="ax-titulo" data-tour="ax-verificar">
-        @if (l.error) {
-          <app-alerta nivel="error" [mensajes]="[l.error]" />
-        } @else {
->>>>>>> 56de416a15944c1127d504bcf5bb507209b5ee8c
+        <section class="mf-panel" id="ax-revision" aria-labelledby="ax-titulo" data-tour="ax-verificar">
           <div class="ax-grilla" [class.sin-vista]="!vista()">
             @if (vista(); as v) {
               <div class="ax-vista" aria-label="El archivo original">
@@ -348,16 +328,6 @@ import {
                   <div class="ax-texto mt-2">{{ l.texto }}</div>
                 </details>
               }
-<<<<<<< HEAD
-=======
-
-              <div class="ax-pie">
-                @if (errores(l)) { <span class="text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</span> }
-                <button type="button" class="mf-btn" (click)="generar()" [disabled]="generando() || verificando()" data-tour="ax-generar">
-                  {{ generando() ? 'Armando…' : errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
-                </button>
-              </div>
->>>>>>> 56de416a15944c1127d504bcf5bb507209b5ee8c
             </div>
           </div>
         </section>
