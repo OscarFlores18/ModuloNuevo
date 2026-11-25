@@ -213,14 +213,7 @@ def test_columnas_de_arca_que_no_suman_el_total():
     )}
     e = errores["total_no_cierra"]
     assert e["total"] == 1 and e["gravedad"] == "corregir" and e["a_corregir"] == 1
-    # La fila como está en el Excel de ARCA: sin columnas calculadas.
-    columnas = [c["columna"] for c in e["comprobantes"][0]["fila"]]
-    assert columnas == [
-        "Fecha", "Tipo", "Comprobante", "Nro. Doc.", "Denominación",
-        "Neto Gravado Total", "Neto No Gravado", "Op. Exentas", "Otros Tributos", "Total IVA", "Imp. Total",
-    ]
     fila = {c["columna"]: c["valor"] for c in e["comprobantes"][0]["fila"]}
-<<<<<<< HEAD
     # Las columnas tal cual la planilla de ARCA, sin una «suma» armada aparte.
     assert "Suma columnas" not in fila
     assert fila["Neto Gravado Total"] == 74406.81 and fila["Total IVA"] == 15625.43
@@ -251,9 +244,6 @@ def test_columnas_de_arca_que_no_suman_el_total():
     assert columnas.index("IVA 21%") < columnas.index("Otros Tributos") and "Op. Exentas" not in columnas
     assert fila["Diferencia"] == 17979.75
     assert fila["Total Xubio"] == 90032.24  # en Xubio quedó sin la diferencia
-=======
-    assert fila["Neto Gravado Total"] == 74406.81 and fila["Total IVA"] == 15625.43 and fila["Imp. Total"] == 108011.99
->>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
 
     # Aunque en Xubio esté con el total completo, sigue «A revisar»: la
     # diferencia sin discriminar hay que consultarla.

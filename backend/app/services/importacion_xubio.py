@@ -1,12 +1,3 @@
-<<<<<<< HEAD
-"""Botón «Subir a Xubio» de la pestaña Convertir AUX.
-
-Abre Xubio en la PC del backend, entra a la empresa del cliente y, en
-Compras/Ventas > Comprobantes > Acciones > Importar > Desde Mis Comprobantes
-(ARCA), carga el .zip con el CSV de esa operación y aprieta «Importar». La
-ventana queda abierta con la respuesta de Xubio; se cierra sola cuando la
-cierra la persona o a los 15 minutos.
-=======
 """Botón «Subir a Xubio» de la pestaña Subir a Xubio.
 
 Abre Xubio en la PC del backend, entra a la empresa del cliente y, en
@@ -17,7 +8,6 @@ lo que contesta Xubio. La confirmación la da la persona antes, en la app.
 - Si Xubio dice que importó, Chrome se cierra solo.
 - Si da error o no se reconoce la respuesta, la ventana queda abierta para que
   la persona mire (se cierra cuando la cierra ella o a los 15 minutos).
->>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
 """
 
 from __future__ import annotations
@@ -37,12 +27,8 @@ from .credenciales import ServicioCredenciales
 
 logger = logging.getLogger(__name__)
 
-<<<<<<< HEAD
-ESPERA_RESULTADO_S = 480  # abrir Xubio + importar (hasta 3 min)
-=======
 # Login, empresa, carga del archivo y la importación (hasta 2 minutos).
 ESPERA_RESULTADO_S = 360
->>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
 VENTANA_ABIERTA_S = 15 * 60
 _en_curso = threading.Lock()
 
@@ -111,11 +97,7 @@ def preparar(
 
     def trabajar() -> None:
         try:
-<<<<<<< HEAD
-            # Siempre a la vista: la persona ve lo que responde Xubio.
-=======
             # A la vista: la persona ve lo que hace el bot.
->>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
             with SesionXubio(cred.usuario, cred.clave, log=anotar, visible=True) as sesion:
                 sesion.cambiar_empresa(cliente)
                 salida.update(sesion.importar_arca(operacion, str(ruta_zip)))
@@ -148,13 +130,8 @@ def preparar(
         "archivo": ruta_zip.name,
         "archivo_cargado": bool(salida.get("archivo_cargado")),
         "boton_importar_habilitado": bool(salida.get("boton_importar_habilitado")),
-<<<<<<< HEAD
-        "importado": bool(salida.get("importado")),
-        "mensaje": str(salida.get("mensaje") or ""),
-=======
         # True: Xubio dijo que importó · False: no importó · None: no se sabe (mirar en Xubio).
         "importado": salida.get("importado"),
         "mensaje": salida.get("mensaje") or "",
->>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
         "log": registro[-8:],
     }

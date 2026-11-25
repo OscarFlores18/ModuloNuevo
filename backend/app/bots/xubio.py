@@ -179,12 +179,8 @@ def procesar_informe_individual(
 # Acciones > Importar > Desde Mis Comprobantes (ARCA). La pantalla trae un iframe
 # (app.xubio.com/.../importacion-csv-afip/...) con «Seleccionar archivo» (.zip).
 #
-<<<<<<< HEAD
-# El bot sube el .zip y aprieta «Importar»; después espera la respuesta de Xubio.
-=======
 # `preparar_importacion_arca` sube el .zip y se detiene; `importar_arca` además
 # aprieta «Importar» y lee lo que contesta Xubio.
->>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
 
 _IMPORTACION = {
     "Compras": ("Compras", "Comprobantes de Compra", "/NXV/compras/importacion-mis-comprobantes"),
@@ -199,9 +195,8 @@ def preparar_importacion_arca(
     log: Callable[[str], None] = print,
     captura: str | None = None,
 ) -> dict:
-    """Abre la importación de Mis Comprobantes de la operación, carga el .zip y
-    aprieta «Importar». Devuelve {"archivo_cargado", "boton_importar_habilitado",
-    "importado": bool, "mensaje": lo que respondió Xubio (si dijo algo)}."""
+    """Abre la importación de Mis Comprobantes de la operación y carga el .zip,
+    sin confirmar. Devuelve {"archivo_cargado": bool, "boton_importar_habilitado": bool}."""
     if operacion not in _IMPORTACION:
         raise ValueError(f"Operación desconocida: {operacion}")
     menu, listado, _ = _IMPORTACION[operacion]
@@ -239,65 +234,14 @@ def preparar_importacion_arca(
         page.wait_for_timeout(250)
     boton = marco.locator("button", has_text=re.compile(r"^\s*Importar\s*$")).first
     habilitado = bool(boton.count()) and boton.is_enabled()
-    importado, mensaje = False, ""
-    if not habilitado:
-        log("      [AVISO]: El botón «Importar» no se habilitó: revisá el archivo en la pantalla.")
-    else:
-        texto_antes = _texto_marco(marco)
-        boton.click(timeout=10000)
-        log("      [OK]: Se apretó «Importar». Esperando la respuesta de Xubio...")
-        importado, mensaje = _esperar_importacion(page, marco, boton, texto_antes)
-        dice = f" Xubio: {mensaje}" if mensaje else ""
-        if importado:
-            log(f"      [OK]: Importación terminada.{dice}")
-        else:
-            log(f"      [AVISO]: Xubio no confirmó la importación.{dice or ' Revisá la ventana de Chrome.'}")
     if captura:
         try:
             page.screenshot(path=captura)
         except Exception:
             pass
-<<<<<<< HEAD
-    return {"archivo_cargado": cargado, "boton_importar_habilitado": habilitado, "importado": importado, "mensaje": mensaje}
-
-
-# Palabras con las que Xubio avisa que la importación salió mal.
-_ERROR_IMPORTACION = re.compile(r"\berror|no se pudo|fall[óo]|inv[áa]lid|rechaz", re.I)
-ESPERA_IMPORTACION_S = 180
-
-
-def _texto_marco(marco) -> str:
-    try:
-        return marco.locator("body").inner_text(timeout=3000)
-    except Exception:
-        return ""
-
-
-def _esperar_importacion(page: Page, marco, boton, texto_antes: str) -> tuple[bool, str]:
-    """Después de «Importar»: espera a que Xubio responda (aparece texto nuevo en
-    el formulario o se va el botón). Devuelve (salió bien, el texto nuevo)."""
-    limite = time.monotonic() + ESPERA_IMPORTACION_S
-    page.wait_for_timeout(1500)
-    while time.monotonic() < limite:
-        texto = _texto_marco(marco)
-        nuevo = " ".join(l.strip() for l in texto.splitlines() if l.strip() and l.strip() not in texto_antes)[:300]
-        try:
-            se_fue = not boton.count() or not boton.is_visible()
-        except Exception:
-            se_fue = True
-        if nuevo or se_fue:
-            # Primero puede decir «Importando…»: mientras siga el botón, se espera.
-            if not se_fue and re.search(r"importando|procesando|cargando", nuevo, re.I):
-                page.wait_for_timeout(1000)
-                continue
-            return not _ERROR_IMPORTACION.search(nuevo), nuevo
-        page.wait_for_timeout(1000)
-    return False, "Xubio no respondió en 3 minutos."
-=======
     if not habilitado:
         log("      [AVISO]: El botón «Importar» no se habilitó: revisá el archivo en la pantalla.")
     return {"archivo_cargado": cargado, "boton_importar_habilitado": habilitado}
->>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
 
 
 # Lo que dice Xubio después de «Importar». Nunca se vio la pantalla de resultado
