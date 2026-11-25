@@ -366,6 +366,30 @@ def _importes_distintos(operacion, df_arca, df_xubio, columnas_arca, columnas_xu
 COLUMNAS_QUE_SUMAN = ("neto gravado total", "neto no gravado", "op. exentas", "otros tributos", "total iva")
 
 
+# Orden en que se muestran las alícuotas (como en el Libro IVA).
+ORDEN_ALICUOTAS = ("21", "10.5", "27", "2.5", "5", "0")
+
+
+def _columnas_por_alicuota(df_arca) -> list[tuple[str, object, object]]:
+    """[(porcentaje, columna del neto, columna del IVA)] de «Mis Comprobantes»
+    («Neto Grav. IVA 21%» / «IVA 21%»…), en el orden del Libro IVA. La alícuota
+    0% no tiene IVA (queda ``None``)."""
+    netos, ivas = {}, {}
+    for c in df_arca.columns:
+        nombre = str(c).strip()
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*%\s*$", nombre)
+        if not m:
+            continue
+        pct = m.group(1).replace(",", ".")
+        bajo = nombre.lower()
+        if "neto" in bajo and "grav" in bajo:
+            netos[pct] = c
+        elif re.match(r"^(imp\.?\s*)?iva\s*\d", bajo):
+            ivas[pct] = c
+    pcts = sorted(set(netos) | set(ivas), key=lambda p: ORDEN_ALICUOTAS.index(p) if p in ORDEN_ALICUOTAS else len(ORDEN_ALICUOTAS))
+    return [(p, netos.get(p), ivas.get(p)) for p in pcts]
+
+
 def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cuit_arca, col_total_arca):
     """Comprobantes de ARCA cuyas columnas (neto gravado, no gravado, exento,
     otros tributos e IVA) no suman el Imp. Total: ARCA no discrimina una parte
@@ -374,8 +398,8 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
     Xubio con el total completo."""
     if col_total_arca is None or "Clave_Py" not in df_arca.columns:
         return [], 0
-    por_nombre = {str(c).strip().lower(): c for c in df_arca.columns}
-    partes = [por_nombre[n] for n in COLUMNAS_QUE_SUMAN if n in por_nombre]
+    # En el orden de la planilla, con el nombre tal cual: así se muestran.
+    partes = [c for c in df_arca.columns if str(c).strip().lower() in COLUMNAS_QUE_SUMAN]
     if not partes:
         return [], 0
     usa_cuit = operacion == "Compras" and col_cuit_arca is not None and "CUIT" in df_xubio.columns
@@ -387,7 +411,7 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
                 clave = (_solo_digitos(fx.get("CUIT")) if usa_cuit else "", str(fx["Comprobante"]), _clase_comprobante(fx.get("Tipo")))
                 totales_x[clave] = total_x
 
-    salida, bien_en_xubio = [], 0
+    no_cierran = []
     for _, fa in df_arca.iterrows():
         total = _numero(fa.get(col_total_arca))
         valores = [_numero(fa.get(c)) or 0.0 for c in partes]
@@ -397,12 +421,35 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
         diferencia = round(total - suma, 2)
         if abs(diferencia) <= TOLERANCIA_IMPORTE:
             continue
+        no_cierran.append((fa, total, diferencia))
+
+    # Lo que se muestra: el neto y el IVA de cada alícuota («Neto gravado 21%»,
+    # «IVA 21%»…) solo de las que usa alguno de estos comprobantes, y después el
+    # no gravado, el exento y los otros tributos. Sin alícuotas en la planilla,
+    # el neto y el IVA totales.
+    alicuotas = _columnas_por_alicuota(df_arca)
+    usadas = [
+        (pct, neto, iva) for pct, neto, iva in alicuotas
+        if any(_numero(fa.get(c)) for fa, _, _ in no_cierran for c in (neto, iva) if c is not None)
+    ]
+    if alicuotas:
+        resto = [c for c in partes if str(c).strip().lower() not in ("neto gravado total", "total iva")]
+        mostrar = [(t, c) for pct, neto, iva in usadas for t, c in ((f"Neto gravado {pct}%", neto), (f"IVA {pct}%", iva)) if c is not None]
+        mostrar += [(str(c), c) for c in resto]
+    else:
+        mostrar = [(str(c), c) for c in partes]
+    # La columna que está vacía (o en 0) en todos, no se muestra.
+    mostrar = [(t, c) for t, c in mostrar if any(_numero(fa.get(c)) for fa, _, _ in no_cierran)]
+
+    salida, bien_en_xubio = [], 0
+    for fa, total, diferencia in no_cierran:
         clave = (_solo_digitos(fa.get(col_cuit_arca)) if usa_cuit else "", str(fa["Clave_Py"]), _clase_comprobante(fa.get("Tipo")))
         total_x = totales_x.get(clave)
         if total_x is not None and abs(abs(total_x) - abs(total)) <= TOLERANCIA_IMPORTE:
             bien_en_xubio += 1
         fila = _fila_vista(fa, columnas_arca) + [
-            {"columna": "Suma columnas", "valor": suma},
+            {"columna": titulo, "valor": round(_numero(fa.get(c)) or 0.0, 2)} for titulo, c in mostrar
+        ] + [
             {"columna": "Diferencia", "valor": diferencia},
             {"columna": "Total Xubio", "valor": None if total_x is None else round(total_x, 2)},
         ]

@@ -381,3 +381,48 @@ export function mensajeDeError(e: unknown, porDefecto = 'Algo falló. Probá de 
   if (d && typeof d === 'object' && 'mensaje' in d) return String((d as { mensaje: string }).mensaje);
   return porDefecto;
 }
+
+// --- Pasar a Excel (backend/app/extraccion/a_excel.py) ---------------------------
+
+export type NivelVerificacion = 'ok' | 'aviso' | 'error';
+
+export interface ItemLeido {
+  codigo: string;
+  descripcion: string;
+  cantidad: number | null;
+  precio: number | null;
+  alicuota: number | null;
+  importe: number | null;
+}
+
+export interface HojaLeida {
+  nombre: string;
+  filas: (string | number | null)[][];
+}
+
+export interface Verificacion {
+  /** emisor_cuit, neto_gravado, total, items, hojas… */
+  campo: string;
+  nivel: NivelVerificacion;
+  mensaje: string;
+  /** El valor que dan las cuentas (se ofrece «Usar»). */
+  sugerencia: string | number | null;
+}
+
+/** Lo leído de un archivo: un comprobante (encabezado, ítems, totales) o una tabla (hojas). */
+export interface LecturaExcel {
+  archivo: string;
+  tipo: 'comprobante' | 'tabla';
+  metodo: 'planilla' | 'pdf' | 'ocr';
+  encabezado: Record<string, string>;
+  items: ItemLeido[];
+  totales: Record<string, number | null>;
+  hojas: HojaLeida[];
+  texto: string;
+  /** Lo que cada pasada de OCR leyó distinto. */
+  dudas: Record<string, string[]>;
+  avisos: string[];
+  verificaciones: Verificacion[];
+  /** Solo si el archivo no se pudo leer. */
+  error?: string;
+}

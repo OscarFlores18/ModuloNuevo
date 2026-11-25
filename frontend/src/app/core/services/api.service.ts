@@ -2,7 +2,8 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido } from '../models';
+import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido, LecturaExcel, Verificacion } from '../models';
+import type { BloqueRegistro } from '../../features/ejecucion/ventana-errores';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -40,6 +41,24 @@ export class ApiService {
     );
   }
 
+  /** «Pasar a Excel»: lo leído de cada archivo, con la verificación. */
+  leerAExcel(archivos: ArchivoSubido[]): Promise<{ lecturas: LecturaExcel[] }> {
+    return firstValueFrom(
+      this.http.post<{ lecturas: LecturaExcel[] }>(`${this.url}/a-excel/leer`, { archivos }).pipe(errorLegible('No se pudieron leer los archivos.')),
+    );
+  }
+  /** La verificación de nuevo, con lo corregido en pantalla. */
+  verificarAExcel(lectura: LecturaExcel): Promise<{ verificaciones: Verificacion[] }> {
+    return firstValueFrom(
+      this.http.post<{ verificaciones: Verificacion[] }>(`${this.url}/a-excel/verificar`, { lectura }).pipe(errorLegible('No se pudo verificar.')),
+    );
+  }
+  /** El .xlsx (en base64). */
+  generarAExcel(lectura: LecturaExcel): Promise<{ nombre: string; contenido: string }> {
+    return firstValueFrom(
+      this.http.post<{ nombre: string; contenido: string }>(`${this.url}/a-excel/generar`, { lectura }).pipe(errorLegible('No se pudo armar el Excel.')),
+    );
+  }
   /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */
   extraerComprobantes(archivos: ArchivoSubido[]): Promise<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }> {
     return firstValueFrom(
@@ -58,7 +77,7 @@ export class ApiService {
     );
   }
 
-  /** Prueba: abre Xubio y carga el .zip en «Importar desde Mis Comprobantes (ARCA)», sin confirmar. */
+  /** Abre Xubio, carga el .zip en «Importar desde Mis Comprobantes (ARCA)» y aprieta «Importar». */
   cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string): Promise<ResultadoCargaXubio> {
     return firstValueFrom(
       this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo abrir Xubio.')),
@@ -113,6 +132,11 @@ export class ApiService {
   /** Las partidas de ARCA no encontradas en el Libro IVA, leídas de la hoja «Faltantes» de cada AUX. */
   faltantes(id: string, indice: number): Promise<FaltantesExcel> {
     return firstValueFrom(this.http.get<FaltantesExcel>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes`));
+  }
+
+  /** Los hallazgos del control en un .xlsx, como registro; con cliente, solo los suyos. */
+  hallazgosExcel(id: string, cliente: string | null, bloques: BloqueRegistro[]): Promise<{ nombre: string; contenido: string }> {
+    return firstValueFrom(this.http.post<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/hallazgos-excel`, { cliente, bloques }));
   }
 
   /** Las partidas de ARCA no encontradas en un .xlsx (formato «Mis Comprobantes»), para adjuntar al mail. */
@@ -205,5 +229,9 @@ export interface ResultadoCargaXubio {
   archivo: string;
   archivo_cargado: boolean;
   boton_importar_habilitado: boolean;
+  /** Se apretó «Importar» y Xubio no avisó un error. */
+  importado: boolean;
+  /** Lo que respondió Xubio después de «Importar» (puede venir vacío). */
+  mensaje: string;
   log: string[];
 }

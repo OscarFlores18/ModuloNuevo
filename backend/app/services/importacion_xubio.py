@@ -1,10 +1,10 @@
-"""Botón «Cargar en Xubio» de la pestaña Convertir AUX (prueba).
+"""Botón «Subir a Xubio» de la pestaña Convertir AUX.
 
 Abre Xubio en la PC del backend, entra a la empresa del cliente y, en
 Compras/Ventas > Comprobantes > Acciones > Importar > Desde Mis Comprobantes
-(ARCA), carga el .zip con el CSV de esa operación. **No aprieta «Importar»**:
-deja la ventana abierta para que la persona revise (y, si quiere, importe a mano).
-La ventana se cierra sola cuando la cierra la persona o a los 15 minutos.
+(ARCA), carga el .zip con el CSV de esa operación y aprieta «Importar». La
+ventana queda abierta con la respuesta de Xubio; se cierra sola cuando la
+cierra la persona o a los 15 minutos.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from .credenciales import ServicioCredenciales
 
 logger = logging.getLogger(__name__)
 
-ESPERA_RESULTADO_S = 240
+ESPERA_RESULTADO_S = 480  # abrir Xubio + importar (hasta 3 min)
 VENTANA_ABIERTA_S = 15 * 60
 _en_curso = threading.Lock()
 
@@ -92,7 +92,7 @@ def preparar(
 
     def trabajar() -> None:
         try:
-            # Siempre a la vista: la persona revisa y aprieta «Importar».
+            # Siempre a la vista: la persona ve lo que responde Xubio.
             with SesionXubio(cred.usuario, cred.clave, log=anotar, visible=True) as sesion:
                 sesion.cambiar_empresa(cliente)
                 salida.update(sesion.preparar_importacion_arca(operacion, str(ruta_zip)))
@@ -124,5 +124,7 @@ def preparar(
         "archivo": ruta_zip.name,
         "archivo_cargado": bool(salida.get("archivo_cargado")),
         "boton_importar_habilitado": bool(salida.get("boton_importar_habilitado")),
+        "importado": bool(salida.get("importado")),
+        "mensaje": str(salida.get("mensaje") or ""),
         "log": registro[-8:],
     }

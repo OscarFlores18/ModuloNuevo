@@ -38,6 +38,7 @@ from ...core.controles import resumen_controles
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...extraccion import servicio as extraccion_srv
+from ...extraccion import a_excel
 from ...extraccion.modelo import Comprobante
 from ...services import ejecuciones as ejecuciones_srv
 from ...services import importacion_xubio as importacion_srv
@@ -402,6 +403,57 @@ def extraer_comprobantes(body: ExtraerRequest, clientes: ClientesRepository = De
     return extraccion_srv.extraer(archivos, clientes.listar_publico())
 
 
+# --- Pasar a Excel: cualquier archivo a .xlsx, verificando lo leído ---------------
+
+
+class LeerAExcelRequest(BaseModel):
+    archivos: list[ArchivoComprobantes] = Field(min_length=1, max_length=20)
+
+
+@router.post("/a-excel/leer")
+def leer_a_excel(body: LeerAExcelRequest) -> dict:
+    """Lo leído de cada archivo (foto, captura, PDF, CSV, Excel), con la
+    verificación, para revisarlo antes de armar el Excel."""
+    lecturas: list[dict] = []
+    for a in body.archivos:
+        nombre = Path(a.nombre).name
+        try:
+            datos = base64.b64decode(a.contenido, validate=True)
+        except (binascii.Error, ValueError):
+            lecturas.append({"archivo": nombre, "error": f"No se pudo leer «{nombre}»."})
+            continue
+        if len(datos) > MAX_BYTES_AUX:
+            lecturas.append({"archivo": nombre, "error": f"«{nombre}» es demasiado grande (más de 25 MB)."})
+            continue
+        try:
+            lecturas.append(a_excel.leer(nombre, datos).model_dump())
+        except ValueError as exc:
+            lecturas.append({"archivo": nombre, "error": str(exc)})
+        except Exception as exc:  # que un archivo raro no corte los demás
+            lecturas.append({"archivo": nombre, "error": f"No se pudo leer «{nombre}»: {exc}"})
+    return {"lecturas": lecturas}
+
+
+class LecturaRequest(BaseModel):
+    lectura: a_excel.Lectura
+
+
+@router.post("/a-excel/verificar")
+def verificar_a_excel(body: LecturaRequest) -> dict:
+    """La verificación otra vez, con lo que se corrigió en la pantalla."""
+    return {"verificaciones": [v.model_dump() for v in a_excel.verificar(body.lectura)]}
+
+
+@router.post("/a-excel/generar")
+def generar_a_excel(body: LecturaRequest) -> dict:
+    lectura = body.lectura
+    lectura.verificaciones = a_excel.verificar(lectura)
+    return {
+        "nombre": a_excel.nombre_excel(lectura),
+        "contenido": base64.b64encode(a_excel.generar(lectura)).decode("ascii"),
+    }
+
+
 class PrepararRequest(BaseModel):
     comprobantes: list[Comprobante] = Field(min_length=1, max_length=5000)
 
@@ -424,8 +476,8 @@ def cargar_en_xubio(
     clientes: ClientesRepository = Depends(get_clientes),
     creds: CredencialesXubioRepository = Depends(get_credenciales_xubio),
 ) -> dict:
-    """Prueba: abre Xubio, va a «Importar desde Mis Comprobantes (ARCA)» de la
-    operación y carga el archivo. No aprieta «Importar»."""
+    """Abre Xubio, va a «Importar desde Mis Comprobantes (ARCA)» de la
+    operación, carga el archivo y aprieta «Importar»."""
     try:
         datos = base64.b64decode(body.zip, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -672,6 +724,43 @@ def faltantes_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str | N
     cliente = ej.clientes[indice].nombre
     nombre = f"{PREFIJO_CSV} - {cliente}" + (f" - {periodo}" if periodo else "") + ".xlsx"
     return {"nombre": nombre, "contenido": base64.b64encode(excel_de(tablas)).decode("ascii")}
+
+
+class BloqueHallazgo(BaseModel):
+    """Un hallazgo tal como se ve en la ventana (lo arma el frontend)."""
+
+    cliente: str = Field(default="", max_length=200)
+    operacion: str = Field(default="", max_length=20)
+    insignia: str = Field(default="", max_length=40)
+    titulo: str = Field(default="", max_length=500)
+    que_hacer: str = Field(default="", max_length=1000)
+    detalle: str = Field(default="", max_length=5000)
+    columnas: list[str] = Field(default_factory=list, max_length=60)
+    filas: list[list[str | float | int | None]] = Field(default_factory=list, max_length=5000)
+
+
+class HallazgosExcelRequest(BaseModel):
+    cliente: str | None = Field(default=None, max_length=200)
+    bloques: list[BloqueHallazgo] = Field(min_length=1, max_length=2000)
+
+
+@router.post("/ejecuciones/{ejecucion_id}/hallazgos-excel")
+def hallazgos_excel_ejecucion(ejecucion_id: str, pedido: HallazgosExcelRequest) -> dict:
+    """Los hallazgos del control en un .xlsx, para guardarlos como registro: cada uno
+    como se ve en la ventana, sin estilos. {nombre, contenido (base64)}."""
+    from ...auditor.registro_hallazgos import excel_hallazgos
+
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    desde, hasta = str(ej.parametros.get("desde") or ""), str(ej.parametros.get("hasta") or "")
+    periodo = f"{desde} al {hasta}" if desde and hasta else desde or hasta
+    mes = f"{hasta[3:5]}-{hasta[8:10]}" if len(hasta) == 10 else ""
+    cliente = pedido.cliente
+    nombre = "Hallazgos" + (f" - {cliente}" if cliente else "") + (f" - {mes}" if mes else "") + ".xlsx"
+    contenido = excel_hallazgos([b.model_dump() for b in pedido.bloques], periodo)
+    return {"nombre": nombre, "contenido": base64.b64encode(contenido).decode("ascii")}
 
 
 class CambioElegido(BaseModel):
