@@ -94,6 +94,30 @@ $argumentos = @(
     # Lo que usan los diálogos «Guardar como» del backend.
     '--hidden-import', 'tkinter.filedialog'
 )
+# Lectura de PDF (pypdfium2 trae su propia DLL de PDFium).
+$argumentos += @('--collect-all', 'pypdfium2', '--collect-all', 'pypdfium2_raw')
+
+# OCR de fotos y PDF escaneados: Tesseract va adentro de la app (<_internal>\tesseract,
+# ver backend/app/extraccion/ocr.py). Se toma de vendor\tesseract o del Tesseract
+# instalado en esta PC (instalador de UB Mannheim). installer\preparar_tesseract.py
+# copia solo el .exe, las DLL que usa y los idiomas español e inglés, sin la
+# depuración de MinGW: ~26 MB en vez de ~240 (el instalador tiene que quedar
+# debajo de los 100 MB por archivo de GitHub).
+$origenTess = @(
+    (Join-Path $raiz 'vendor\tesseract'),
+    (Join-Path $env:ProgramFiles 'Tesseract-OCR'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Tesseract-OCR')
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'tesseract.exe')) } | Select-Object -First 1
+if ($origenTess) {
+    $tess = Join-Path $raiz 'build\tesseract'
+    & $python (Join-Path $raiz 'installer\preparar_tesseract.py') $origenTess $tess
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar Tesseract.' }
+    $argumentos += @('--add-data', "$tess;tesseract")
+    Write-Host "Tesseract incluido desde $origenTess"
+} else {
+    Write-Host 'Sin Tesseract (vendor\tesseract ni instalado): de fotos y PDF escaneados solo se va a leer el QR de ARCA.' -ForegroundColor Yellow
+}
+
 # Ícono del .exe, del acceso directo y de la ventana (assets\icono.ico).
 $icono = Join-Path $raiz 'assets\icono.ico'
 if (Test-Path $icono) { $argumentos += @('--icon', $icono) }

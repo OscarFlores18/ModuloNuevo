@@ -6,9 +6,9 @@ menú Inicio.
 
 | | |
 |---|---|
-| Versión | 1.3.2 (se ve al lado del título de la app y en el pie, con la fecha en que se armó) |
-| Tamaño | 67,6 MB |
-| SHA-256 | `F2334E6BA4F3CF6B5FB80C90565273774D9302BA0AEE296531F8F5EBC82D9C7D` |
+| Versión | 1.3.3 (se ve al lado del título de la app y en el pie, con la fecha en que se armó) |
+| Tamaño | 89,7 MB |
+| SHA-256 | `7049BF1C0597781F2FF40AE924FEC5748F3C743D1E87763616EC88C0DCAA50D2` |
 
 ---
 
@@ -108,6 +108,10 @@ powershell -ExecutionPolicy Bypass -File .\build_app.ps1
 ```
 
 Necesita Python, Node e [Inno Setup 6](https://jrsoftware.org/isdl.php) en la PC
-donde se arma (no en la de quien lo usa). Sale en `dist\ControlFCT-Setup.exe`;
+donde se arma (no en la de quien lo usa). Para que la app lea fotos y PDF
+escaneados (OCR), también [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki)
+instalado, mejor con el idioma español: `build_app.ps1` copia lo mínimo
+(~26 MB, ver `installer\preparar_tesseract.py`) adentro de la app, así quien la
+usa no tiene que instalar nada. Sin Tesseract, de las fotos solo se lee el QR de ARCA. Sale en `dist\ControlFCT-Setup.exe`;
 copialo a esta carpeta para publicarlo. Más detalle en el
 [README principal](../README.md#app-de-windows-un-solo-ícono).
