@@ -1,4 +1,4 @@
-"""Botón «Cargar en Xubio» (prueba): sin abrir Chrome."""
+"""Botón «Subir a Xubio»: sin abrir Chrome ni entrar a Xubio."""
 
 import base64
 import io
@@ -39,8 +39,8 @@ def test_endpoint_rechaza_cliente_desconocido(cliente_demo):
     assert r.status_code == 404 and "no está en Clientes" in r.json()["detail"]["mensaje"]
 
 
-def test_endpoint_corre_el_bot_sin_importar(cliente_demo, monkeypatch):
-    """Con el bot simulado: entra a la empresa, carga el .zip y no confirma."""
+def test_endpoint_corre_el_bot_e_importa(cliente_demo, monkeypatch):
+    """Con el bot simulado: entra a la empresa, carga el .zip, importa y devuelve lo que dijo Xubio."""
     llamadas = []
 
     class SesionFalsa:
@@ -57,10 +57,11 @@ def test_endpoint_corre_el_bot_sin_importar(cliente_demo, monkeypatch):
         def cambiar_empresa(self, nombre):
             llamadas.append(("empresa", nombre))
 
-        def preparar_importacion_arca(self, operacion, ruta_zip, captura=None):
+        def importar_arca(self, operacion, ruta_zip):
             with zipfile.ZipFile(ruta_zip) as z:
                 llamadas.append(("zip", operacion, z.namelist()))
-            return {"archivo_cargado": True, "boton_importar_habilitado": True}
+            return {"archivo_cargado": True, "boton_importar_habilitado": True, "importado": True,
+                    "mensaje": "Se importaron 3 comprobantes"}
 
     monkeypatch.setattr(srv, "SesionXubio", SesionFalsa)
 
@@ -75,4 +76,5 @@ def test_endpoint_corre_el_bot_sin_importar(cliente_demo, monkeypatch):
     })
     assert r.status_code == 200, r.text
     assert r.json()["boton_importar_habilitado"] is True
+    assert r.json()["importado"] is True and r.json()["mensaje"] == "Se importaron 3 comprobantes"
     assert llamadas == [("empresa", cliente), ("zip", "Compras", [f"{PREFIJO_CSV} Compras - X.csv"])]

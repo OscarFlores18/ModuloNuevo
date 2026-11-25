@@ -1417,28 +1417,51 @@ function bloqueError(items: readonly Advertencia[], marcado: Marcado): string {
 const COLUMNA_QUE_SUMA = /^(neto gravado \d|iva \d|neto gravado total$|total iva$|neto no gravado$|op\. exentas$|otros tributos$)/i;
 
 /**
+<<<<<<< HEAD
  * «Las columnas no suman el total»: cada factura de ARCA con el neto y el IVA
  * de cada alícuota que usa, el no gravado, el exento y los otros tributos, el Imp.
  * Total, la diferencia (lo que ARCA no discrimina) y cómo quedó en Xubio.
+=======
+ * «Las columnas no suman el total»: cada factura tal cual está en el Excel de
+ * ARCA («Mis Comprobantes»): sus columnas y sus títulos, sin columnas calculadas.
+>>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
  */
 function grillaSuma(e: Advertencia): string {
   const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f);
   if (!filas.length) return '';
+<<<<<<< HEAD
   const partes = filas[0].fila.map((c) => c.columna).filter((c) => COLUMNA_QUE_SUMA.test(c.trim()));
   const cab = ['Fecha', 'Comprobante', 'Razón social', ...partes, 'Imp. Total', 'Diferencia', 'En Xubio']
     .map((c, i) => `<th${i >= 3 ? ' class="num"' : ''}>${esc(c)}</th>`)
     .join('');
+=======
+  const columnas = filas[0].fila.map((c) => c.columna);
+  const numerica = (col: string) => filas.some((f) => typeof f.fila.find((c) => c.columna === col)?.valor === 'number');
+  const esNum = columnas.map((c) => numerica(c) && c !== 'Nro. Doc.');
+  const cab = columnas.map((c, i) => `<th${esNum[i] ? ' class="num"' : ''}>${esc(c)}</th>`).join('');
+>>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
   const cuerpo = filas
     .map((f) => {
-      const d = normalizar(f.fila);
       const v: Record<string, CeldaVista['valor']> = {};
       for (const c of f.fila) v[c.columna] = c.valor;
+<<<<<<< HEAD
       const enXubio = v['Total Xubio'];
       const bienEnXubio = typeof enXubio === 'number' && typeof d.Total === 'number' && Math.abs(Math.abs(enXubio) - Math.abs(d.Total)) <= 1;
       const xubio = enXubio === null || enXubio === undefined ? '<td class="num">No está</td>' : `<td class="num${bienEnXubio ? ' marca ok' : ' marca error'}">${esc(importe(enXubio))}</td>`;
       // Como en el Excel: la alícuota que no usa el comprobante, con «-».
       const columnas = partes.map((p) => `<td class="num">${v[p] ? esc(importe(v[p])) : '-'}</td>`).join('');
       return `<tr><td>${esc(texto(d.Fecha))}</td><td class="comp">${esc(texto(d.Comprobante))}</td><td title="${esc(texto(d.Tipo))} · CUIT ${esc(cuit(d.CUIT))}">${esc(texto(d['Razón social']))}</td>${columnas}<td class="num">${esc(importe(d.Total))}</td><td class="num marca aviso">${esc(importe(v['Diferencia']))}</td>${xubio}</tr>`;
+=======
+      const celdas = columnas
+        .map((col, i) => {
+          const valor = v[col];
+          if (esNum[i]) return `<td class="num">${esc(importe(valor))}</td>`;
+          if (col === 'Nro. Doc.') return `<td>${esc(cuit(valor))}</td>`;
+          return `<td${col === 'Comprobante' ? ' class="comp"' : ''}>${esc(texto(valor))}</td>`;
+        })
+        .join('');
+      return `<tr>${celdas}</tr>`;
+>>>>>>> f2a3c3557ab8b6eaa7b6ec605a2878004345193b
     })
     .join('');
   return `<div class="ve-grilla"><table class="ve-suma"><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;

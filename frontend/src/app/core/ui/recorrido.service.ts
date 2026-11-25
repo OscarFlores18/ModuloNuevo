@@ -24,7 +24,7 @@ const RECORRIDOS: Record<string, PasoRecorrido[]> = {
   ],
   'convertir-aux': [
     { objetivo: 'elegir', titulo: '1. Elegí los Excel del control', texto: 'Lo más fácil: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel «AUX - Control de facturas…» que dejó el control en la carpeta del cliente.' },
-    { objetivo: 'resultado', titulo: 'Subilos a Xubio', texto: 'Revisá los comprobantes, confirmá la empresa y tocá «Subir a Xubio»: el bot deja el archivo listo en Xubio y vos apretás «Importar» en la ventana de Chrome. Si preferís, descargá el archivo y lo importás a mano.' },
+    { objetivo: 'resultado', titulo: 'Subilos a Xubio', texto: 'Revisá los comprobantes, confirmá la empresa y tocá «Subir a Xubio»: el bot carga el archivo en Xubio, aprieta «Importar» y te avisa lo que contestó Xubio. Si preferís, descargá el archivo y lo importás a mano.' },
   ],
   clientes: [
     { objetivo: 'nuevo-cliente', titulo: 'Nuevo cliente', texto: 'Cargá el nombre tal como figura en Xubio, la CUIT con la que se entra a ARCA, la clave fiscal y la CUIT de la empresa que se controla.' },
