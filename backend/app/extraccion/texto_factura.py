@@ -49,7 +49,7 @@ def _razones_sociales(texto: str) -> list[str]:
 
 
 def _tipo(texto: str) -> int | None:
-    if m := _buscar(r"C[OÓ]D(?:IGO)?\.?\s*(?:N[°º.]?\s*)?:?\s*(\d{2,3})\b", texto):
+    if m := _buscar(r"C[OÓ]D(?:IGO)?\.?\s*(?:N[°º.*o]?\s*)?:?\s*(\d{2,3})\b", texto):
         return int(m.group(1))
     n = norm(texto)
     letra = None
@@ -93,7 +93,7 @@ def comprobante_del_texto(texto: str, archivo: str, pagina: int | None, metodo: 
     elif m := _buscar(r"Fecha\s*:?\s*(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})", texto) or _buscar(r"\b(\d{2}/\d{2}/\d{4})\b", texto):
         c.fecha = fecha(m.group(1))
 
-    if m := _buscar(r"C\.?\s?A\.?\s?E\.?\s*(?:N[°º.]?)?\s*:?\s*(\d{14})\b", texto):
+    if m := _buscar(r"C\.?\s?A\.?\s?E\.?\s*(?:N[°º.*o]?)?\s*:?\s*(\d{14})\b", texto):
         c.cae = m.group(1)
 
     encontrados = cuits(texto)

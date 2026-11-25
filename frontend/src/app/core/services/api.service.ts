@@ -145,6 +145,13 @@ export class ApiService {
     return firstValueFrom(this.http.get<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes-excel`, { params }));
   }
 
+  /** «Descargar errores Excel»: las partidas del Libro IVA no encontradas en ARCA de un cliente y operación (404 si no hay). */
+  erroresExcel(id: string, indice: number, operacion: string): Promise<{ nombre: string; contenido: string }> {
+    return firstValueFrom(
+      this.http.get<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/clientes/${indice}/errores-excel`, { params: { operacion } }),
+    );
+  }
+
   /** Un archivo del control como Blob, para bajarlo por el navegador (la descarga lleva los encabezados de sesión). */
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
