@@ -48,6 +48,15 @@ if (-not (Test-Path $python)) {
     if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear .venv (¿está instalado Python?).' }
 }
 
+# --- Versión ----------------------------------------------------------------------
+# El número sale de VERSION; la fecha y hora del armado van adentro del .exe para
+# distinguir dos instaladores del mismo número (se ve en el pie de la app).
+$version = (Get-Content (Join-Path $raiz 'VERSION') -Raw).Trim()
+$compilado = Get-Date -Format 'dd/MM/yyyy HH:mm'
+$archivoCompilacion = Join-Path $raiz 'backend\app\_compilacion.py'
+[IO.File]::WriteAllText($archivoCompilacion, "VERSION = '$version'`nCOMPILADO = '$compilado'`n", (New-Object Text.UTF8Encoding $false))
+Write-Host "Versión $version (armada el $compilado)"
+
 # --- 1. Angular -----------------------------------------------------------------
 Paso '1/4 Compilando Angular (producción)'
 Push-Location (Join-Path $raiz 'frontend')
@@ -85,12 +94,38 @@ $argumentos = @(
     # Lo que usan los diálogos «Guardar como» del backend.
     '--hidden-import', 'tkinter.filedialog'
 )
+# Lectura de PDF (pypdfium2 trae su propia DLL de PDFium).
+$argumentos += @('--collect-all', 'pypdfium2', '--collect-all', 'pypdfium2_raw')
+
+# OCR de fotos y PDF escaneados: Tesseract va adentro de la app (<_internal>\tesseract,
+# ver backend/app/extraccion/ocr.py). Se toma de vendor\tesseract o del Tesseract
+# instalado en esta PC (instalador de UB Mannheim). installer\preparar_tesseract.py
+# copia solo el .exe, las DLL que usa y los idiomas español e inglés, sin la
+# depuración de MinGW: ~26 MB en vez de ~240 (el instalador tiene que quedar
+# debajo de los 100 MB por archivo de GitHub).
+$origenTess = @(
+    (Join-Path $raiz 'vendor\tesseract'),
+    (Join-Path $env:ProgramFiles 'Tesseract-OCR'),
+    (Join-Path $env:LOCALAPPDATA 'Programs\Tesseract-OCR')
+) | Where-Object { $_ -and (Test-Path (Join-Path $_ 'tesseract.exe')) } | Select-Object -First 1
+if ($origenTess) {
+    $tess = Join-Path $raiz 'build\tesseract'
+    & $python (Join-Path $raiz 'installer\preparar_tesseract.py') $origenTess $tess
+    if ($LASTEXITCODE -ne 0) { throw 'No se pudo preparar Tesseract.' }
+    $argumentos += @('--add-data', "$tess;tesseract")
+    Write-Host "Tesseract incluido desde $origenTess"
+} else {
+    Write-Host 'Sin Tesseract (vendor\tesseract ni instalado): de fotos y PDF escaneados solo se va a leer el QR de ARCA.' -ForegroundColor Yellow
+}
+
 # Ícono del .exe, del acceso directo y de la ventana (assets\icono.ico).
 $icono = Join-Path $raiz 'assets\icono.ico'
 if (Test-Path $icono) { $argumentos += @('--icon', $icono) }
 
 & $python @argumentos
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller falló.' }
+# Ya quedó adentro del .exe: afuera, la app corriendo desde el código vuelve a ser «sin fecha».
+Remove-Item $archivoCompilacion -Force -ErrorAction SilentlyContinue
 
 $exe = Join-Path $raiz 'dist\ControlFCT\ControlFCT.exe'
 if (-not (Test-Path $exe)) { throw "No se generó $exe" }
@@ -121,7 +156,7 @@ $setup = Join-Path $raiz 'dist\ControlFCT-Setup.exe'
 if (Test-Path $setup) { Remove-Item $setup -Force }
 if ($iscc) {
     Paso '4/4 Armando el instalador (Inno Setup)'
-    & $iscc /Q (Join-Path $raiz 'installer\ControlFCT.iss')
+    & $iscc /Q "/DVersion=$version" (Join-Path $raiz 'installer\ControlFCT.iss')
     if ($LASTEXITCODE -ne 0) { throw 'Inno Setup falló.' }
 } else {
     Write-Host "`nSin Inno Setup 6: no se arma ControlFCT-Setup.exe (opcional)." -ForegroundColor Yellow

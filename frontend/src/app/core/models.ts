@@ -30,10 +30,13 @@ export interface ClienteEntrada {
 export interface Ajustes {
   carpeta_salida: string;
   pausa_segundos: number;
-  /** true: el backend corre en esta PC y guarda con ventanas de Windows. false (servidor): se baja por el navegador. */
+  /** true: el backend corre en esta PC (app de escritorio). false: corre en un servidor. Las descargas van siempre por el navegador. */
   dialogos_locales: boolean;
   /** false: los bots usan Google Chrome y la PC donde corre el backend no lo tiene. */
   chrome_instalado: boolean;
+  /** Número de versión (archivo VERSION) y, en el instalador, fecha y hora del armado. */
+  version?: string;
+  compilado?: string | null;
   xubio: { usuario: string; tiene_clave: boolean; recordar: boolean; del_servidor: boolean };
 }
 
@@ -112,6 +115,47 @@ export interface ResultadoConversion {
   /** Lo que no generó archivo, por ejemplo «Ventas: no hay partidas…». */
   avisos: string[];
   error: string | null;
+}
+
+/** Emisor o receptor de un comprobante: tipo de documento de ARCA (80 CUIT, 96 DNI, 99 consumidor final). */
+export interface ParteComprobante {
+  doc_tipo: number | null;
+  doc_nro: string;
+  nombre: string;
+}
+
+/** Un comprobante leído de un PDF, foto, CSV o planilla, para revisar antes de subirlo a Xubio. */
+export interface ComprobanteExtraido {
+  id: string;
+  archivo: string;
+  pagina: number | null;
+  /** Cómo se leyó: el QR de ARCA es exacto; el OCR conviene revisarlo. */
+  metodo: 'planilla' | 'qr' | 'pdf' | 'ocr' | 'manual';
+  incluir: boolean;
+  operacion: 'Ventas' | 'Compras' | null;
+  /** El cliente del estudio (la empresa en Xubio). */
+  cliente: string;
+  /** AAAA-MM-DD. */
+  fecha: string;
+  tipo: number | null;
+  punto_venta: number | null;
+  numero: number | null;
+  cae: string;
+  emisor: ParteComprobante;
+  receptor: ParteComprobante;
+  moneda: string;
+  tipo_cambio: number;
+  /** Con las columnas del CSV de Mis Comprobantes («IVA 21%», «Imp. Total»…). */
+  importes: Record<string, number | null>;
+  avisos: string[];
+}
+
+/** Qué pasó con cada archivo al leerlo: los AUX van por «Convertir AUX». */
+export interface ArchivoLeido {
+  nombre: string;
+  tipo: 'aux' | 'comprobantes' | 'error';
+  cantidad: number;
+  avisos: string[];
 }
 
 /** Un AUX subido: nombre y contenido en base64. */
@@ -256,6 +300,8 @@ export interface FaltantesExcel {
 export interface FilaConError {
   origen: 'arca' | 'xubio';
   fila: CeldaVista[];
+  /** Solo ARCA: las columnas de «Mis Comprobantes» para la tabla del mail al cliente. */
+  mail?: CeldaVista[];
   /** Partida sin ARCA que es normal: tique o extracto bancario, o proveedor del exterior. */
   motivo?: 'tique' | 'exterior' | 'anulada' | 'liquidacion';
 }
@@ -334,4 +380,49 @@ export function mensajeDeError(e: unknown, porDefecto = 'Algo falló. Probá de 
   if (Array.isArray(d)) return d.map((x: { msg?: string }) => x.msg).filter(Boolean).join(' · ') || porDefecto;
   if (d && typeof d === 'object' && 'mensaje' in d) return String((d as { mensaje: string }).mensaje);
   return porDefecto;
+}
+
+// --- Conversor De Facturas (backend/app/extraccion/a_excel.py) ---------------------------
+
+export type NivelVerificacion = 'ok' | 'aviso' | 'error';
+
+export interface ItemLeido {
+  codigo: string;
+  descripcion: string;
+  cantidad: number | null;
+  precio: number | null;
+  alicuota: number | null;
+  importe: number | null;
+}
+
+export interface HojaLeida {
+  nombre: string;
+  filas: (string | number | null)[][];
+}
+
+export interface Verificacion {
+  /** emisor_cuit, neto_gravado, total, items, hojas… */
+  campo: string;
+  nivel: NivelVerificacion;
+  mensaje: string;
+  /** El valor que dan las cuentas (se ofrece «Usar»). */
+  sugerencia: string | number | null;
+}
+
+/** Lo leído de un archivo: un comprobante (encabezado, ítems, totales) o una tabla (hojas). */
+export interface LecturaExcel {
+  archivo: string;
+  tipo: 'comprobante' | 'tabla';
+  metodo: 'planilla' | 'pdf' | 'ocr';
+  encabezado: Record<string, string>;
+  items: ItemLeido[];
+  totales: Record<string, number | null>;
+  hojas: HojaLeida[];
+  texto: string;
+  /** Lo que cada pasada de OCR leyó distinto. */
+  dudas: Record<string, string[]>;
+  avisos: string[];
+  verificaciones: Verificacion[];
+  /** Solo si el archivo no se pudo leer. */
+  error?: string;
 }

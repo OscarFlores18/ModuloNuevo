@@ -1,4 +1,8 @@
-/** Descarga común del navegador (modo servidor): el archivo va a la carpeta de descargas. */
+/**
+ * Todas las descargas de la app pasan por acá: descarga común del navegador, el
+ * archivo va a Descargas. En la app de escritorio (WebView2) se ve en el panel
+ * de descargas de arriba a la derecha.
+ */
 export function descargarBlob(nombre: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

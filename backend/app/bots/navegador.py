@@ -59,10 +59,19 @@ def entorno_navegador() -> dict[str, str]:
     }
 
 
-def opciones_lanzamiento(*, maximizado: bool = False) -> dict[str, object]:
+def oculto(visible: bool | None = None) -> bool:
+    """Si el navegador corre sin ventana. ``visible=True`` la fuerza (p. ej.
+    «Cargar en Xubio», donde la persona aprieta «Importar»)."""
+    return not visible if visible is not None else config.PLAYWRIGHT_HEADLESS
+
+
+def opciones_lanzamiento(*, maximizado: bool = False, visible: bool | None = None) -> dict[str, object]:
+    sin_ventana = oculto(visible)
+    ancho, alto = config.PLAYWRIGHT_VIEWPORT
+    tamano = [f"--window-size={ancho},{alto}"] if sin_ventana else (["--start-maximized"] if maximizado else [])
     opciones: dict[str, object] = {
-        "headless": config.PLAYWRIGHT_HEADLESS,
-        "args": list(ARGS_SILENCIO) + (["--start-maximized"] if maximizado else []),
+        "headless": sin_ventana,
+        "args": list(ARGS_SILENCIO) + tamano,
         "env": entorno_navegador(),
     }
     if config.PLAYWRIGHT_CHANNEL:
@@ -91,8 +100,8 @@ def chrome_disponible() -> bool:
     )
 
 
-def lanzar(pw, *, maximizado: bool = False):
-    return pw.chromium.launch(**opciones_lanzamiento(maximizado=maximizado))
+def lanzar(pw, *, maximizado: bool = False, visible: bool | None = None):
+    return pw.chromium.launch(**opciones_lanzamiento(maximizado=maximizado, visible=visible))
 
 
 # --- Contexto -----------------------------------------------------------------------
@@ -142,14 +151,19 @@ def _necesita_imagenes(url: str) -> bool:
     return any(host == h or host.endswith("." + h) for h in HOSTS_CON_IMAGENES)
 
 
+# Cada sitio bloqueado se anota una sola vez por apertura de la app: antes se
+# repetía en cada login (cada cliente) y llenaba backend.log de líneas iguales.
+_HOSTS_AVISADOS: set[str] = set()
+_LOCK_AVISADOS = threading.Lock()
+
+
 def _instalar_filtro_salida(context, log: Callable[[str], None]) -> None:
     modo = config.EGRESS_MODO
     filtrar = modo not in ("off", "0", "no")
     aligerar = config.BLOQUEAR_RECURSOS
     if not filtrar and not aligerar:
         return
-    avisados: set[str] = set()
-    lock = threading.Lock()
+    avisados, lock = _HOSTS_AVISADOS, _LOCK_AVISADOS
 
     def manejar(route) -> None:
         url = route.request.url
@@ -196,7 +210,14 @@ def nuevo_contexto(browser, log: Callable[[str], None] = print, **opciones):
     for k in _PROHIBIDAS_CONTEXTO:
         opciones.pop(k, None)
     opciones.setdefault("service_workers", "block")
+    # Resolución fija, salvo que se pida la ventana maximizada (no_viewport).
+    if not opciones.get("no_viewport"):
+        ancho, alto = config.PLAYWRIGHT_VIEWPORT
+        opciones.setdefault("viewport", {"width": ancho, "height": alto})
     context = browser.new_context(**opciones)
+    # Lo que no pide un tiempo propio (pestañas nuevas, descargas, goto) espera lo mismo.
+    context.set_default_timeout(config.PLAYWRIGHT_ESPERA_MS)
+    context.set_default_navigation_timeout(config.PLAYWRIGHT_ESPERA_MS)
     _instalar_filtro_salida(context, log)
     return context
 

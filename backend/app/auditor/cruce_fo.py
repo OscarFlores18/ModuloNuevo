@@ -366,6 +366,30 @@ def _importes_distintos(operacion, df_arca, df_xubio, columnas_arca, columnas_xu
 COLUMNAS_QUE_SUMAN = ("neto gravado total", "neto no gravado", "op. exentas", "otros tributos", "total iva")
 
 
+# Orden en que se muestran las alícuotas (como en el Libro IVA).
+ORDEN_ALICUOTAS = ("21", "10.5", "27", "2.5", "5", "0")
+
+
+def _columnas_por_alicuota(df_arca) -> list[tuple[str, object, object]]:
+    """[(porcentaje, columna del neto, columna del IVA)] de «Mis Comprobantes»
+    («Neto Grav. IVA 21%» / «IVA 21%»…), en el orden del Libro IVA. La alícuota
+    0% no tiene IVA (queda ``None``)."""
+    netos, ivas = {}, {}
+    for c in df_arca.columns:
+        nombre = str(c).strip()
+        m = re.search(r"(\d+(?:[.,]\d+)?)\s*%\s*$", nombre)
+        if not m:
+            continue
+        pct = m.group(1).replace(",", ".")
+        bajo = nombre.lower()
+        if "neto" in bajo and "grav" in bajo:
+            netos[pct] = c
+        elif re.match(r"^(imp\.?\s*)?iva\s*\d", bajo):
+            ivas[pct] = c
+    pcts = sorted(set(netos) | set(ivas), key=lambda p: ORDEN_ALICUOTAS.index(p) if p in ORDEN_ALICUOTAS else len(ORDEN_ALICUOTAS))
+    return [(p, netos.get(p), ivas.get(p)) for p in pcts]
+
+
 def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cuit_arca, col_total_arca):
     """Comprobantes de ARCA cuyas columnas (neto gravado, no gravado, exento,
     otros tributos e IVA) no suman el Imp. Total: ARCA no discrimina una parte
@@ -374,8 +398,8 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
     Xubio con el total completo."""
     if col_total_arca is None or "Clave_Py" not in df_arca.columns:
         return [], 0
-    por_nombre = {str(c).strip().lower(): c for c in df_arca.columns}
-    partes = [por_nombre[n] for n in COLUMNAS_QUE_SUMAN if n in por_nombre]
+    # En el orden de la planilla, con el nombre tal cual: así se muestran.
+    partes = [c for c in df_arca.columns if str(c).strip().lower() in COLUMNAS_QUE_SUMAN]
     if not partes:
         return [], 0
     usa_cuit = operacion == "Compras" and col_cuit_arca is not None and "CUIT" in df_xubio.columns
@@ -387,7 +411,7 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
                 clave = (_solo_digitos(fx.get("CUIT")) if usa_cuit else "", str(fx["Comprobante"]), _clase_comprobante(fx.get("Tipo")))
                 totales_x[clave] = total_x
 
-    salida, bien_en_xubio = [], 0
+    no_cierran = []
     for _, fa in df_arca.iterrows():
         total = _numero(fa.get(col_total_arca))
         valores = [_numero(fa.get(c)) or 0.0 for c in partes]
@@ -397,12 +421,35 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
         diferencia = round(total - suma, 2)
         if abs(diferencia) <= TOLERANCIA_IMPORTE:
             continue
+        no_cierran.append((fa, total, diferencia))
+
+    # Lo que se muestra: el neto y el IVA de cada alícuota («Neto gravado 21%»,
+    # «IVA 21%»…) solo de las que usa alguno de estos comprobantes, y después el
+    # no gravado, el exento y los otros tributos. Sin alícuotas en la planilla,
+    # el neto y el IVA totales.
+    alicuotas = _columnas_por_alicuota(df_arca)
+    usadas = [
+        (pct, neto, iva) for pct, neto, iva in alicuotas
+        if any(_numero(fa.get(c)) for fa, _, _ in no_cierran for c in (neto, iva) if c is not None)
+    ]
+    if alicuotas:
+        resto = [c for c in partes if str(c).strip().lower() not in ("neto gravado total", "total iva")]
+        mostrar = [(t, c) for pct, neto, iva in usadas for t, c in ((f"Neto gravado {pct}%", neto), (f"IVA {pct}%", iva)) if c is not None]
+        mostrar += [(str(c), c) for c in resto]
+    else:
+        mostrar = [(str(c), c) for c in partes]
+    # El no gravado, el exento y los otros tributos van siempre (vacíos, con «-»):
+    # son lo que debería sumar el Imp. Total. Las alícuotas, solo las que se usan.
+
+    salida, bien_en_xubio = [], 0
+    for fa, total, diferencia in no_cierran:
         clave = (_solo_digitos(fa.get(col_cuit_arca)) if usa_cuit else "", str(fa["Clave_Py"]), _clase_comprobante(fa.get("Tipo")))
         total_x = totales_x.get(clave)
         if total_x is not None and abs(abs(total_x) - abs(total)) <= TOLERANCIA_IMPORTE:
             bien_en_xubio += 1
         fila = _fila_vista(fa, columnas_arca) + [
-            {"columna": "Suma columnas", "valor": suma},
+            {"columna": titulo, "valor": round(_numero(fa.get(c)) or 0.0, 2)} for titulo, c in mostrar
+        ] + [
             {"columna": "Diferencia", "valor": diferencia},
             {"columna": "Total Xubio", "valor": None if total_x is None else round(total_x, 2)},
         ]
@@ -412,6 +459,39 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
 
 def _clave_cuit(cuit, comprobante) -> tuple[str, str]:
     return (_solo_digitos(cuit), str(comprobante))
+
+
+def _columnas_mail_arca(df_arca, operacion, col_fecha, col_cuit, col_prov, col_total) -> list[tuple[str, object]]:
+    """Las columnas de ARCA, con sus títulos de «Mis Comprobantes», que van en la
+    tabla del mail al cliente. La que no esté en la planilla queda vacía."""
+    columnas = [str(c) for c in getattr(df_arca, "columns", [])]
+
+    def buscar(*claves, evitar=()):
+        for c in columnas:
+            bajo = c.lower()
+            if any(k in bajo for k in claves) and not any(e in bajo for e in evitar):
+                return c
+        return None
+
+    parte = "Emisor" if operacion == "Compras" else "Receptor"
+    # El IVA de cada alícuota («IVA 21%», «IVA 10,5%»…): en el mail, la celda IVA dice
+    # el porcentaje de cada uno. Van después de «IVA» con su título tal cual.
+    alicuotas = [(c, c) for c in columnas if re.match(r"^\s*(imp\.?\s*)?iva\s*\d", c, re.IGNORECASE)]
+    return [
+        ("Fecha", col_fecha),
+        ("Tipo", buscar("tipo de comprobante") or ("Tipo" if "Tipo" in columnas else None)),
+        ("Punto de Venta", buscar("punto de venta")),
+        ("Número Desde", buscar("número desde", "numero desde")),
+        ("Cód. Autorización", buscar("autoriz")),
+        (f"Tipo Doc. {parte}", buscar("tipo doc")),
+        (f"Nro. Doc. {parte}", col_cuit),
+        (f"Denominación {parte}", col_prov),
+        ("Imp. Neto Gravado", buscar("neto gravado total") or buscar("neto gravado", evitar=("no gravado", "iva "))),
+        ("Imp. Op. Exentas", buscar("exent")),
+        ("IVA", buscar("total iva") or next((c for c in columnas if c.strip().lower() == "iva"), None)),
+        *alicuotas,
+        ("Imp. Total", col_total),
+    ]
 
 
 def diagnosticar(
@@ -449,13 +529,18 @@ def diagnosticar(
         ("Proveedor" if operacion == "Compras" else "Cliente", 'Proveedor'),
         ("Total", 'Total'),
     ]
+    columnas_mail = _columnas_mail_arca(df_arca, operacion, col_fecha_arca, col_cuit_arca, col_prov_arca, col_total_arca)
 
     def filas(df, columnas, origen, excluir=frozenset(), col_cuit=None, col_comp=None):
         salida = []
         for _, fila in df.iterrows():
             if excluir and _clave_cuit(fila.get(col_cuit), fila.get(col_comp)) in excluir:
                 continue
-            salida.append({"origen": origen, "fila": _fila_vista(fila, columnas)})
+            item = {"origen": origen, "fila": _fila_vista(fila, columnas)}
+            if origen == "arca":
+                # Las columnas de «Mis Comprobantes» para la tabla del mail al cliente.
+                item["mail"] = _fila_vista(fila, columnas_mail)
+            salida.append(item)
         return salida
 
     def error(tipo, gravedad, titulo, detalle, acciones, items, hoja=None, a_corregir=None):
@@ -788,39 +873,6 @@ def _claves_de_error(e: dict) -> tuple[set, set]:
     return arca, xubio
 
 
-ERRORES_SEGUNDA_PASADA = ("letra_distinta", "tipo_distinto", "cuit_distinto")
-
-
-def sin_segunda_pasada(errores: list[dict], df_faltantes_arca, df_faltantes_xubio, col_cuit_arca):
-    """Saca de los faltantes los comprobantes que la 2ª pasada encontró en el otro
-    lado con otra letra, tipo o CUIT: están cargados (mal), no faltan. Si quedaran,
-    irían al CSV de «Subir a Xubio» y el comprobante terminaría duplicado."""
-    claves_a, claves_x = set(), set()
-    for e in errores:
-        if e["tipo"] in ERRORES_SEGUNDA_PASADA:
-            a, x = _claves_de_error(e)
-            claves_a |= a
-            claves_x |= x
-    if not claves_a and not claves_x:
-        return df_faltantes_arca, df_faltantes_xubio
-
-    def fuera(df, col_cuit, col_comp, claves):
-        if df.empty or not claves:
-            return df
-        tipo = df['Tipo'] if 'Tipo' in df.columns else pd.Series([""] * len(df), index=df.index)
-        cuits = df[col_cuit] if col_cuit in df.columns else pd.Series([""] * len(df), index=df.index)
-        quedan = [
-            _clave_fila(c, comp, t) not in claves
-            for c, comp, t in zip(cuits, df[col_comp], tipo)
-        ]
-        return df[quedan]
-
-    return (
-        fuera(df_faltantes_arca, col_cuit_arca, 'Clave_Py', claves_a),
-        fuera(df_faltantes_xubio, 'CUIT', 'Comprobante', claves_x),
-    )
-
-
 def _columnas(ws) -> dict[str, int]:
     return {str(c.value).strip().lower(): c.column for c in ws[1] if c.value is not None}
 
@@ -1055,10 +1107,14 @@ def procesar_cruce(
     avisar_letras_distintas: Callable[[list[dict]], None] | None = None,
     avisar_errores: Callable[[list[dict]], None] | None = None,
     avisar_resumen: Callable[[dict], None] | None = None,
+    libro_xubio_vacio: bool = False,
 ) -> str:
     """Genera el control de facturas y devuelve la ruta del Excel.
 
     Nunca frena por duplicados ni por letras distintas: los anota y sigue.
+
+    `libro_xubio_vacio`: el bot de Xubio corrió bien y dijo «Sin registros» (no
+    baja archivo): sin el Libro IVA se cruza contra uno vacío en vez de dar error.
     """
     log(f"      [INFO] Iniciando cruce FO 04-01 para {empresa} ({operacion})")
     
@@ -1087,7 +1143,10 @@ def procesar_cruce(
             f"No se encontró el archivo de ARCA esperado:\n{ruta_arca}",
             detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_arca},
         )
-    if not os.path.exists(ruta_xubio):
+    sin_libro_xubio = not os.path.exists(ruta_xubio)
+    if sin_libro_xubio and libro_xubio_vacio:
+        log(f"      [INFO] Xubio no tiene registros de {operacion} en el período: se cruza contra un Libro IVA vacío.")
+    elif sin_libro_xubio:
         raise ArchivoNoEncontrado(
             f"No se encontró el archivo de Xubio esperado:\n{ruta_xubio}",
             detalle={"cliente": empresa, "paso": "auditoria", "ruta": ruta_xubio},
@@ -1204,7 +1263,10 @@ def procesar_cruce(
         return s
 
     # 2. CARGA INTELIGENTE DE LIBRO IVA
-    df_xubio_raw = pd.read_csv(ruta_xubio, header=None) if ruta_xubio.endswith('.csv') else pd.read_excel(ruta_xubio, header=None)
+    if sin_libro_xubio:
+        df_xubio_raw = pd.DataFrame()
+    else:
+        df_xubio_raw = pd.read_csv(ruta_xubio, header=None) if ruta_xubio.endswith('.csv') else pd.read_excel(ruta_xubio, header=None)
     
     nombre_xubio = os.path.basename(ruta_xubio)
     if df_xubio_raw.empty:
@@ -1282,11 +1344,9 @@ def procesar_cruce(
     )
     if avisar_errores is not None:
         avisar_errores(errores_diag)
-    # 2ª pasada (mismo comprobante con otra letra, tipo o CUIT): ya existe en
-    # Xubio mal cargado. Se corrige allá; subirlo desde «Faltantes» lo duplicaría.
-    df_faltantes_arca, df_faltantes_xubio = sin_segunda_pasada(
-        errores_diag, df_faltantes_arca, df_faltantes_xubio, col_doc_arca,
-    )
+    # Lo de la 2ª pasada (mismo comprobante con otra letra, tipo o CUIT) sigue en
+    # «Faltantes» como lo dio el cruce: el AUX sale con sus errores. Solo deja de
+    # estar si se corrige a mano o con «Aplicar cambios» (que vuelve a cruzar).
     if avisar_resumen is not None:
         # Cuántos comprobantes de ARCA tienen su par en Xubio (los demás son los
         # de la sección «Partidas de ARCA no encontradas…»).
@@ -1692,7 +1752,8 @@ def procesar_cruce(
             ws_xubio[f"{letra_est}{row}"].value = f'=IF(AND({letra_d_iva}{row}>=-0.02, {letra_d_iva}{row}<=0.02, {letra_d_tot}{row}>=-0.02, {letra_d_tot}{row}<=0.02), "Ok", "Faltante en ARCA")'
 
     regla_revisar = FormulaRule(formula=[f'${letra_est}2="Faltante en ARCA"'], font=Font(bold=True))
-    ws_xubio.conditional_formatting.add(f"A2:{letra_est}{max_row_xubio}", regla_revisar)
+    if max_row_xubio >= 2:  # sin filas (libro vacío) no hay rango que marcar
+        ws_xubio.conditional_formatting.add(f"A2:{letra_est}{max_row_xubio}", regla_revisar)
 
     # --- TOTALES FINALES ---
     t_a1, t_a2, t_a3 = max_row_arca + 2, max_row_arca + 3, max_row_arca + 4

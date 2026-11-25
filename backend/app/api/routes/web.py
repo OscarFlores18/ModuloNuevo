@@ -22,12 +22,24 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...auditor.csv_arca import convertir_auxiliares, filas_para_mostrar, libro_sin_arca
+from ...auditor.csv_arca import (
+    PREFIJO_CSV,
+    convertir_auxiliares,
+    datos_del_nombre,
+    excel_de,
+    filas_para_mostrar,
+    leer_faltantes_de_control,
+    libro_sin_arca,
+)
+from ...version import COMPILADO, VERSION
 from ...bots.navegador import chrome_disponible
-from ...core import acceso_clientes, config, dialogos
+from ...core import acceso_clientes, config, dialogos, pegado
 from ...core.controles import resumen_controles
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
+from ...extraccion import servicio as extraccion_srv
+from ...extraccion import a_excel
+from ...extraccion.modelo import Comprobante
 from ...services import ejecuciones as ejecuciones_srv
 from ...services import importacion_xubio as importacion_srv
 from ...services import precarga as precarga_srv
@@ -342,7 +354,11 @@ def convertir_aux(body: ConvertirAuxRequest) -> dict:
         if len(datos) > MAX_BYTES_AUX:
             raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
         archivos.append((a.nombre, datos))
-    resultados = convertir_auxiliares(archivos, excluir)
+    return {"resultados": _resultados_b64(convertir_auxiliares(archivos, excluir))}
+
+
+def _resultados_b64(resultados: list[dict]) -> list[dict]:
+    """Los .zip y el Excel de cada resultado, en base64 para el JSON."""
     def b64(archivo: dict) -> dict:
         return {"nombre": archivo["nombre"], "contenido": base64.b64encode(archivo["contenido"]).decode("ascii")}
 
@@ -350,13 +366,108 @@ def convertir_aux(body: ConvertirAuxRequest) -> dict:
         r["zips"] = {op: b64(z) for op, z in r["zips"].items()}
         if r.get("excel"):
             r["excel"] = b64(r["excel"])
-    return {"resultados": resultados}
+    return resultados
+
+
+# --- Comprobantes desde PDF, fotos, CSV y planillas -----------------------------
+#
+# Mismo paso a Xubio que «Convertir AUX»: se extraen, la persona los revisa en la
+# pantalla y /preparar devuelve el mismo ResultadoConversion (el .zip con el CSV
+# de Mis Comprobantes) que después carga /convertir-aux/xubio.
+
+
+class ArchivoComprobantes(BaseModel):
+    nombre: str = Field(min_length=1, max_length=260)
+    contenido: str  # base64
+
+
+class ExtraerRequest(BaseModel):
+    archivos: list[ArchivoComprobantes] = Field(min_length=1, max_length=MAX_AUX)
+
+
+@router.post("/comprobantes/extraer")
+def extraer_comprobantes(body: ExtraerRequest, clientes: ClientesRepository = Depends(get_clientes)) -> dict:
+    """Lee los comprobantes de cada archivo y los devuelve normalizados para revisar.
+    Los AUX del control vuelven marcados («aux») para que vayan por /convertir-aux."""
+    archivos: list[tuple[str, bytes]] = []
+    for a in body.archivos:
+        if Path(a.nombre).suffix.lower() not in extraccion_srv.FORMATOS:
+            raise HTTPException(status_code=422, detail={"mensaje": f"«{a.nombre}»: formato no soportado (Excel, CSV, PDF, JPG o PNG)."})
+        try:
+            datos = base64.b64decode(a.contenido, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=422, detail={"mensaje": f"No se pudo leer «{a.nombre}»."}) from exc
+        if len(datos) > MAX_BYTES_AUX:
+            raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
+        archivos.append((a.nombre, datos))
+    return extraccion_srv.extraer(archivos, clientes.listar_publico())
+
+
+# --- Pasar a Excel: cualquier archivo a .xlsx, verificando lo leído ---------------
+
+
+class LeerAExcelRequest(BaseModel):
+    archivos: list[ArchivoComprobantes] = Field(min_length=1, max_length=20)
+
+
+@router.post("/a-excel/leer")
+def leer_a_excel(body: LeerAExcelRequest) -> dict:
+    """Lo leído de cada archivo (foto, captura, PDF, CSV, Excel), con la
+    verificación, para revisarlo antes de armar el Excel."""
+    lecturas: list[dict] = []
+    for a in body.archivos:
+        nombre = Path(a.nombre).name
+        try:
+            datos = base64.b64decode(a.contenido, validate=True)
+        except (binascii.Error, ValueError):
+            lecturas.append({"archivo": nombre, "error": f"No se pudo leer «{nombre}»."})
+            continue
+        if len(datos) > MAX_BYTES_AUX:
+            lecturas.append({"archivo": nombre, "error": f"«{nombre}» es demasiado grande (más de 25 MB)."})
+            continue
+        try:
+            lecturas.append(a_excel.leer(nombre, datos).model_dump())
+        except ValueError as exc:
+            lecturas.append({"archivo": nombre, "error": str(exc)})
+        except Exception as exc:  # que un archivo raro no corte los demás
+            lecturas.append({"archivo": nombre, "error": f"No se pudo leer «{nombre}»: {exc}"})
+    return {"lecturas": lecturas}
+
+
+class LecturaRequest(BaseModel):
+    lectura: a_excel.Lectura
+
+
+@router.post("/a-excel/verificar")
+def verificar_a_excel(body: LecturaRequest) -> dict:
+    """La verificación otra vez, con lo que se corrigió en la pantalla."""
+    return {"verificaciones": [v.model_dump() for v in a_excel.verificar(body.lectura)]}
+
+
+@router.post("/a-excel/generar")
+def generar_a_excel(body: LecturaRequest) -> dict:
+    lectura = body.lectura
+    lectura.verificaciones = a_excel.verificar(lectura)
+    return {
+        "nombre": a_excel.nombre_excel(lectura),
+        "contenido": base64.b64encode(a_excel.generar(lectura)).decode("ascii"),
+    }
+
+
+class PrepararRequest(BaseModel):
+    comprobantes: list[Comprobante] = Field(min_length=1, max_length=5000)
+
+
+@router.post("/comprobantes/preparar")
+def preparar_comprobantes(body: PrepararRequest) -> dict:
+    """Los comprobantes revisados, por cliente, como «Convertir AUX»: un .zip por operación."""
+    return {"resultados": _resultados_b64(extraccion_srv.preparar(body.comprobantes))}
 
 
 class CargarEnXubioRequest(BaseModel):
     cliente: str = Field(min_length=1)
     operacion: str
-    zip: str  # base64 del .zip que devolvió /convertir-aux
+    zip: str  # base64 del .zip que devolvió /convertir-aux o /comprobantes/preparar
 
 
 @router.post("/convertir-aux/xubio")
@@ -365,8 +476,8 @@ def cargar_en_xubio(
     clientes: ClientesRepository = Depends(get_clientes),
     creds: CredencialesXubioRepository = Depends(get_credenciales_xubio),
 ) -> dict:
-    """Prueba: abre Xubio, va a «Importar desde Mis Comprobantes (ARCA)» de la
-    operación y carga el archivo. No aprieta «Importar»."""
+    """Abre Xubio, va a «Importar desde Mis Comprobantes (ARCA)» de la operación,
+    carga el archivo y aprieta «Importar». Devuelve lo que contestó Xubio."""
     try:
         datos = base64.b64decode(body.zip, validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -375,6 +486,24 @@ def cargar_en_xubio(
         return importacion_srv.preparar(body.cliente, body.operacion, datos, clientes, creds)
     except importacion_srv.ErrorImportacion as exc:
         raise HTTPException(status_code=exc.status, detail={"mensaje": exc.mensaje}) from exc
+
+
+# --- Mail «Consultar al cliente» -----------------------------------------------
+
+
+@router.post("/mail/pegar", status_code=status.HTTP_202_ACCEPTED)
+def pegar_mail() -> dict:
+    """Aprieta Ctrl+V en Gmail cuando se abre (el mail con la tabla ya está copiado).
+
+    Solo con el backend en esta PC: en un servidor no hay teclado que apretar.
+    """
+    _solo_local()
+    if not pegado.pegar_en_gmail():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"mensaje": "El pegado automático solo funciona en Windows."},
+        )
+    return {"ok": True}
 
 
 # --- Ajustes -------------------------------------------------------------------
@@ -390,6 +519,8 @@ def ajustes(
         "pausa_segundos": config.PAUSA_ENTRE_CLIENTES_S,
         "dialogos_locales": config.DIALOGOS_LOCALES,
         "chrome_instalado": chrome_disponible(),
+        "version": VERSION,
+        "compilado": COMPILADO,
         "xubio": {
             "usuario": datos["user"],
             "tiene_clave": datos["tiene_pass"],
@@ -566,6 +697,72 @@ def faltantes_ejecucion(ejecucion_id: str, indice: int) -> dict:
     return salida
 
 
+@router.get("/ejecuciones/{ejecucion_id}/clientes/{indice}/faltantes-excel")
+def faltantes_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str | None = None) -> dict:
+    """Las partidas de ARCA no encontradas en el Libro IVA en un .xlsx (una hoja por
+    operación, columnas de «Mis Comprobantes»), para adjuntar al mail que le pide al
+    cliente que las cargue. Con ``operacion``, solo esa. {nombre, contenido (base64)}."""
+    if operacion is not None and operacion not in ("Ventas", "Compras"):
+        raise HTTPException(status_code=422, detail={"mensaje": "Operación desconocida."})
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        if not 0 <= indice < len(ej.clientes):
+            raise ejecuciones_srv.ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
+        tablas = {}
+        periodo = ""
+        for op, nombre in _aux_activos([a["nombre"] for a in ej.clientes[indice].archivos]).items():
+            if operacion and op != operacion:
+                continue
+            tabla = leer_faltantes_de_control(ejecuciones_srv.ruta_archivo(ej, indice, nombre), op)
+            if len(tabla):
+                tablas[op] = tabla
+                periodo = periodo or datos_del_nombre(nombre)[1]
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    if not tablas:
+        raise HTTPException(status_code=404, detail={"mensaje": "No hay partidas de ARCA no encontradas en el Libro IVA."})
+    cliente = ej.clientes[indice].nombre
+    nombre = f"{PREFIJO_CSV} - {cliente}" + (f" - {periodo}" if periodo else "") + ".xlsx"
+    return {"nombre": nombre, "contenido": base64.b64encode(excel_de(tablas)).decode("ascii")}
+
+
+class BloqueHallazgo(BaseModel):
+    """Un hallazgo tal como se ve en la ventana (lo arma el frontend)."""
+
+    cliente: str = Field(default="", max_length=200)
+    operacion: str = Field(default="", max_length=20)
+    insignia: str = Field(default="", max_length=40)
+    titulo: str = Field(default="", max_length=500)
+    que_hacer: str = Field(default="", max_length=1000)
+    detalle: str = Field(default="", max_length=5000)
+    columnas: list[str] = Field(default_factory=list, max_length=60)
+    filas: list[list[str | float | int | None]] = Field(default_factory=list, max_length=5000)
+
+
+class HallazgosExcelRequest(BaseModel):
+    cliente: str | None = Field(default=None, max_length=200)
+    bloques: list[BloqueHallazgo] = Field(min_length=1, max_length=2000)
+
+
+@router.post("/ejecuciones/{ejecucion_id}/hallazgos-excel")
+def hallazgos_excel_ejecucion(ejecucion_id: str, pedido: HallazgosExcelRequest) -> dict:
+    """Los hallazgos del control en un .xlsx, para guardarlos como registro: cada uno
+    como se ve en la ventana, sin estilos. {nombre, contenido (base64)}."""
+    from ...auditor.registro_hallazgos import excel_hallazgos
+
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    desde, hasta = str(ej.parametros.get("desde") or ""), str(ej.parametros.get("hasta") or "")
+    periodo = f"{desde} al {hasta}" if desde and hasta else desde or hasta
+    mes = f"{hasta[3:5]}-{hasta[8:10]}" if len(hasta) == 10 else ""
+    cliente = pedido.cliente
+    nombre = "Hallazgos" + (f" - {cliente}" if cliente else "") + (f" - {mes}" if mes else "") + ".xlsx"
+    contenido = excel_hallazgos([b.model_dump() for b in pedido.bloques], periodo)
+    return {"nombre": nombre, "contenido": base64.b64encode(contenido).decode("ascii")}
+
+
 class CambioElegido(BaseModel):
     """Un dato de ARCA para escribir en el Libro IVA (un par de «Error»)."""
 
@@ -642,16 +839,19 @@ def guardar_archivo_ejecucion(ejecucion_id: str, indice: int, nombre: str) -> di
 
 
 @router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/exportar")
-def exportar_archivos_ejecucion(ejecucion_id: str, indice: int) -> dict:
+def exportar_archivos_ejecucion(ejecucion_id: str, indice: int, ventana: bool = True) -> dict:
     """Abre en la PC del servidor la ventana para elegir carpeta. Con una carpeta
     elegida, los archivos van a `<elegida>/<mmaaaa>/`; si se cierra sin elegir,
-    a `<Descargas>/<Cliente>/<mmaaaa>/`."""
+    a `<Descargas>/<Cliente>/<mmaaaa>/`. Con `ventana=false` van directo a Descargas
+    («Descargar todos»: las carpetas de siempre, sin .zip)."""
     _solo_local()
     try:
         ej = ejecuciones_srv.obtener(ejecucion_id)
         ejecuciones_srv.archivos_del_cliente(ej, indice)  # que haya algo antes de abrir la ventana
-        destino = dialogos.elegir_carpeta(
-            "Elegí la carpeta del cliente (o cerrá para crearla en Descargas)"
+        destino = (
+            dialogos.elegir_carpeta("Elegí la carpeta del cliente (o cerrá para crearla en Descargas)")
+            if ventana
+            else None
         )
         return ejecuciones_srv.exportar_archivos(ej, indice, destino)
     except ejecuciones_srv.ErrorEjecucion as exc:

@@ -2,7 +2,8 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido } from '../models';
+import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido, LecturaExcel, Verificacion } from '../models';
+import type { BloqueRegistro } from '../../features/ejecucion/ventana-errores';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -40,16 +41,56 @@ export class ApiService {
     );
   }
 
-  /** Prueba: abre Xubio y carga el .zip en «Importar desde Mis Comprobantes (ARCA)», sin confirmar. */
+  /** «Conversor De Facturas»: lo leído de cada archivo, con la verificación. */
+  leerAExcel(archivos: ArchivoSubido[]): Promise<{ lecturas: LecturaExcel[] }> {
+    return firstValueFrom(
+      this.http.post<{ lecturas: LecturaExcel[] }>(`${this.url}/a-excel/leer`, { archivos }).pipe(errorLegible('No se pudieron leer los archivos.')),
+    );
+  }
+  /** La verificación de nuevo, con lo corregido en pantalla. */
+  verificarAExcel(lectura: LecturaExcel): Promise<{ verificaciones: Verificacion[] }> {
+    return firstValueFrom(
+      this.http.post<{ verificaciones: Verificacion[] }>(`${this.url}/a-excel/verificar`, { lectura }).pipe(errorLegible('No se pudo verificar.')),
+    );
+  }
+  /** El .xlsx (en base64). */
+  generarAExcel(lectura: LecturaExcel): Promise<{ nombre: string; contenido: string }> {
+    return firstValueFrom(
+      this.http.post<{ nombre: string; contenido: string }>(`${this.url}/a-excel/generar`, { lectura }).pipe(errorLegible('No se pudo armar el Excel.')),
+    );
+  }
+  /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */
+  extraerComprobantes(archivos: ArchivoSubido[]): Promise<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }> {
+    return firstValueFrom(
+      this.http
+        .post<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }>(`${this.url}/comprobantes/extraer`, { archivos })
+        .pipe(errorLegible('No se pudieron leer los archivos.')),
+    );
+  }
+
+  /** Los comprobantes revisados, armados como «Convertir AUX» (un .zip por operación y cliente). */
+  prepararComprobantes(comprobantes: ComprobanteExtraido[]): Promise<{ resultados: ResultadoConversion[] }> {
+    return firstValueFrom(
+      this.http
+        .post<{ resultados: ResultadoConversion[] }>(`${this.url}/comprobantes/preparar`, { comprobantes })
+        .pipe(errorLegible('No se pudieron preparar los comprobantes.')),
+    );
+  }
+
+  /** Abre Xubio, carga el .zip en «Importar desde Mis Comprobantes (ARCA)», aprieta «Importar» y devuelve lo que dijo Xubio. */
   cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string): Promise<ResultadoCargaXubio> {
     return firstValueFrom(
-      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo abrir Xubio.')),
+      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo subir a Xubio.')),
     );
   }
 
   // Ajustes
   ajustes(): Promise<Ajustes> {
     return firstValueFrom(this.http.get<Ajustes>(`${this.url}/ajustes`));
+  }
+  /** El backend (en esta PC) aprieta Ctrl+V en Gmail cuando se abre. */
+  pegarMail(): Promise<void> {
+    return firstValueFrom(this.http.post<void>(`${this.url}/mail/pegar`, {}));
   }
   olvidarXubio(): Promise<void> {
     return firstValueFrom(this.http.delete<void>(`${this.url}/ajustes/xubio`));
@@ -81,12 +122,6 @@ export class ApiService {
   cancelar(id: string): Promise<ResumenEjecucion> {
     return firstValueFrom(this.http.post<ResumenEjecucion>(`${this.url}/ejecuciones/${id}/cancelar`, {}));
   }
-  /** El servidor abre la ventana para elegir carpeta y copia ahí los archivos (ver ResultadoExportar). */
-  exportar(id: string, indice: number): Promise<ResultadoExportar> {
-    return firstValueFrom(this.http.post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}));
-  }
-  /** Modo servidor: el archivo como Blob (la descarga lleva los encabezados de sesión). */
-  /** Las partidas de ARCA no encontradas en el Libro IVA, leídas de la hoja «Faltantes» de cada AUX. */
   /** Escribe los datos de ARCA elegidos en el Libro IVA, vuelve a cruzar y devuelve el control nuevo. */
   aplicarCambios(id: string, cambios: CambioElegido[]): Promise<ResultadoAplicar> {
     return firstValueFrom(
@@ -94,25 +129,40 @@ export class ApiService {
     );
   }
 
+  /** Las partidas de ARCA no encontradas en el Libro IVA, leídas de la hoja «Faltantes» de cada AUX. */
   faltantes(id: string, indice: number): Promise<FaltantesExcel> {
     return firstValueFrom(this.http.get<FaltantesExcel>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes`));
   }
 
+  /** Los hallazgos del control en un .xlsx, como registro; con cliente, solo los suyos. */
+  hallazgosExcel(id: string, cliente: string | null, bloques: BloqueRegistro[]): Promise<{ nombre: string; contenido: string }> {
+    return firstValueFrom(this.http.post<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/hallazgos-excel`, { cliente, bloques }));
+  }
+
+  /** Las partidas de ARCA no encontradas en un .xlsx (formato «Mis Comprobantes»), para adjuntar al mail. */
+  faltantesExcel(id: string, indice: number, operacion: string | null): Promise<{ nombre: string; contenido: string }> {
+    const params: Record<string, string> = operacion ? { operacion } : {};
+    return firstValueFrom(this.http.get<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes-excel`, { params }));
+  }
+
+  /** Un archivo del control como Blob, para bajarlo por el navegador (la descarga lleva los encabezados de sesión). */
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
   }
-  /** Modo servidor: todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas/N° control. */
+  /**
+   * Con el backend en esta PC: copia los archivos del cliente a
+   * Descargas/Cliente/mmaaaa/Control de facturas/N° control (sin .zip ni ventanas).
+   */
+  exportar(id: string, indice: number): Promise<ResultadoExportar> {
+    return firstValueFrom(
+      this.http
+        .post<ResultadoExportar>(`${this.url}/ejecuciones/${id}/clientes/${indice}/exportar`, {}, { params: { ventana: false } })
+        .pipe(errorLegible('No se pudieron guardar los archivos.')),
+    );
+  }
+  /** Todos los archivos del cliente en un .zip con Cliente/mmaaaa/Control de facturas/N° control. */
   zip(id: string, indice: number): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos.zip`, { responseType: 'blob' }));
-  }
-  /** El servidor abre «Guardar como» y copia ahí ese archivo. */
-  guardarArchivo(id: string, indice: number, nombre: string): Promise<{ cancelado: true } | { cancelado?: false; ruta: string }> {
-    return firstValueFrom(
-      this.http.post<{ cancelado: true } | { cancelado?: false; ruta: string }>(
-        `${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}/guardar`,
-        {},
-      ),
-    );
   }
 }
 
@@ -164,11 +214,12 @@ ${cuerpo}`.trim();
   return new ErrorApi(mensaje, tecnico, e.status);
 }
 
-/** `elegida`: false si se cerró la ventana y se creó la carpeta del cliente en Descargas. */
 export interface ResultadoExportar {
+  /** Dónde quedaron (…\Cliente\mmaaaa\Control de facturas\N° control). */
   carpeta: string;
   elegida: boolean;
   copiados: string[];
+  /** Los que no se pudieron copiar (por ejemplo, abiertos en Excel). */
   fallas: { nombre: string; motivo: string }[];
 }
 
@@ -178,5 +229,9 @@ export interface ResultadoCargaXubio {
   archivo: string;
   archivo_cargado: boolean;
   boton_importar_habilitado: boolean;
+  /** true: Xubio dijo que importó · false: no importó · null: no se reconoció la respuesta (mirar en Xubio). */
+  importado: boolean | null;
+  /** Lo que mostró Xubio después de «Importar». */
+  mensaje: string;
   log: string[];
 }

@@ -380,7 +380,8 @@ def test_auditoria_se_omite_si_fallo_arca_y_reabre_si_falta_el_filtro(cliente_de
     pasos = {p["id"]: p["estado"] for p in detalle["detalle_clientes"][0]["pasos"]}
     assert pasos["arca_ventas"] == "error"
     assert pasos["auditoria_ventas"] == "omitido"
-    assert len(aperturas) == 2
+    # 2 en la pasada normal y 2 en el reintento del final (sigue fallando).
+    assert len(aperturas) == 4
     assert cruces == []
     errores = [a for a in detalle["advertencias"] if a["tipo"] == "paso_error"]
     assert [e["titulo"] for e in errores] == ["ARCA · Ventas: falló"]

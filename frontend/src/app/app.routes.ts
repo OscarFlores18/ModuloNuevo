@@ -33,6 +33,11 @@ export const routes: Routes = [
     title: 'Subir a Xubio · Control de Facturas',
     loadComponent: () => import('./features/convertir/convertir').then((m) => m.ConvertirPantalla),
   },
+  {
+    path: 'pasar-a-excel',
+    title: 'Conversor De Facturas · Control de Facturas',
+    loadComponent: () => import('./features/a-excel/a-excel').then((m) => m.PasarAExcel),
+  },
   // Directo a la pantalla de inicio: un redirect a '' no vuelve a evaluar la ruta '' y quedaba en blanco.
   { path: '**', redirectTo: inicioSegunPerspectiva },
 ];

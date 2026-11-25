@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, JSONResponse
 
 from .api.router import api_router
 from .core import acceso_clientes, config
+from .version import VERSION
 from .core.errors import BotError
 from .core.logging import configure_logging, get_logger
 from .core.storage import ClientesRepository, CredencialesXubioRepository
@@ -124,7 +125,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Control de Facturas - Backend",
         description="Migración a web del motor de bots y auditoría.",
-        version="1.0.0",
+        version=VERSION,
         lifespan=lifespan,
         docs_url=None,     # Desactiva /docs (Swagger)
         redoc_url=None,    # Desactiva /redoc

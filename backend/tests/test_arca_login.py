@@ -60,12 +60,22 @@ def test_sin_respuesta_dice_que_mostraba_la_pantalla(sesion):
     assert "Timeout" not in e.value.mensaje
 
 
-def test_captcha_avisa_y_espera_a_la_persona(sesion):
+def test_captcha_avisa_y_espera_a_la_persona(sesion, monkeypatch):
+    # Con la ventana a la vista (MODULONUEVO_HEADLESS=0) se espera a la persona.
+    monkeypatch.setattr(arca.config, "PLAYWRIGHT_HEADLESS", False)
     # Con captcha se espera más que los 45 s normales: aparece a la consulta 8 (80 s).
     pagina = _PaginaFalsa({"mensajes": [], "captcha": True, "texto": "No soy un robot"}, aparece_en=8)
     sesion._esperar_login(pagina, "id=F1:password", "el campo de la clave")
     assert any("captcha" in linea for linea in sesion.registro)
     assert any("[OK]" in linea for linea in sesion.registro)
+
+
+def test_captcha_con_navegador_oculto_corta_y_explica(sesion, monkeypatch):
+    # Oculto nadie puede completar el captcha: se corta enseguida, sin esperar 3 minutos.
+    monkeypatch.setattr(arca.config, "PLAYWRIGHT_HEADLESS", True)
+    pagina = _PaginaFalsa({"mensajes": [], "captcha": True, "texto": "No soy un robot"}, aparece_en=8)
+    with pytest.raises(LoginError, match="oculto"):
+        sesion._esperar_login(pagina, "id=F1:password", "el campo de la clave")
 
 
 def test_un_cartel_sin_palabras_de_error_no_corta(sesion):
@@ -93,3 +103,23 @@ def test_el_error_lleva_a_corregir_la_clave():
 )
 def test_imagenes_solo_en_login_y_captcha(url, esperado):
     assert _necesita_imagenes(url) is esperado
+
+
+def test_un_error_de_un_widget_del_portal_no_es_clave_mal(sesion):
+    # Corrida del 20/11/2026: ya adentro del portal, el recuadro de vencimientos
+    # decía «Ocurrió un error...» y se tomaba como clave incorrecta.
+    pagina = _PaginaFalsa(
+        {
+            "url": "portalcf.cloud.afip.gob.ar/portal/app/",
+            "mensajes": ["Vencimientos Ocurrió un error al cargar tus vencimientos Reintentar"],
+            "texto": "",
+        },
+        aparece_en=3,
+    )
+    sesion._esperar_login(pagina, "#buscadorInput", "el portal")
+
+
+def test_el_error_en_la_pantalla_de_ingreso_sigue_cortando(sesion):
+    pagina = _PaginaFalsa({"url": "auth.afip.gob.ar/contribuyente_/login.xhtml", "mensajes": ["Clave incorrecta"]})
+    with pytest.raises(LoginError):
+        sesion._esperar_login(pagina, "id=F1:password", "el campo de la clave")

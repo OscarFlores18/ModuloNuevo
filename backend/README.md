@@ -72,7 +72,8 @@ Se usa `uvicorn` base (sin `[standard]`): no hace falta compilar nada y
 | `MODULONUEVO_PAUSA_S` | `15` | pausa entre clientes |
 | `MODULONUEVO_ARCA_PING_MIN` | `9` | cada cuántos minutos se consulta ARCA (keep-alive) |
 | `MODULONUEVO_ARCA_RENOVAR_MIN` | `50` | a los cuántos minutos se renueva el login de ARCA |
-| `MODULONUEVO_HEADLESS` | vacío (`0`) | `1` lanza Chromium sin ventana |
+| `MODULONUEVO_HEADLESS` | `1` | los bots corren sin ventana; `0` muestra Chrome («Cargar en Xubio» siempre lo muestra) |
+| `MODULONUEVO_VIEWPORT` | `1366x768` | resolución fija de la página de los bots |
 | `MODULONUEVO_CHROME_CHANNEL` | `chrome` | canal de Chromium; vacío = Chromium de Playwright |
 | `MODULONUEVO_BASIC_AUTH` | vacío | `usuario:clave` para proteger un despliegue público |
 

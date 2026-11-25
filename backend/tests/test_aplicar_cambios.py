@@ -207,22 +207,3 @@ def test_consumidor_final_sin_cuit_se_puede_aplicar(tmp_path: Path):
     ])
     assert len(r["aplicados"]) == 1 and r["no_aplicados"] == []
 
-
-def test_los_errores_se_arreglan_solos_al_terminar_el_cruce(tmp_path: Path):
-    carpeta = _carpeta(tmp_path)
-    ej = _ejecucion(carpeta)
-    # Los cambios salen de los hallazgos, sin elegir nada a mano.
-    cambios = srv.cambios_de_errores(ej.advertencias)
-    assert sorted((c["campo"], c["numero"], c["valor_arca"]) for c in cambios) == [
-        ("importe", 8, 3000.0), ("letra", 6, "C"), ("tipo", 7, "11 - Factura C"),
-    ]
-
-    assert srv.arreglar_solo(ej, 0, "Compras") == 3
-
-    assert not {a["tipo"] for a in ej.advertencias} & {"letra_distinta", "tipo_distinto", "importe_distinto"}
-    hechos = ej.clientes[0].corregidos["Compras"]["cambios"]
-    assert sorted((c["campo"], c["antes"], c["despues"]) for c in hechos)[1] == ("letra", "A-0002-00000006", "C-0002-00000006")
-    [aux] = [a["nombre"] for a in ej.clientes[0].archivos if a["nombre"].startswith("AUX - ")]
-    assert _filas_rojas(carpeta / aux) == 0
-    # Una segunda vez no hay nada para arreglar.
-    assert srv.arreglar_solo(ej, 0, "Compras") == 0

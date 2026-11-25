@@ -18,6 +18,8 @@ interface Guardado {
   excluidas: string[];
   /** Pares de «Error» tildados para «Aplicar cambios» (clave de `claveCambio`). */
   aplicar: string[];
+  /** Filas que ya se destildaron solas una vez (liquidaciones bancarias): si se vuelven a tildar, se respeta. */
+  automaticas: string[];
 }
 
 const PREFIJO = 'cf-seleccion-xubio:';
@@ -32,11 +34,16 @@ function leer(ejecucionId: string | undefined): Guardado {
   const clave = ejecucionId ?? '';
   const cache = enMemoria.get(clave);
   if (cache) return cache;
-  let g: Guardado = { excluidas: [], aplicar: [] };
+  let g: Guardado = { excluidas: [], aplicar: [], automaticas: [] };
   if (ejecucionId) {
     try {
       const crudo = JSON.parse(leerTexto('local', PREFIJO + ejecucionId) ?? 'null') as Partial<Guardado> | null;
-      if (crudo) g = { excluidas: Array.isArray(crudo.excluidas) ? crudo.excluidas : [], aplicar: Array.isArray(crudo.aplicar) ? crudo.aplicar : [] };
+      if (crudo)
+        g = {
+          excluidas: Array.isArray(crudo.excluidas) ? crudo.excluidas : [],
+          aplicar: Array.isArray(crudo.aplicar) ? crudo.aplicar : [],
+          automaticas: Array.isArray(crudo.automaticas) ? crudo.automaticas : [],
+        };
     } catch {
       // Lo guardado no se entiende: se arranca de cero (todo tildado).
     }
@@ -71,6 +78,21 @@ export function incluir(ejecucionId: string | undefined, cliente: string, operac
   const excluidas = g.excluidas.filter((k) => k !== clave);
   if (!si) excluidas.push(clave);
   guardar(ejecucionId, { ...g, excluidas });
+}
+
+/**
+ * Destilda estas filas la primera vez que se ven (las liquidaciones bancarias, que
+ * ya están en Xubio dentro del extracto). Si después alguien las tilda, quedan tildadas.
+ */
+export function destildarPorDefecto(ejecucionId: string | undefined, cliente: string, operacion: string, filas: readonly string[]): void {
+  const g = leer(ejecucionId);
+  const nuevas = filas.map((f) => completa(cliente, operacion, f)).filter((k) => !g.automaticas.includes(k));
+  if (!nuevas.length) return;
+  guardar(ejecucionId, {
+    ...g,
+    excluidas: [...g.excluidas, ...nuevas.filter((k) => !g.excluidas.includes(k))],
+    automaticas: [...g.automaticas, ...nuevas],
+  });
 }
 
 /** Las claves «CUIT|comprobante» destildadas de un cliente y operación (lo que no va al .zip). */

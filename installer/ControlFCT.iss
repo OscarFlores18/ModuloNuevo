@@ -9,7 +9,10 @@
 ; - los datos (Documentos\ControlFCT) no se tocan al instalar ni al desinstalar.
 
 #define Nombre "Control de Facturas"
-#define Version "1.0.0"
+; build_app.ps1 pasa /DVersion= con el número del archivo VERSION.
+#ifndef Version
+  #define Version "dev"
+#endif
 #define Exe "ControlFCT.exe"
 
 [Setup]

@@ -8,7 +8,6 @@ import { ClientesStore } from './core/services/clientes.store';
 import { EjecucionStore } from './core/services/ejecucion.store';
 import { PerspectivaService } from './core/services/perspectiva.service';
 import { SesionService } from './core/services/sesion.service';
-import { Circuito } from './core/ui/circuito';
 import { Recorrido } from './core/ui/recorrido';
 import { RecorridoService } from './core/ui/recorrido.service';
 import { Toasts } from './core/ui/toast';
@@ -16,7 +15,7 @@ import { ElegirPerfil } from './features/perfil/elegir-perfil';
 
 @Component({
   host: { '(window:scroll)': 'medirScroll()', '(window:resize)': 'medirScroll()' },
-  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, Circuito, Recorrido, ElegirPerfil],
+  imports: [RouterOutlet, RouterLink, RouterLinkActive, Toasts, Recorrido, ElegirPerfil],
   selector: 'app-root',
   styleUrl: './app.css',
   templateUrl: './app.html',
@@ -34,6 +33,9 @@ export class App {
   protected readonly enEstaPc = signal(true);
   /** Los bots necesitan Google Chrome y no está instalado donde corre el backend. */
   protected readonly faltaChrome = signal(false);
+  /** «1.1.0» y cuándo se armó ese instalador: para no confundir versiones. */
+  protected readonly version = signal('');
+  protected readonly compilado = signal<string | null>(null);
 
   /** Cuándo se trajeron por última vez los clientes y las ejecuciones del servidor. */
   protected readonly ultimaActualizacion = signal<Date | null>(null);
@@ -58,13 +60,16 @@ export class App {
       (a) => {
         this.enEstaPc.set(a.dialogos_locales);
         this.faltaChrome.set(a.chrome_instalado === false);
+        this.version.set(a.version ?? '');
+        this.compilado.set(a.compilado ?? null);
       },
       () => undefined,
     );
-    // El recorrido solo se abre con el «?»; al cambiar de pantalla se cierra.
+    // El recorrido sale solo la primera vez que se abre la app en esta PC; después, con el «?».
+    // Al cambiar de pantalla se cierra.
     this.router.events
       .pipe(filter((e): e is NavigationEnd => e instanceof NavigationEnd), takeUntilDestroyed())
-      .subscribe(() => this.recorrido.alNavegar());
+      .subscribe((e) => this.recorrido.alNavegar(e.urlAfterRedirects));
     // El alto de la página cambia al navegar o cuando crece el contenido (registro, tablas).
     if (typeof ResizeObserver !== 'undefined') {
       const observador = new ResizeObserver(() => this.medirScroll());

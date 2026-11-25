@@ -2,8 +2,8 @@
 
 - Facturas en dólares: el CSV para Xubio va en la moneda original (como el de ARCA),
   una sola vez y sin filas vacías.
-- Lo que encuentra la 2ª pasada (letra, tipo o CUIT distinto) es un error de carga:
-  no va a «Subir a Xubio» (si no, queda duplicado).
+- Lo que encuentra la 2ª pasada (letra, tipo o CUIT distinto) es un error de carga,
+  pero el AUX sale como lo dio el cruce: sigue en «Faltantes» hasta que se corrija.
 - Ventas: factura y nota de crédito pueden tener el mismo número; una factura cargada
   como nota de crédito, o a otro cliente, es un error.
 - Libro IVA con las columnas en otro orden se lee por nombre; sin las columnas
@@ -95,11 +95,12 @@ def test_factura_en_dolares_va_en_moneda_original_una_sola_vez(tmp_path: Path):
         ("cuit", {"cuit": "20111111112"}, {"cuit": "20999999992"}, "cuit_distinto"),
     ],
 )
-def test_lo_de_la_segunda_pasada_no_se_sube_a_xubio(tmp_path: Path, caso, arca, xubio, error):
+def test_lo_de_la_segunda_pasada_queda_en_faltantes_sin_corregir(tmp_path: Path, caso, arca, xubio, error):
     salida, errores = _cruzar(tmp_path, [arca], [xubio])
     assert error in errores
     assert "faltante_en_xubio" not in errores
-    assert _csv(salida, "Compras") == []
+    # Nadie lo corrigió: la hoja «Faltantes en Libro IVA» lo sigue trayendo.
+    assert len(_csv(salida, "Compras")) == 1
 
 
 def test_ventas_factura_y_nota_de_credito_con_el_mismo_numero(tmp_path: Path):
@@ -124,7 +125,8 @@ def test_ventas_factura_cargada_como_nota_de_credito(tmp_path: Path):
     )
     assert errores["tipo_distinto"]["a_corregir"] == 2
     assert "faltante_en_xubio" not in errores
-    assert _csv(salida, "Ventas") == []
+    # Sin corregir, sigue en la hoja «Faltantes» del AUX.
+    assert len(_csv(salida, "Ventas")) == 1
 
 
 def test_ventas_cargada_a_otro_cliente(tmp_path: Path):

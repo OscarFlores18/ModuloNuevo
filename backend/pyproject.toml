@@ -15,6 +15,12 @@ dependencies = [
     "pandas>=2.2.0",
     "numpy>=1.26.0",
     "openpyxl>=3.1.2",
+    # Comprobantes desde PDF, fotos, CSV y .xls (app/extraccion).
+    "xlrd>=2.0.1",
+    "pypdfium2>=4.30.0",
+    "pillow>=10.0.0",
+    "zxing-cpp>=2.2.0",
+    "pytesseract>=0.3.10",
 ]
 
 [dependency-groups]

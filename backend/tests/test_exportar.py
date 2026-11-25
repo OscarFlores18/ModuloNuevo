@@ -76,6 +76,27 @@ def test_sin_elegir_se_crea_la_carpeta_del_cliente_en_descargas(entorno, tmp_pat
     assert len(list(carpeta.iterdir())) == 3
 
 
+def test_sin_ventana_va_directo_a_las_carpetas_en_descargas(entorno, tmp_path, monkeypatch):
+    """«Descargar todos» de la app: sin .zip y sin preguntar, Descargas/<Cliente>/<mmaaaa>/…"""
+    client, _ = entorno
+    _ejecucion(tmp_path)
+    casa = tmp_path / "casa"
+    (casa / "Downloads").mkdir(parents=True)
+    monkeypatch.setattr(srv.Path, "home", classmethod(lambda cls: casa))
+
+    def no_preguntar(*a, **k):
+        raise AssertionError("no debe abrir la ventana")
+
+    monkeypatch.setattr(dialogos, "elegir_carpeta", no_preguntar)
+
+    r = client.post("/api/ejecuciones/exp123/clientes/0/exportar?ventana=false")
+
+    assert r.status_code == 200, r.text
+    carpeta = casa / "Downloads" / "Cliente SA" / "102026" / "Control de facturas"
+    assert r.json()["carpeta"] == str(carpeta)
+    assert len(list(carpeta.iterdir())) == 3
+
+
 def test_elegir_descargas_tal_cual_crea_la_carpeta_del_cliente(entorno, tmp_path, monkeypatch):
     """La ventana abre en Descargas: «Seleccionar carpeta» sin entrar a ninguna devuelve Descargas."""
     client, _ = entorno
