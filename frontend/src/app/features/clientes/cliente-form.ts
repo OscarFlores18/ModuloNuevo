@@ -66,7 +66,7 @@ import { ConfirmModal } from '../../core/ui/confirm-modal';
               <label class="mf-campo">
                 <span>Clave fiscal<app-ayuda texto="La clave fiscal de esa CUIT de ingreso. Queda cifrada en el servidor y nunca se muestra en el navegador." /></span>
                 <span class="relative block">
-                  <input class="mf-input pr-16" name="clave" [type]="verClave() ? 'text' : 'password'" autocomplete="new-password" [value]="clave()" (input)="clave.set($any($event.target).value)"
+                  <input class="mf-input mf-con-ver" name="clave" [type]="verClave() ? 'text' : 'password'" autocomplete="new-password" [value]="clave()" (input)="clave.set($any($event.target).value)"
                     [placeholder]="cliente()?.arca?.tiene_clave ? 'Guardada · escribila solo para cambiarla' : ''" />
                   <button type="button" class="mf-btn-link absolute inset-y-0 right-3 text-xs" (click)="verClave.update((v) => !v)" [attr.aria-pressed]="verClave()">
                     {{ verClave() ? 'Ocultar' : 'Ver' }}

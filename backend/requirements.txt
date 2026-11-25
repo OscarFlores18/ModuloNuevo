@@ -14,3 +14,11 @@ playwright==1.65.1
 openpyxl==3.1.5
 pandas==3.1.1
 numpy==2.5.4
+
+# Comprobantes desde PDF, fotos, CSV y .xls (backend/app/extraccion).
+# El OCR usa Tesseract (programa aparte): en la página lo instala el Dockerfile.
+xlrd==2.0.2
+pypdfium2==5.15.2
+pillow==13.0.0
+zxing-cpp==3.1.1
+pytesseract==0.3.13

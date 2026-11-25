@@ -103,3 +103,23 @@ def test_el_error_lleva_a_corregir_la_clave():
 )
 def test_imagenes_solo_en_login_y_captcha(url, esperado):
     assert _necesita_imagenes(url) is esperado
+
+
+def test_un_error_de_un_widget_del_portal_no_es_clave_mal(sesion):
+    # Corrida del 20/11/2026: ya adentro del portal, el recuadro de vencimientos
+    # decía «Ocurrió un error...» y se tomaba como clave incorrecta.
+    pagina = _PaginaFalsa(
+        {
+            "url": "portalcf.cloud.afip.gob.ar/portal/app/",
+            "mensajes": ["Vencimientos Ocurrió un error al cargar tus vencimientos Reintentar"],
+            "texto": "",
+        },
+        aparece_en=3,
+    )
+    sesion._esperar_login(pagina, "#buscadorInput", "el portal")
+
+
+def test_el_error_en_la_pantalla_de_ingreso_sigue_cortando(sesion):
+    pagina = _PaginaFalsa({"url": "auth.afip.gob.ar/contribuyente_/login.xhtml", "mensajes": ["Clave incorrecta"]})
+    with pytest.raises(LoginError):
+        sesion._esperar_login(pagina, "id=F1:password", "el campo de la clave")

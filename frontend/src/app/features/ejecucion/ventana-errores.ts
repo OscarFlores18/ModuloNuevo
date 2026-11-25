@@ -1,7 +1,7 @@
 import Swal from 'sweetalert2';
 import { formatearCuit } from '../../core/cuit.pipe';
 import { ResumenOperacion, Advertencia, CambioElegido, CampoCambio, CeldaVista, ComprobanteLetraDistinta, FilaConError, FilaFaltanteExcel } from '../../core/models';
-import { claveCambio, claveFila, elegirParaAplicar, estaIncluida, incluir, paraAplicar } from './seleccion';
+import { claveCambio, claveFila, destildarPorDefecto, elegirParaAplicar, estaIncluida, incluir, paraAplicar } from './seleccion';
 import { aCorregir, cantidadComprobantes, ordenDe } from './tareas';
 
 /**
@@ -237,7 +237,6 @@ function notasDe(errores: readonly Advertencia[], cliente: string, operacion: st
   for (const e of errores) {
     if (e.cliente !== cliente || e.operacion !== operacion) continue;
     if (e.tipo === faltante) {
-      if (lado === 'arca') continue;
       for (const f of e.comprobantes as FilaConError[]) {
         const nota = f.motivo && NOTA_MOTIVO[f.motivo];
         if (nota) anotar(f.fila, nota);
@@ -382,7 +381,32 @@ function claveDe(e: Advertencia, bloque: string, datos: FilaVista['datos']): str
 const NOTA_MOTIVO: Partial<Record<NonNullable<FilaConError['motivo']>, NonNullable<FilaVista['nota']>>> = {
   exterior: { texto: 'Del exterior', tono: 'neutro' },
   tique: { texto: 'Tique / extracto', tono: 'neutro' },
+  liquidacion: { texto: 'Liquidación bancaria (en el extracto)', tono: 'neutro' },
 };
+
+/** Por qué una liquidación bancaria no se sube (el aviso del bloque y al tildarla). */
+const POR_QUE_LIQUIDACION = 'ya está cargada en Xubio dentro del extracto del banco; si la subís, queda repetida';
+
+function esLiquidacion(g: Grupo): boolean {
+  return g.filas[0]?.nota?.texto === NOTA_MOTIVO.liquidacion?.texto;
+}
+
+/**
+ * Las liquidaciones bancarias de ARCA que en Xubio están dentro del extracto: van
+ * destildadas para no subirlas dos veces (una sola vez; después manda el tilde).
+ */
+export function destildarLiquidaciones(errores: readonly Advertencia[], ejecucionId: string | undefined): void {
+  for (const e of errores) {
+    if (e.tipo !== 'faltante_en_xubio' || !e.operacion) continue;
+    const claves = (e.comprobantes as FilaConError[])
+      .filter((f) => f.motivo === 'liquidacion' && 'fila' in f)
+      .map((f) => {
+        const d = normalizar(f.fila);
+        return claveFila(d['CUIT'], d['Comprobante']);
+      });
+    if (claves.length) destildarPorDefecto(ejecucionId, e.cliente, e.operacion, claves);
+  }
+}
 
 /**
  * Grilla de ancho fijo (sin scroll horizontal). Cada grupo es un `<tbody>`: los
@@ -468,7 +492,8 @@ function grilla(grupos: Grupo[], marcado?: Marcado): string {
       const fuera = conSubir && !!g.subir && !g.subir.incluida;
       const elegido = conAplicar && !!g.aplicar?.tildado;
       const clases = [conCorr && 've-par', hecha && 've-hecha', fuera && 've-excluida', elegido && 've-elegido'].filter(Boolean).join(' ');
-      const atributos = `${clases ? ` class="${clases}"` : ''}${g.clase ? ` data-clase="${g.clase}"` : ''}`;
+      const op = g.filas[0]?.op;
+      const atributos = `${clases ? ` class="${clases}"` : ''}${g.clase ? ` data-clase="${g.clase}"` : ''}${op ? ` data-op="${esc(op)}"` : ''}`;
       const tilde = () => {
         if (conAplicar) {
           if (!g.aplicar) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
@@ -477,7 +502,7 @@ function grilla(grupos: Grupo[], marcado?: Marcado): string {
         if (conSubir) {
           if (!g.subir) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
           const { op, fila, incluida } = g.subir;
-          return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-incluir data-op="${esc(op)}" data-fila="${esc(fila)}" aria-label="Subir a Xubio"${incluida ? ' checked' : ''}${bloqueo}></td>`;
+          return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-incluir data-op="${esc(op)}" data-fila="${esc(fila)}"${esLiquidacion(g) ? ' data-liquidacion' : ''} aria-label="Subir a Xubio"${incluida ? ' checked' : ''}${bloqueo}></td>`;
         }
         if (!g.clave) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
         return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-hecho="${esc(g.clave)}" aria-label="Cargado / resuelto"${hecha ? ' checked' : ''}${bloqueo}></td>`;
@@ -743,84 +768,395 @@ export interface ContextoVentana {
   emails: Record<string, string>;
   /** «01/11/2026 al 17/11/2026». */
   periodo: string;
+  /** Cuenta de Gmail con la que se redacta (`authuser`): el usuario de Xubio del control. */
+  cuenta?: string;
+  /** Con el backend en esta PC: le pide que apriete Ctrl+V en Gmail cuando se abra. */
+  pegarEnGmail?: () => Promise<void>;
+  /** El día con el que se arma el saludo final (por defecto, hoy). */
+  hoy?: Date;
+  /**
+   * «Pedir que las carguen»: descarga el Excel de las partidas de ARCA no encontradas
+   * (formato «Mis Comprobantes») para adjuntarlo; con operación, solo esa.
+   */
+  descargarExcelFaltantes?: (cliente: string, operacion: string | null) => Promise<void>;
+  /** «Descargar hallazgos»: baja los avisos en un Excel (del cliente elegido, o de todos). */
+  descargarHallazgos?: (cliente: string | null) => Promise<void>;
+}
+
+/**
+ * Las facturas de ARCA que no estaban en Xubio, dos avisos al cliente:
+ * - `cargadas`: el estudio ya las subió; faltan percepciones, centro de costo y pago.
+ * - `a_cargar`: el cliente las carga él mismo; se le dice cuáles.
+ */
+export type AvisoCarga = 'cargadas' | 'a_cargar';
+
+/** El saludo final según el día: lunes, comienzo de semana; viernes a domingo, fin de semana. */
+export function saludoFinal(hoy: Date = new Date()): string {
+  const dia = hoy.getDay(); // 0 domingo … 6 sábado
+  if (dia === 1) return 'Saludos cordiales y buen comienzo de semana!!';
+  if (dia === 5 || dia === 6 || dia === 0) return 'Saludos cordiales y buen fin de semana!!';
+  return 'Saludos cordiales y buena semana!!';
 }
 
 /** El de la ventana abierta (se fija al abrirla). */
 let contexto: ContextoVentana = { emails: {}, periodo: '' };
 
-const MAX_LINEAS_MAIL = 25;
-
 /**
- * «Consultar al cliente»: abre el compose web de Gmail con el mail del cliente,
- * el asunto y la lista de comprobantes a revisar (sin los normales: tiques,
- * anuladas...).
+ * «Consultar al cliente»: arma el mail con la estructura del estudio (saludo,
+ * pedido, tabla de comprobantes con bordes y cierre) y abre el compose de Gmail
+ * con la cuenta de la empresa (`authuser`), el destinatario y el asunto.
+ *
+ * El cuerpo NO va en la URL: Gmail solo acepta texto plano ahí y la tabla
+ * llegaba como «a | b | c». El mail con la tabla (HTML) se copia al
+ * portapapeles y se pega con Ctrl+V; Gmail abierto vacío pone la firma debajo.
+ * Solo si no se puede copiar, el texto plano va en la URL (si entra).
  *
  * Se usa el compose de Gmail y no `mailto:` porque Windows resuelve `mailto:`
  * con la aplicación de correo predeterminada del sistema (en esta PC, Outlook),
  * y Gmail en el navegador nunca llegaba a abrirse.
  */
-const COMPOSE_GMAIL = 'https://mail.google.com/mail/';
+const COMPOSE_GMAIL = 'https://mail.google.com/mail/?view=cm&fs=1';
 
-function mailConsulta(e: Advertencia, ctx: ContextoVentana): string {
-  const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo);
-  const lineas = filas.slice(0, MAX_LINEAS_MAIL).map((f) => {
-    const d = normalizar(f.fila);
-    const total = typeof d.Total === 'number' ? ` · $ ${texto(d.Total)}` : '';
-    if (e.tipo === 'total_no_cierra') {
-      const v: Record<string, CeldaVista['valor']> = {};
-      for (const c of f.fila) v[c.columna] = c.valor;
-      return `- ${texto(d.Fecha)} · ${texto(d.Tipo)} ${texto(d.Comprobante)} · ${texto(d['Razón social'])} (CUIT ${cuit(d.CUIT)}) · total $ ${importe(d.Total)}, columnas $ ${importe(v['Suma columnas'])}, diferencia $ ${importe(v['Diferencia'])}`;
-    }
-    return `- ${texto(d.Fecha)} · ${texto(d.Tipo)} ${texto(d.Comprobante)} · ${texto(d['Razón social'])} (CUIT ${cuit(d.CUIT)})${total}`;
-  });
-  const resto = filas.length > MAX_LINEAS_MAIL ? `\n…y ${filas.length - MAX_LINEAS_MAIL} más.` : '';
-  const operacion = (e.operacion ?? '').toLowerCase();
-  const que =
-    e.tipo === 'total_no_cierra'
-      ? 'en ARCA el neto, el IVA y los demás conceptos no suman el total (hay una diferencia sin discriminar)'
-      : e.tipo === 'faltante_en_xubio'
-        ? 'figuran en ARCA y no los tenemos registrados'
-        : 'los tenemos registrados y no figuran en ARCA';
-  const pregunta =
-    e.tipo === 'total_no_cierra'
-      ? '¿Nos podés decir a qué corresponde la diferencia (impuestos internos, combustibles, otro concepto)? Si podés, envianos la factura.'
-      : '¿Nos podés confirmar si corresponden? Si es así, por favor envianos el comprobante.';
-  const asunto = `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
-  const cuerpo = [
-    'Hola,',
-    '',
-    `Al controlar ${operacion} del período ${ctx.periodo} encontramos ${filas.length === 1 ? 'este comprobante' : 'estos comprobantes'} ${e.tipo === 'total_no_cierra' ? (filas.length === 1 ? 'en el que' : 'en los que') : 'que'} ${que}:`,
-    '',
-    lineas.join('\n') + resto,
-    '',
-    pregunta,
-    '',
-    'Saludos.',
-  ].join('\n');
-  const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
-  const partes = [
-    'view=cm',
-    'fs=1',
-    `su=${encodeURIComponent(asunto)}`,
-    `body=${encodeURIComponent(cuerpo)}`,
-  ];
-  // Las comas y las @ del destinatario se dejan legibles: Gmail separa varios
-  // mails con coma y los reconoce igual estando sin escapar.
-  if (para) {
-    partes.splice(2, 0, `to=${encodeURIComponent(para).replace(/%2C/g, ',').replace(/%40/g, '@')}`);
+/** Hasta cuántos caracteres de cuerpo van en la URL del compose (respaldo sin portapapeles). */
+export const MAX_CUERPO_URL = 1800;
+
+/** El mail listo: link al compose de Gmail, el cuerpo con la tabla (HTML) y en texto. */
+export interface MailArmado {
+  /** Compose de Gmail: cuenta, destinatario y asunto (sin cuerpo). */
+  url: string;
+  /** Destinatarios («a@b.com,c@d.com»); vacío si el cliente no tiene mail. */
+  para: string;
+  /** Respaldo si no se pudo copiar: el mismo compose con el texto plano, o null si es largo. */
+  urlConTexto: string | null;
+  html: string;
+  texto: string;
+}
+
+const MAIL_VALIDO = /^[^@\s,]+@[^@\s,]+\.[^@\s,]+$/;
+
+/** URL del compose de Gmail; `URLSearchParams` codifica saltos de línea y acentos. */
+export function urlComposeGmail(p: { cuenta?: string; para?: string; asunto: string; cuerpo?: string }): string {
+  const q = new URLSearchParams();
+  // authuser: Gmail redacta con esa cuenta (la de la empresa, con su firma)
+  // aunque el navegador tenga otras abiertas. Solo si es un mail.
+  const cuenta = (p.cuenta ?? '').trim();
+  if (MAIL_VALIDO.test(cuenta)) q.set('authuser', cuenta);
+  if (p.para) q.set('to', p.para);
+  q.set('su', p.asunto);
+  if (p.cuerpo) q.set('body', p.cuerpo);
+  // URLSearchParams pasa los espacios a «+»; con %20 no hay dudas al decodificar.
+  return `${COMPOSE_GMAIL}&${q.toString().replace(/\+/g, '%20')}`;
+}
+
+/** Los mails armados de la ventana abierta, por id del botón. */
+const mailsArmados = new Map<string, MailArmado>();
+/** Los que van con el Excel de partidas de ARCA no encontradas: de qué cliente y operación. */
+const adjuntos = new Map<string, { cliente: string; operacion: string | null }>();
+
+/** Columnas de importe: «62.502,25»; en cero, vacías o nulas (Factura C) «-». */
+const COLUMNAS_IMPORTE = /neto|exent|iva|total|suma|diferencia/i;
+/** Códigos y documentos: centrados en la tabla del mail. */
+const COLUMNAS_CODIGO = /punto de venta|número desde|numero desde|autoriz|tipo doc|nro\. doc|cuit|comprobante/i;
+
+function celdaMail(columna: string, v: CeldaVista['valor'] | undefined): string {
+  if (v === null || v === undefined || v === '') return COLUMNAS_IMPORTE.test(columna) ? '-' : '';
+  if (COLUMNAS_IMPORTE.test(columna)) {
+    const n = aNumero(v);
+    if (n === null) return String(v);
+    return n === 0 ? '-' : n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
-  return `${COMPOSE_GMAIL}?${partes.join('&')}`;
+  // Punto de venta, número, CAE y CUIT: enteros, sin separadores de miles.
+  if (typeof v === 'number') return String(v);
+  return String(v);
 }
 
-/** «✉ Consultar al cliente»: abre Gmail con el mail ya armado (o bloqueado en Empleado). */
-function botonMail(e: Advertencia, canEdit: boolean): string {
-  if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">✉ Consultar al cliente</button>`;
-  const ayuda = contexto.emails[e.cliente]
-    ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]} y los comprobantes a revisar.`
-    : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes).';
-  return `<a class="ve-boton" href="${esc(mailConsulta(e, contexto))}" target="_blank" rel="noopener" title="${esc(ayuda)}">✉ Consultar al cliente</a>`;
+/** El cuadro del mail: títulos y, por fila, cada celda ya como texto. */
+export interface TablaMail {
+  columnas: string[];
+  datos: string[][];
 }
 
+/** «IVA 21%», «IVA 10,5%»…: el IVA de una alícuota (el número es el porcentaje). */
+const COLUMNA_ALICUOTA = /^\s*(?:imp\.?\s*)?iva\s*(\d+(?:[.,]\d+)?)\s*%?\s*$/i;
+/** Las tres columnas de ARCA que en el mail van juntas en «Comprobante». */
+const PARTES_COMPROBANTE = ['Tipo', 'Punto de Venta', 'Número Desde'] as const;
+
+/** «30707310657» → «30-70731065-7». Lo que no tiene 11 dígitos (un DNI) queda igual. */
+function cuitConGuiones(v: CeldaVista['valor'] | undefined): string {
+  const t = v === null || v === undefined ? '' : String(v).trim();
+  const d = t.replace(/\D/g, '');
+  return d.length === 11 ? `${d.slice(0, 2)}-${d.slice(2, 10)}-${d.slice(10)}` : t;
+}
+
+/** «11 - Factura C», 1, 7 → «Factura C-00001-00000007». */
+function comprobanteMail(tipo: CeldaVista['valor'] | undefined, pv: CeldaVista['valor'] | undefined, numero: CeldaVista['valor'] | undefined): string {
+  const nombre = String(tipo ?? '').replace(/^\s*\d+\s*-\s*/, '').trim();
+  const digitos = (v: CeldaVista['valor'] | undefined, largo: number) => {
+    const d = String(v ?? '').replace(/\D/g, '');
+    return d ? d.padStart(largo, '0') : '';
+  };
+  const p = digitos(pv, 5);
+  const n = digitos(numero, 8);
+  return p && n ? `${nombre}-${p}-${n}` : nombre;
+}
+
+/**
+ * La tabla del mail: las columnas de ARCA si vinieron; si no (controles viejos), las de la vista.
+ * Con las de ARCA: Tipo, Punto de Venta y Número Desde van juntas en «Comprobante»; el
+ * documento, con guiones; y la celda IVA dice el porcentaje de cada alícuota (varias, una
+ * debajo de la otra).
+ */
+export function tablaMail(filas: FilaConError[]): TablaMail {
+  const conMail = filas.find((f) => f.mail?.length);
+  const base = (conMail?.mail ?? filas[0]?.fila ?? []).map((c) => c.columna);
+  const alicuotas = base.filter((c) => COLUMNA_ALICUOTA.test(c));
+  const juntar = PARTES_COMPROBANTE.every((c) => base.includes(c));
+  const columnas = base.flatMap((c) => {
+    if (alicuotas.includes(c)) return [];
+    if (juntar && c === 'Tipo') return ['Comprobante'];
+    if (juntar && (PARTES_COMPROBANTE as readonly string[]).includes(c)) return [];
+    return [c];
+  });
+  const datos = filas.map((f) => {
+    const valores: Record<string, CeldaVista['valor']> = {};
+    for (const c of (conMail ? f.mail : undefined) ?? f.fila) valores[c.columna] = c.valor;
+    return columnas.map((col) => {
+      if (juntar && col === 'Comprobante') return comprobanteMail(valores['Tipo'], valores['Punto de Venta'], valores['Número Desde']);
+      if (/^nro\. doc/i.test(col)) return cuitConGuiones(valores[col]);
+      if (col === 'IVA' && alicuotas.length) {
+        const partes = alicuotas
+          .map((a) => [a.match(COLUMNA_ALICUOTA)![1], aNumero(valores[a] ?? null)] as const)
+          .filter(([, n]) => n)
+          .map(([pct, n]) => `${pct}%: ${celdaMail('IVA', n)}`);
+        if (partes.length) return partes.join('\n');
+      }
+      return celdaMail(col, valores[col]);
+    });
+  });
+  return { columnas, datos };
+}
+
+// Plantilla oficial del estudio: todas las celdas con borde, para que al pegar
+// en Gmail las columnas no queden sueltas.
+const ESTILO_TABLA = 'border-collapse:collapse;border:1px solid #64748b;font-family:Calibri,Arial,sans-serif;font-size:13px';
+const ESTILO_CELDA = 'border:1px solid #94a3b8;padding:5px 8px';
+const ESTILO_TH = `${ESTILO_CELDA};background-color:#e2e8f0;font-weight:bold;text-align:center;white-space:nowrap`;
+
+/** Filas alternadas, como una tabla de Excel. */
+const FONDO_PAR = 'background-color:#f8fafc';
+
+/** Importes a la derecha (el total en negrita), códigos y CUIT al centro. */
+function estiloTd(columna: string): string {
+  if (COLUMNAS_IMPORTE.test(columna)) {
+    return `${ESTILO_CELDA};text-align:right;white-space:nowrap${/^(imp\. )?total$/i.test(columna.trim()) ? ';font-weight:bold' : ''}`;
+  }
+  if (COLUMNAS_CODIGO.test(columna)) return `${ESTILO_CELDA};text-align:center;white-space:nowrap`;
+  return `${ESTILO_CELDA};text-align:left`;
+}
+
+/**
+ * `tabla`: el cuadro ya armado (por ejemplo, el de «A revisar», igual que la
+ * grilla de la ventana). Sin ella, se arma con los comprobantes del hallazgo.
+ */
+export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMail, aviso: AvisoCarga = 'cargadas'): MailArmado {
+  // Sin operación (el mail de «Todos» en «A revisar»): van las dos juntas.
+  const operacion = e.operacion ? e.operacion.toLowerCase() : 'ventas y compras';
+  const pedido =
+    e.tipo === 'total_no_cierra'
+      ? [
+          `Enviamos detalles de facturas de ${operacion} en las que, en ARCA, el neto, el IVA y los demás conceptos no suman el total. Por favor, indicarnos a qué corresponde la diferencia (impuestos internos, combustibles u otro concepto) y enviarnos las facturas en cuanto las tengan.`,
+        ]
+      : e.tipo === 'faltante_en_arca'
+        ? [
+            `Enviamos detalles de comprobantes de ${operacion} que tenemos registrados y que no figuran en ARCA. Por favor, confirmarnos si corresponden y, si es así, enviarnos los comprobantes en cuanto los tengan.`,
+          ]
+        : aviso === 'a_cargar'
+          ? [
+              `Enviamos detalles de facturas de ${operacion} que están en Arca y que todavía no figuran en Xubio. Por favor cargarlas en cuanto puedan, junto con sus percepciones.`,
+              'Al cargarlas, tener en cuenta a qué centro de costo corresponden y, en el caso que fueron abonadas, de qué forma fueron canceladas.',
+            ]
+          : [
+              'Enviamos detalles de facturas que están en Arca y que fueron cargadas a Xubio; falta cargar las percepciones. Por favor enviarlas en cuanto las tengan.',
+              'También aclarar en la factura a qué centro de costo imputamos y, en el caso que fueron abonadas, aclarar de qué forma fueron canceladas.',
+            ];
+  const saludo = 'Estimados buenos días, ¿cómo están?';
+  const cierre = ['Quedamos a la espera, muchas gracias.', saludoFinal(ctx.hoy)];
+  const { columnas, datos } = tabla ?? tablaMail((e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo));
+  const estilos = columnas.map(estiloTd);
+
+  const parrafo = (t: string) => `<p style="margin:0 0 12px">${esc(t)}</p>`;
+  // border="1" además del estilo: si Gmail descarta algún estilo al pegar, los bordes quedan.
+  const cuadro =
+    `<table border="1" cellspacing="0" cellpadding="5" style="${ESTILO_TABLA}"><thead><tr>` +
+    columnas.map((c) => `<th style="${ESTILO_TH}">${esc(c)}</th>`).join('') +
+    '</tr></thead><tbody>' +
+    datos
+      .map((fila, n) => `<tr${n % 2 ? ` style="${FONDO_PAR}"` : ''}>` + fila.map((v, i) => `<td style="${estilos[i]}">${esc(v).replace(/\n/g, '<br>')}</td>`).join('') + '</tr>')
+      .join('') +
+    '</tbody></table>';
+  const html =
+    '<div style="font-family:Arial,sans-serif;font-size:13px">' +
+    parrafo(saludo) +
+    pedido.map(parrafo).join('') +
+    cuadro +
+    '<br>' +
+    cierre.map(parrafo).join('') +
+    '</div>';
+  const texto = [
+    saludo,
+    '',
+    ...pedido.flatMap((t) => [t, '']),
+    columnas.join(' | '),
+    ...datos.map((f) => f.map((v) => v.replace(/\n/g, ' / ') || ' ').join(' | ')),
+    '',
+    ...cierre.flatMap((t) => [t, '']),
+  ]
+    .join('\n')
+    .trimEnd();
+
+  const asunto =
+    aviso === 'a_cargar' && e.tipo !== 'total_no_cierra' && e.tipo !== 'faltante_en_arca'
+      ? `Comprobantes de ${operacion} para cargar en Xubio · ${ctx.periodo} · ${e.cliente}`
+      : `Consulta de comprobantes de ${operacion} · ${ctx.periodo} · ${e.cliente}`;
+  const para = (ctx.emails[e.cliente] ?? '').split(',').map((m) => m.trim()).filter(Boolean).join(',');
+  const base = { cuenta: ctx.cuenta, para, asunto };
+  const url = urlComposeGmail(base);
+  const urlConTexto = texto.length <= MAX_CUERPO_URL ? urlComposeGmail({ ...base, cuerpo: texto }) : null;
+  return { url, para, urlConTexto, html, texto };
+}
+
+/**
+ * Copia sincrónica del mail (con la tabla), el respaldo de `copiarMailConFormato`.
+ * Antes era la única: con el `navigator.clipboard` asincrónico Gmail se abría
+ * antes de terminar de copiar y quedaba vacío, solo con la firma. Ahora Gmail
+ * se abre recién cuando la copia terminó.
+ */
+export function copiarMail(m: Pick<MailArmado, 'html' | 'texto'>): boolean {
+  const alCopiar = (ev: ClipboardEvent) => {
+    ev.clipboardData?.setData('text/html', m.html);
+    ev.clipboardData?.setData('text/plain', m.texto);
+    ev.preventDefault();
+  };
+  // execCommand('copy') necesita algo seleccionado para disparar el evento.
+  const apoyo = document.createElement('textarea');
+  apoyo.value = m.texto;
+  apoyo.setAttribute('readonly', '');
+  apoyo.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0';
+  document.body.appendChild(apoyo);
+  apoyo.select();
+  document.addEventListener('copy', alCopiar);
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  } finally {
+    document.removeEventListener('copy', alCopiar);
+    apoyo.remove();
+  }
+  return ok;
+}
+
+/**
+ * Copia el mail con formato (`text/html` con la tabla y `text/plain`) con
+ * `navigator.clipboard.write`. Se espera a que termine ANTES de abrir Gmail: si
+ * el navegador se abre primero, la app pierde el foco y la copia falla. Si el
+ * portapapeles asincrónico no está (o no deja), se usa la copia sincrónica.
+ */
+export async function copiarMailConFormato(m: Pick<MailArmado, 'html' | 'texto'>): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.write && typeof ClipboardItem !== 'undefined') {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([m.html], { type: 'text/html' }),
+          'text/plain': new Blob([m.texto], { type: 'text/plain' }),
+        }),
+      ]);
+      return true;
+    }
+  } catch {
+    // Sin permiso o sin foco: se prueba la copia sincrónica.
+  }
+  return copiarMail(m);
+}
+
+/** Aviso discreto abajo a la derecha, por encima de la ventana de hallazgos. */
+export function avisoMail(texto: string, tipo: 'ok' | 'error' = 'ok'): HTMLElement {
+  document.querySelector('.ve-aviso-mail')?.remove();
+  const aviso = document.createElement('div');
+  aviso.className = 've-aviso-mail';
+  aviso.setAttribute('role', 'status');
+  aviso.textContent = texto;
+  aviso.style.cssText =
+    'position:fixed;right:20px;bottom:20px;z-index:2000;max-width:min(420px,calc(100vw - 40px));padding:12px 16px;' +
+    'border-radius:10px;font:600 14px/1.4 system-ui,sans-serif;color:#fff;box-shadow:0 8px 24px rgba(15,23,42,.3);' +
+    `background:${tipo === 'ok' ? '#15803d' : '#b91c1c'}`;
+  document.body.appendChild(aviso);
+  setTimeout(() => aviso.remove(), 6000);
+  return aviso;
+}
+
+/**
+ * Clic en «Consultar al cliente»: copia el mail con la tabla y recién después
+ * abre Gmail (cuenta, destinatario y asunto). Si Gmail se abre primero, la app
+ * pierde el foco y la copia falla.
+ *
+ * `pegar`: con el backend en esta PC, él aprieta Ctrl+V cuando Gmail queda
+ * adelante. Solo con destinatario: sin él, Gmail deja el cursor en «Para» y el
+ * mail se pegaría ahí.
+ */
+export async function abrirMail(m: MailArmado, pegar?: () => Promise<void>, adjunto = ''): Promise<void> {
+  if (await copiarMailConFormato(m)) {
+    let solo = false;
+    if (pegar && m.para) {
+      try {
+        await pegar();
+        solo = true;
+      } catch {
+        // Sin backend local: queda el Ctrl+V a mano.
+      }
+    }
+    avisoMail(
+      solo
+        ? `Correo con tabla copiado: se pega solo en Gmail en unos segundos (no cambies de ventana).${adjunto}`
+        : `Correo con tabla copiado al portapapeles. Presiona Ctrl + V en Gmail${adjunto ? `.${adjunto}` : ''}`,
+    );
+    window.open(m.url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  // Sin portapapeles: el texto plano en la URL (sin bordes, pero completo), si entra.
+  avisoMail(
+    m.urlConTexto
+      ? 'No se pudo copiar la tabla: Gmail se abre con el texto del correo.'
+      : 'No se pudo copiar el correo: Gmail se abre sin el texto.',
+    'error',
+  );
+  window.open(m.urlConTexto ?? m.url, '_blank', 'noopener,noreferrer');
+}
+
+/** «✉ Consultar al cliente»: abre Gmail con el mail armado (o bloqueado en Empleado). */
+function botonMail(e: Advertencia, canEdit: boolean, tabla?: TablaMail, conOperacion = false, aviso?: AvisoCarga): string {
+  // Con Ventas y Compras en el mismo bloque hay un mail por operación: el botón dice cuál.
+  const nombre = aviso === 'cargadas' ? 'Avisar que se cargaron' : aviso === 'a_cargar' ? 'Pedir que las carguen' : 'Consultar al cliente';
+  const texto = `✉ ${nombre}${conOperacion && e.operacion ? ` · ${esc(e.operacion)}` : ''}`;
+  if (!canEdit) return `<button type="button" class="ve-boton" disabled title="${BLOQUEADO}">${texto}</button>`;
+  const destino = contexto.emails[e.cliente]
+    ? `Abre Gmail con un mail a ${contexto.emails[e.cliente]}`
+    : 'El cliente no tiene email cargado: se abre Gmail sin destinatario (cargalo en Clientes)';
+  const m = armarMail(e, contexto, tabla, aviso);
+  const queDice =
+    aviso === 'cargadas'
+      ? 'Avisa que ya las cargamos en Xubio y pide percepciones, centro de costo y forma de pago'
+      : aviso === 'a_cargar'
+        ? 'Le pide al cliente que las cargue él en Xubio y descarga el Excel de las partidas para adjuntarlo'
+        : '';
+  const ayuda = `${queDice ? `${queDice}. ` : ''}${destino}. El mail con la tabla queda copiado: pegalo en Gmail con Ctrl+V.`;
+  const id = String(mailsArmados.size + 1);
+  mailsArmados.set(id, m);
+  // Al pedir que las carguen, va con el Excel de las partidas (se descarga para adjuntarlo).
+  if (aviso === 'a_cargar') adjuntos.set(id, { cliente: e.cliente, operacion: e.operacion ?? null });
+  return `<a class="ve-boton" data-mail="${id}" href="${esc(m.url)}" target="_blank" rel="noopener noreferrer" title="${esc(ayuda)}">${texto}</a>`;
+}
 
 function destinoDe(accion: string, canEdit: boolean): { href: string } | null {
   const a = accion.toLowerCase();
@@ -858,7 +1194,7 @@ function botonesYEtiquetas(e: Advertencia, canEdit: boolean): { botones: string;
 function botonSubir(e: Advertencia, indice: number, canEdit: boolean, conOp: boolean, tildadas = aCorregir(e)): string {
   const texto = `⬆ Subir${conOp && e.operacion ? ` ${e.operacion}` : ''} a Xubio`;
   const op = esc(e.operacion ?? '');
-  if (!canEdit) return `<button type="button" class="ve-boton ve-boton-chico" disabled title="${BLOQUEADO}">${esc(texto)}</button>`;
+  if (!canEdit) return `<button type="button" class="ve-boton ve-boton-chico" data-subir-op="${op}" disabled title="${BLOQUEADO}">${esc(texto)}</button>`;
   return `<button type="button" class="ve-boton ve-boton-chico" data-subir="${indice}" data-subir-op="${op}"${tildadas ? '' : ' disabled'} title="Lleva los comprobantes tildados a «Subir a Xubio», listos para cargar">${esc(texto)}</button>`;
 }
 
@@ -959,21 +1295,58 @@ function bloqueSubir(
     const a = adv ?? faltanteDesdeExcel(cliente, op, k);
     const tildadas = grupos.filter((g) => g.subir?.op === op && g.subir.incluida).length;
     if (conSubida) botones.push(botonSubir(a, registrar(a), canEdit, porOp.size > 1, tildadas));
+    // Avisarle al cliente: que ya las cargamos (faltan percepciones, centro de costo y
+    // forma de pago) o, si las carga él, cuáles tiene que cargar.
+    if (adv && (adv.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo)) {
+      const varias = porOp.size > 1;
+      botones.push(`<span data-op-mail="${op}">${botonMail(adv, canEdit, undefined, varias, 'cargadas')}${botonMail(adv, canEdit, undefined, varias, 'a_cargar')}</span>`);
+    }
   }
   const tildadas = grupos.filter((g) => g.subir?.incluida).length;
   const meta = `<span class="ve-meta" data-cuenta>${tildadas} de ${grupos.length} para subir</span>${ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : ''}`;
+  // Liquidaciones bancarias: se avisa por qué no van (y por eso vienen destildadas).
+  const liquidaciones = grupos.filter(esLiquidacion);
+  const bancos = [...new Set(liquidaciones.map((g) => texto(g.filas[0].datos['Razón social']).trim()).filter(Boolean))];
+  const todasLiq = liquidaciones.length > 0 && liquidaciones.length === grupos.length;
+  const queHacer = todasLiq
+    ? `No hay que subir nada: ${liquidaciones.length === 1 ? 'es una liquidación bancaria' : `son ${liquidaciones.length} liquidaciones bancarias`} que ya ${liquidaciones.length === 1 ? 'está cargada' : 'están cargadas'} en Xubio dentro del extracto del banco.`
+    : 'Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).';
+  const avisoLiq = liquidaciones.length
+    ? `<div class="ve-aviso-liq" role="note"><strong>⚠ No subas a Xubio ${liquidaciones.length === 1 ? 'la liquidación bancaria' : `las ${liquidaciones.length} liquidaciones bancarias`}${bancos.length ? ` (${esc(bancos.join(', '))})` : ''}.</strong> ${liquidaciones.length === 1 ? 'Ya está cargada' : 'Ya están cargadas'} en Xubio dentro del extracto del banco: el control encontró ese extracto con la misma CUIT. Si ${liquidaciones.length === 1 ? 'la subís, queda repetida' : 'las subís, quedan repetidas'}. Por eso ${liquidaciones.length === 1 ? 'viene destildada' : 'vienen destildadas'}.</div>`
+    : '';
   return `
     <details class="ve-error ve-subir ve-bloque ve-prioridad" data-bloque="subir" open>
       <summary tabindex="-1">
         <span class="ve-insignias"><span class="ve-insignia">Subir a Xubio</span></span>
         <span class="ve-cab">
           <span class="ve-titulo">Partidas de ARCA no encontradas en el ${esc(libroDe(ops))}${cantidadTexto(n)}</span>
-          <span class="ve-que-hacer">Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).</span>
+          <span class="ve-que-hacer">${queHacer}</span>
         </span>
-        <span class="ve-derecha">${meta}${botones.length ? `<span class="ve-acciones">${botones.join('')}</span>` : ''}</span>
+        <span class="ve-derecha ve-derecha-subir"><span class="ve-metas">${meta}</span>${botones.length ? `<span class="ve-acciones ve-acciones-subir">${botones.join('')}</span>` : ''}</span>
       </summary>
-      <div class="ve-cuerpo">${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
+      <div class="ve-cuerpo">${avisoLiq}${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
     </details>`;
+}
+
+/**
+ * El cuadro del mail de «A revisar»: las columnas y las filas de la grilla de la ventana.
+ * `conOp`: con Ventas y Compras juntas, una primera columna dice de cuál es cada una.
+ */
+function tablaRevisar(grupos: Grupo[], conOp = false): TablaMail {
+  const filas = grupos.map((g) => g.filas[0]);
+  return {
+    columnas: [...(conOp ? ['Operación'] : []), 'Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', 'Observación', 'Total'],
+    datos: filas.map((f) => [
+      ...(conOp ? [f.op ?? ''] : []),
+      texto(f.datos['Fecha']),
+      abreviarTipo(texto(f.datos['Tipo'])),
+      texto(f.datos['Comprobante']),
+      cuit(f.datos['CUIT']),
+      texto(f.datos['Razón social']),
+      f.nota?.texto ?? '',
+      importe(f.datos['Total']),
+    ]),
+  };
 }
 
 /** «A revisar»: partidas del Libro IVA no encontradas en ARCA, tal como están en el Excel. */
@@ -983,12 +1356,34 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
   if (!n) return '';
   const explicadas = grupos.filter((g) => g.filas[0].nota).length;
   const meta = ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : '';
-  // Un mail por operación con las que hay que consultar (sin las normales).
-  const mails = [...porOp.values()]
-    .map((o) => o.adv)
-    .filter((a): a is Advertencia => !!a && (a.comprobantes as FilaConError[]).some((f) => 'fila' in f && !f.motivo))
-    .map((a) => botonMail(a, marcado.canEdit))
+  // Un mail por operación, con el mismo cuadro que la grilla (tiques incluidos, con su observación).
+  // Con Ventas y Compras, las pills eligen: «Todos» (lo predeterminado), con un solo
+  // mail de las dos, o una operación, con sus filas y su mail.
+  const separar = porOp.size > 1;
+  const todas = tablaRevisar(grupos, true);
+  const mailTodos =
+    separar && todas.datos.length
+      ? `<span class="ve-mail-op" data-op-mail="">${botonMail(
+          { ...(porOp.values().next().value!.adv ?? faltanteDesdeExcel(cliente, ops[0], n)), tipo: 'faltante_en_arca', cliente, operacion: null } as Advertencia,
+          marcado.canEdit,
+          todas,
+        )}</span>`
+      : '';
+  const mails = mailTodos + [...porOp]
+    .map(([op, { n: k, adv }]) => {
+      const tabla = tablaRevisar(grupos.filter((g) => g.filas[0].op === op));
+      if (!tabla.datos.length) return '';
+      const a: Advertencia = { ...(adv ?? faltanteDesdeExcel(cliente, op, k)), tipo: 'faltante_en_arca', cliente, operacion: op };
+      const boton = botonMail(a, marcado.canEdit, tabla, separar);
+      return separar ? `<span class="ve-mail-op" data-op-mail="${op}" hidden>${boton}</span>` : boton;
+    })
     .join('');
+  const pills = separar
+    ? `<div class="ve-pills" data-pills-op role="group" aria-label="Elegir operación">
+        <button type="button" class="ve-pill" data-op-pill="" aria-pressed="true">Todos (${n})</button>
+        ${[...porOp].map(([op, { n: k }]) => `<button type="button" class="ve-pill" data-op-pill="${op}" aria-pressed="false">${op} (${k})</button>`).join('')}
+      </div>`
+    : '';
   const queHacer =
     n > explicadas
       ? 'Consultalas con el cliente: pueden ser facturas manuales (CAI), tiques o errores de tipeo.'
@@ -1001,9 +1396,9 @@ function bloqueRevisar(items: readonly Advertencia[], cliente: string, hojas: Fa
           <span class="ve-titulo">Partidas del ${esc(libroDe(ops))} no encontradas en ARCA${cantidadTexto(n)}</span>
           <span class="ve-que-hacer">${queHacer}</span>
         </span>
-        <span class="ve-derecha">${meta}${mails}${plegar(n)}</span>
+        <span class="ve-derecha">${meta}${mails ? `<span class="ve-acciones">${mails}</span>` : ''}${plegar(n)}</span>
       </summary>
-      <div class="ve-cuerpo">${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
+      <div class="ve-cuerpo">${pills}${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
     </details>`;
 }
 
@@ -1050,15 +1445,20 @@ function bloqueError(items: readonly Advertencia[], marcado: Marcado): string {
 }
 
 /** Lo que no es un comprobante (ARCA vacío, un paso que falló…): una tarjeta suelta, arriba. */
+/** Las columnas que forman el Imp. Total: neto e IVA de cada alícuota («Neto
+ * gravado 21%», «IVA 21%»…) o los totales, más no gravado, exento y otros tributos. */
+const COLUMNA_QUE_SUMA = /^(neto gravado \d|iva \d|neto gravado total$|total iva$|neto no gravado$|op\. exentas$|otros tributos$)/i;
+
 /**
- * «Las columnas no suman el total»: cada factura de ARCA con la suma de sus
- * columnas, el Imp. Total, la diferencia (lo que ARCA no discrimina) y cómo
- * quedó en Xubio.
+ * «Las columnas no suman el total»: cada factura de ARCA con el neto y el IVA
+ * de cada alícuota que usa, el no gravado, el exento y los otros tributos, el Imp.
+ * Total, la diferencia (lo que ARCA no discrimina) y cómo quedó en Xubio.
  */
 function grillaSuma(e: Advertencia): string {
   const filas = (e.comprobantes as FilaConError[]).filter((f) => 'fila' in f);
   if (!filas.length) return '';
-  const cab = ['Fecha', 'Comprobante', 'Razón social', 'Suma de columnas', 'Imp. Total', 'Diferencia', 'En Xubio']
+  const partes = filas[0].fila.map((c) => c.columna).filter((c) => COLUMNA_QUE_SUMA.test(c.trim()));
+  const cab = ['Fecha', 'Comprobante', 'Razón social', ...partes, 'Imp. Total', 'Diferencia', 'En Xubio']
     .map((c, i) => `<th${i >= 3 ? ' class="num"' : ''}>${esc(c)}</th>`)
     .join('');
   const cuerpo = filas
@@ -1069,10 +1469,17 @@ function grillaSuma(e: Advertencia): string {
       const enXubio = v['Total Xubio'];
       const bienEnXubio = typeof enXubio === 'number' && typeof d.Total === 'number' && Math.abs(Math.abs(enXubio) - Math.abs(d.Total)) <= 1;
       const xubio = enXubio === null || enXubio === undefined ? '<td class="num">No está</td>' : `<td class="num${bienEnXubio ? ' marca ok' : ' marca error'}">${esc(importe(enXubio))}</td>`;
-      return `<tr><td>${esc(texto(d.Fecha))}</td><td class="comp">${esc(texto(d.Comprobante))}</td><td title="${esc(texto(d.Tipo))} · CUIT ${esc(cuit(d.CUIT))}">${esc(texto(d['Razón social']))}</td><td class="num">${esc(importe(v['Suma columnas']))}</td><td class="num">${esc(importe(d.Total))}</td><td class="num marca aviso">${esc(importe(v['Diferencia']))}</td>${xubio}</tr>`;
+      // Como en el Excel: la alícuota que no usa el comprobante, con «-».
+      const columnas = partes.map((p) => `<td class="num">${v[p] ? esc(importe(v[p])) : '-'}</td>`).join('');
+      return `<tr><td>${esc(texto(d.Fecha))}</td><td class="comp">${esc(texto(d.Comprobante))}</td><td title="${esc(texto(d.Tipo))} · CUIT ${esc(cuit(d.CUIT))}">${esc(texto(d['Razón social']))}</td>${columnas}<td class="num">${esc(importe(d.Total))}</td><td class="num marca aviso">${esc(importe(v['Diferencia']))}</td>${xubio}</tr>`;
     })
     .join('');
-  return `<div class="ve-grilla"><table><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
+  return `<div class="ve-grilla"><table class="ve-suma"><thead><tr>${cab}</tr></thead><tbody>${cuerpo}</tbody></table></div>`;
+}
+
+/** El filtro de estado de una tarjeta suelta: la misma insignia que muestra. */
+function verDeSuelta(e: Advertencia): 'error' | 'revisar' {
+  return e.tipo === 'total_no_cierra' && e.gravedad !== 'info' ? 'revisar' : 'error';
 }
 
 function tarjeta(e: Advertencia, canEdit: boolean): string {
@@ -1081,7 +1488,7 @@ function tarjeta(e: Advertencia, canEdit: boolean): string {
   const { botones, etiquetas } = botonesYEtiquetas(e, canEdit);
   const orden = ordenDe(e);
   return `
-    <details class="ve-error ve-${clase}" open>
+    <details class="ve-error ve-${clase}" data-suelta="${verDeSuelta(e)}"${e.operacion ? ` data-op="${esc(e.operacion)}"` : ''} open>
       <summary>
         <span class="ve-insignias"><span class="ve-insignia">${clase === 'grave' ? 'Grave' : clase === 'aviso' ? 'A revisar' : 'Error'}</span></span>
         <span class="ve-cab">
@@ -1117,30 +1524,55 @@ const ESTILOS = `
     .ve { text-align: left; color: #1f2a37; font-size: 14px; }
 
     /* Debajo del título: cliente y período. */
+    .ve-cabeza { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin: 0 0 14px; }
+    .ve-cabeza .ve-sub { margin: 0; }
+    .ve-descargar:disabled { opacity: .6; cursor: progress; }
     .ve-sub { margin: 0 0 14px; color: #64748b; font-size: 14.5px; font-weight: 600; }
 
     /* Solo si hay errores graves: el resultado no es confiable. */
     .ve-grave-aviso { display: flex; align-items: center; gap: 12px; margin: 0 0 14px; padding: 12px 16px; border: 1px solid #fecaca; border-radius: 12px; background: #fef2f2; color: #7f1d1d; font-size: 14.5px; line-height: 1.4; }
     .ve-grave-icono { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; background: #dc2626; color: #fff; font-weight: 900; }
 
-    /* Resumen: una tarjeta por operación, con cuánto coincide y una barra. */
-    .ve-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; margin: 0 0 18px; padding: 0; list-style: none; }
-    .ve-kpi { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
+    /* Resumen: una tarjeta por cliente, con Ventas y Compras adentro. */
+    .ve-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 12px; margin: 0 0 18px; padding: 0; list-style: none; }
+    .ve-kpi { display: flex; flex-direction: column; gap: 12px; padding: 14px 16px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
     .ve-kpi-cab { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-    .ve-kpi-op { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
-    .ve-kpi-cliente { font-weight: 700; color: #334155; text-transform: none; letter-spacing: 0; }
-    .ve-kpi-num { font-size: 14px; color: #475569; }
+    .ve-kpi-nombre { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 800; color: #0f172a; }
+    .ve-kpi-mods { display: flex; flex-direction: column; gap: 12px; }
+    /* Cada operación: etiqueta y el número grande. La raya: verde sin pendientes, ámbar con. */
+    .ve-kpi-mod { display: flex; flex-direction: column; gap: 2px; padding-left: 10px; border-left: 3px solid #16a34a; }
+    .ve-kpi-mod-mal { border-left-color: #f59e0b; }
+    .ve-kpi-op { font-size: 12.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #475569; }
+    .ve-kpi-num { font-size: 14px; color: #475569; line-height: 1.35; }
     .ve-kpi-num b { margin-right: 2px; font-size: 24px; color: #0f172a; font-variant-numeric: tabular-nums; }
-    .ve-kpi-barra { display: block; height: 8px; border-radius: 999px; background: #e2e8f0; overflow: hidden; }
-    .ve-kpi-barra > span { display: block; height: 100%; border-radius: inherit; background: #16a34a; }
-    .ve-kpi-mal .ve-kpi-barra > span { background: #f59e0b; }
-    .ve-kpi-estado { display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; white-space: nowrap; }
+    .ve-kpi-estado { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 3px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; white-space: nowrap; }
     .ve-kpi-ok .ve-kpi-estado { background: #e7f5ec; color: #166534; }
     .ve-kpi-mal { border-color: #fcd9a0; }
     .ve-kpi-mal .ve-kpi-estado { background: #fdf0d9; color: #7a4f0f; }
+    /* Tarjeta como filtro: clic para ver solo ese cliente, otro clic para ver todos. */
+    .ve-kpi[data-tarjeta] { cursor: pointer; transition: border-color .15s, box-shadow .15s, background-color .15s, opacity .15s; }
+    /* Al pasar el mouse: solo una sombra (sin azul: azul es «elegida»). */
+    .ve-kpi[data-tarjeta]:hover { box-shadow: 0 4px 14px rgba(15, 23, 42, 0.1); }
+    .ve-kpi[data-tarjeta]:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+    .ve-kpi[aria-pressed='true'] { border: 2px solid #2563eb; padding: 13px 15px; background: #eff6ff; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12); }
+    /* Con una elegida, las demás quedan iguales: atenuadas, borde neutro, sin azul. */
+    .ve-kpis[data-filtrando] .ve-kpi:not([aria-pressed='true']),
+    .ve-kpis[data-filtrando] .ve-kpi:not([aria-pressed='true']):hover { opacity: .65; border-color: #e2e8f0; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, 0.05); }
+    .ve-kpis[data-filtrando] .ve-kpi:not([aria-pressed='true']):hover { opacity: .85; }
+    .ve-error[hidden] { display: none; }
+    .ve-filtro-tarjeta { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 13.5px; font-weight: 600; color: #1e3a8a; }
+    .ve-filtro-tarjeta[hidden] { display: none; }
+    .ve-barra[hidden], .ve-guia[hidden] { display: none; }
+    /* Sin cliente elegido: en lugar de la lista, cómo seguir. */
+    .ve-guia { margin: 4px 0 0; padding: 28px 16px; border: 1px dashed #cbd5e1; border-radius: 12px; background: #fff; color: #64748b; font-size: 15px; font-weight: 600; text-align: center; }
+    .ve-limpiar { min-height: 34px; border: 1px solid #bfdbfe; background: #fff; color: #1d4ed8; font: inherit; font-size: 13.5px; font-weight: 700; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+    .ve-limpiar:hover { background: #eff6ff; border-color: #2563eb; }
+    .ve-limpiar:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
 
     /* Filtros (Todos | Error | Subir a Xubio | A revisar): pestañas grandes, una por tipo. */
-    .ve-barra { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 -28px 14px; padding: 10px 28px; background: rgba(244, 247, 251, 0.96); border-bottom: 1px solid #e2e8f0; backdrop-filter: blur(4px); }
+    /* top negativo = el relleno de arriba del contenedor: sin eso la barra se pega 16 px
+       más abajo del borde y por ese hueco se ve pasar la lista. */
+    .ve-barra { position: sticky; top: -16px; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin: 0 -28px 14px; padding: 10px 28px; background: rgba(244, 247, 251, 0.96); border-bottom: 1px solid #e2e8f0; backdrop-filter: blur(4px); }
     .ve-empresa { margin: 0; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; color: #334155; }
     .ve-filtros, .ve-pills { display: flex; flex-wrap: wrap; gap: 8px; }
     .ve-pills { margin: 0 0 12px; }
@@ -1150,6 +1582,12 @@ const ESTILOS = `
     .ve-chip:focus-visible, .ve-pill:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
     .ve-chip[aria-pressed='true'], .ve-pill[aria-pressed='true'] { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
     .ve-chip:disabled { opacity: .45; cursor: not-allowed; }
+    .ve-chip[hidden] { display: none; }
+    /* «Error» solo aparece si hay: en rojo, para resolverlo primero. */
+    .ve-chip-error { border-color: #fca5a5; background: #fef2f2; color: #b91c1c; }
+    .ve-chip-error:hover:not(:disabled) { border-color: #dc2626; background: #fee2e2; }
+    .ve-chip-error .ve-chip-num { background: #fee2e2; color: #b91c1c; }
+    .ve-chip-error[aria-pressed='true'] { background: #dc2626; border-color: #dc2626; color: #fff; }
     .ve-chip-num { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: #eef2f7; color: #334155; font-size: 12.5px; font-weight: 800; }
     .ve-chip[aria-pressed='true'] .ve-chip-num { background: rgba(255, 255, 255, 0.22); color: #fff; }
 
@@ -1175,6 +1613,17 @@ const ESTILOS = `
     .ve-derecha { flex: none; display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; max-width: 46%; }
     .ve-meta { font-size: 13px; font-weight: 600; color: #64748b; white-space: nowrap; }
     .ve-acciones { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+    /* Los botones de mail de una operación (dos en «Subir a Xubio»): separados igual. */
+    .ve-acciones > [data-op-mail] { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+    .ve-acciones > [data-op-mail][hidden] { display: none; }
+    /* «Subir a Xubio»: arriba lo que cuenta; abajo «Subir» a todo el ancho y, debajo,
+       los dos mails al cliente lado a lado y del mismo ancho. */
+    .ve-derecha-subir { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 8px; }
+    .ve-metas { display: flex; justify-content: flex-end; gap: 10px; }
+    .ve-acciones-subir { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .ve-acciones-subir > .ve-boton-chico { grid-column: 1 / -1; }
+    .ve-acciones-subir > [data-op-mail] { display: contents; }
+    .ve-acciones-subir [data-op-mail] .ve-boton { padding: 8px 14px; }
     .ve-boton { border: 0; cursor: pointer; font-family: inherit; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; font-size: 14.5px; font-weight: 700; padding: 8px 18px; border-radius: 10px; background: #2563eb; color: #fff !important; text-decoration: none; white-space: nowrap; box-shadow: 0 2px 8px rgba(37, 99, 235, 0.25); }
     .ve-boton:hover:not(:disabled) { background: #1d4ed8; }
     .ve-boton:focus-visible { outline: 2px solid #1d4ed8; outline-offset: 2px; }
@@ -1209,6 +1658,7 @@ const ESTILOS = `
     .ve-vacio { margin: 0; padding: 12px 14px; border-radius: 10px; background: #fff; color: #475569; }
     .ve-resumen-info { margin: 0 0 10px; color: #334155; font-weight: 600; }
 
+    .ve-aviso-liq { margin: 0 0 12px; padding: 10px 14px; border-radius: 8px; border: 1px solid #fcd34d; background: #fffbeb; color: #78350f; font-size: 14px; line-height: 1.5; }
     .ve-detalle { margin: 0 0 12px; color: #475569; font-size: 14.5px; line-height: 1.55; }
     .ve-mas { margin: 8px 0 0; font-size: 13px; color: #64748b; }
 
@@ -1249,6 +1699,8 @@ const ESTILOS = `
     .ve-grilla col.c-corr-ancha { width: 312px; }
     .ve-grilla th { background: #f8fafc; color: #475569; font-size: 12.5px; font-weight: 700; text-align: left; padding: 9px 10px; border-bottom: 1px solid #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ve-grilla th.num { text-align: right; }
+    /* «Columnas no suman»: los títulos de ARCA van enteros (en dos renglones si hace falta). */
+    .ve-grilla table.ve-suma th { white-space: normal; vertical-align: bottom; line-height: 1.25; }
     .ve-grilla th.h-corr { color: #9b2c2c; border-left: 1px solid #e2e8f0; }
     .ve-grilla td { padding: 8px 10px; border-bottom: 1px solid #eef2f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ve-grilla tbody:last-child tr:last-child td { border-bottom: 0; }
@@ -1296,13 +1748,14 @@ const ESTILOS = `
       .ve-popup .swal2-title { padding: 18px 64px 12px 16px; font-size: 1.25em; }
       .ve-popup .swal2-actions { padding: 12px 16px; }
       .ve-popup .swal2-confirm { width: 100%; }
-      .ve-barra { margin: 0 -12px 12px; padding: 8px 12px; }
+      .ve-barra { top: -12px; margin: 0 -12px 12px; padding: 8px 12px; }
       .ve-chip { min-height: 44px; }
       .ve-derecha { max-width: none; }
       .ve-error summary { flex-wrap: wrap; }
       .ve-insignias { flex-direction: row; }
       .ve-cab { flex-basis: 100%; }
       .ve-derecha { width: 100%; justify-content: flex-start; }
+      .ve-metas { justify-content: flex-start; }
       /* En pantallas angostas la CUIT cede su lugar (está en el Excel de la auditoría). */
       .ve-grilla col.c-cuit { width: 0; }
       .ve-grilla td.cuit, .ve-grilla th.h-cuit { padding: 0; }
@@ -1324,53 +1777,103 @@ export function contarErrores(errores: readonly Advertencia[]): Record<Advertenc
  * comprobantes, sin las que el control ya explicó (tiques, extractos, exterior, o ya en «Error»).
  */
 export function pendientesDe(errores: readonly Advertencia[], cliente: string, operacion: string, hojas?: HojasExcel): number {
+  const n = conteoDe(errores, cliente, operacion, hojas);
+  return n.error + n.soloArca + n.soloXubio - n.explicadas;
+}
+
+/** Los bloques de un cliente y una operación. */
+function conteoDe(errores: readonly Advertencia[], cliente: string, operacion: string, hojas?: HojasExcel): ConteoBloques {
   const clave = claveExcel(cliente, operacion);
   const solo = (h: FaltantesDelExcel | undefined) => (h?.get(clave) ? new Map([[clave, h.get(clave)!]]) : undefined);
-  const n = contarBloques(
+  return contarBloques(
     errores.filter((e) => e.cliente === cliente && e.operacion === operacion),
     solo(hojas?.sinLibro),
     solo(hojas?.sinArca),
   );
-  return n.error + n.soloArca + n.soloXubio - n.explicadas;
 }
 
-/** La tira de KPIs: una tarjeta por operación con cuántos coinciden y cuántos hay que gestionar. */
-function bloqueResumen(resumenes: readonly ResumenOperacion[], varios: boolean, errores: readonly Advertencia[], hojas?: HojasExcel): string {
-  if (!resumenes.length) return '';
-  const tarjetas = resumenes
-    .map((r) => {
-      const pendientes = pendientesDe(errores, r.cliente, r.operacion, hojas);
-      const ok = pendientes === 0;
-      const estado = ok ? '✓ Sin pendientes' : `${pendientes} a gestionar`;
-      const quien = varios ? `<span class="ve-kpi-cliente">${esc(r.cliente)} · </span>` : '';
-      const pct = r.arca ? Math.round((r.coinciden / r.arca) * 100) : 100;
-      return `<li class="ve-kpi ${ok ? 've-kpi-ok' : 've-kpi-mal'}">
-        <span class="ve-kpi-cab"><span class="ve-kpi-op">${quien}${esc(r.operacion)}</span><span class="ve-kpi-estado">${estado}</span></span>
-        <span class="ve-kpi-num"><b>${r.coinciden}</b> de ${r.arca} comprobantes de ARCA coinciden con Xubio</span>
-        <span class="ve-kpi-barra" role="img" aria-label="${pct}% coincide"><span style="width:${pct}%"></span></span>
-      </li>`;
-    })
-    .join('');
-  return `<ul class="ve-kpis" aria-label="Resumen por operación">${tarjetas}</ul>`;
+const OPERACIONES: readonly ResumenOperacion['operacion'][] = ['Ventas', 'Compras'];
+
+/** Los números de los filtros de estado (Todos | Error | Subir a Xubio | A revisar). */
+type ConteoFiltros = Record<'todos' | 'error' | 'subir' | 'revisar', number>;
+
+/**
+ * Los números de los filtros de un cliente (o de todos, con `null`). Las sueltas (un
+ * paso que falló, ARCA vacío…) cuentan donde se ven: los errores graves en «Error»,
+ * «Las columnas no suman» en «A revisar». Así «Todos» es la suma de los otros tres.
+ */
+function conteoCliente(errores: readonly Advertencia[], hojas: HojasExcel | undefined, cliente: string | null): ConteoFiltros {
+  const delCliente = (c: string) => !cliente || c === cliente;
+  const hoja = (h: FaltantesDelExcel | undefined) => h && new Map([...h].filter(([clave]) => delCliente(clave.slice(0, clave.lastIndexOf('|')))));
+  const propios = errores.filter((e) => delCliente(e.cliente));
+  const n = contarBloques(propios, hoja(hojas?.sinLibro), hoja(hojas?.sinArca));
+  const sueltas = propios.filter(esSuelta);
+  const error = n.error + sueltas.filter((e) => verDeSuelta(e) === 'error').length;
+  const revisar = n.soloXubio + sueltas.filter((e) => verDeSuelta(e) === 'revisar').length;
+  return { todos: error + n.soloArca + revisar, error, subir: n.soloArca, revisar };
 }
 
 /**
- * Filtros globales, por gravedad. Los que no tienen nada quedan deshabilitados.
- * `sueltas`: los hallazgos fuera de los bloques (un paso que falló, por ejemplo), que
- * se ven con cualquier filtro: entran en «Todos» para que el número coincida con lo
- * que hay en la lista.
+ * La tira de KPIs: una tarjeta por cliente con cuánto hay que gestionar (Ventas y
+ * Compras juntos) y, adentro, cuánto coincide en cada operación que se corrió.
+ * `interactivo`: la tarjeta filtra la lista de abajo a ese cliente.
  */
-function filtrosGlobales(n: ConteoBloques, sueltas: number): string {
+function bloqueResumen(
+  resumenes: readonly ResumenOperacion[],
+  clientes: readonly string[],
+  errores: readonly Advertencia[],
+  hojas?: HojasExcel,
+  interactivo = false,
+): string {
+  if (!resumenes.length) return '';
+  // Un cliente con hallazgos pero sin resumen (falló antes de cruzar) también tiene tarjeta.
+  const porCliente = new Map<string, ResumenOperacion[]>();
+  for (const r of resumenes) porCliente.set(r.cliente, [...(porCliente.get(r.cliente) ?? []), r]);
+  for (const c of clientes) if (!porCliente.has(c)) porCliente.set(c, []);
+  const tarjetas = [...porCliente]
+    .map(([cliente, ops]) => {
+      const modulos = OPERACIONES.flatMap((op) => ops.filter((r) => r.operacion === op)).map((r) => {
+        const pendientes = pendientesDe(errores, cliente, r.operacion, hojas);
+        return {
+          pendientes,
+          html: `<span class="ve-kpi-mod${pendientes ? ' ve-kpi-mod-mal' : ''}">
+            <span class="ve-kpi-op">${esc(r.operacion)}</span>
+            <span class="ve-kpi-num"><b>${r.coinciden}</b> de ${r.arca} comprobantes de ARCA coinciden con Xubio</span>
+          </span>`,
+        };
+      });
+      // Los graves sueltos (un paso que falló…) también son pendientes.
+      const sueltas = errores.filter((e) => e.cliente === cliente && esSuelta(e)).length;
+      const pendientes = modulos.reduce((s, m) => s + m.pendientes, sueltas);
+      const ok = pendientes === 0;
+      const filtro = interactivo
+        ? ` data-tarjeta="${esc(cliente)}" role="button" tabindex="0" aria-pressed="false" title="Ver los hallazgos de ${esc(cliente)}"`
+        : '';
+      const cuerpo = modulos.length ? modulos.map((m) => m.html).join('') : '<span class="ve-kpi-num">Sin resultado del cruce</span>';
+      return `<li class="ve-kpi ${ok ? 've-kpi-ok' : 've-kpi-mal'}"${filtro}>
+        <span class="ve-kpi-cab"><span class="ve-kpi-nombre" title="${esc(cliente)}">${esc(cliente)}</span><span class="ve-kpi-estado">${ok ? '✓ Sin pendientes' : `${pendientes} a gestionar`}</span></span>
+        <span class="ve-kpi-mods">${cuerpo}</span>
+      </li>`;
+    })
+    .join('');
+  return `<ul class="ve-kpis" aria-label="Resumen por cliente">${tarjetas}</ul>`;
+}
+
+/**
+ * La barra de filtros por estado (Todos | Error | Subir a Xubio | A revisar). Los
+ * números y qué se ve los ajusta la ventana al abrir y con cada clic.
+ */
+function filtrosGlobales(n: ConteoFiltros): string {
   const chips: [string, string, number][] = [
-    ['', 'Todos', sueltas + n.error + n.soloArca + n.soloXubio],
+    ['', 'Todos', n.todos],
     ['error', 'Error', n.error],
-    ['subir', 'Subir a Xubio', n.soloArca],
-    ['revisar', 'A revisar', n.soloXubio],
+    ['subir', 'Subir a Xubio', n.subir],
+    ['revisar', 'A revisar', n.revisar],
   ];
-  return `<div class="ve-filtros" role="group" aria-label="Filtrar hallazgos">${chips
+  return `<div class="ve-filtros" role="group" aria-label="Filtrar por estado">${chips
     .map(
       ([id, nombre, k]) =>
-        `<button type="button" class="ve-chip" data-ver="${id}" aria-pressed="${id === ''}"${id && !k ? ' disabled' : ''}>${nombre} <span class="ve-chip-num">${k}</span></button>`,
+        `<button type="button" class="ve-chip${id === 'error' ? ' ve-chip-error' : ''}" data-ver="${id}" aria-pressed="${id === ''}">${nombre} <span class="ve-chip-num">${k}</span></button>`,
     )
     .join('')}</div>`;
 }
@@ -1405,11 +1908,15 @@ export function mostrarVentanaDeErrores(
   aplicar?: { contar: () => number; alAplicar: () => void },
   /** Mails de los clientes y período, para «Consultar al cliente». */
   ctx: ContextoVentana = { emails: {}, periodo: '' },
+  /** Abrir con un cliente ya elegido (por ejemplo, desde su fila). */
+  clienteInicial?: string,
 ) {
   contexto = ctx;
+  mailsArmados.clear();
+  adjuntos.clear();
   const hechas = leerHechas(ejecucionId);
+  destildarLiquidaciones(errores, ejecucionId);
   const graves = contarErrores(errores).grave;
-  const conteo = contarBloques(errores, hojas?.sinLibro, hojas?.sinArca);
   const ordenados = ordenarHallazgos(errores);
   const porCliente = new Map<string, Advertencia[]>();
   for (const e of ordenados) porCliente.set(e.cliente, [...(porCliente.get(e.cliente) ?? []), e]);
@@ -1424,12 +1931,24 @@ export function mostrarVentanaDeErrores(
   const registrar = (a: Advertencia) => subibles.push(a) - 1;
 
   const hayAlgo = errores.length > 0 || porCliente.size > 0;
-  // Los filtros solo separan comprobantes (Error / Subir a Xubio / A revisar). Si no
-  // hay ninguno (por ejemplo, solo fallaron los bots) no hay nada que filtrar: antes
-  // aparecía «Todos (0)» al lado de tres errores graves.
-  const hayComprobantes = conteo.error + conteo.soloArca + conteo.soloXubio > 0;
-  const filtros = hayAlgo && hayComprobantes ? filtrosGlobales(conteo, errores.filter(esSuelta).length) : '';
-  const barra = filtros ? `<div class="ve-barra">${filtros}</div>` : '';
+  // Los números de los filtros: de todos y de cada cliente.
+  const conteoTotal = conteoCliente(errores, hojas, null);
+  const conteoPorCliente = new Map([...porCliente.keys()].map((c) => [c, conteoCliente(errores, hojas, c)] as const));
+  // Con tarjetas, la lista es de a un cliente: no se mezclan empresas. Sin tarjetas
+  // (la ventana de un solo hallazgo) se ve todo lo que vino.
+  const conTarjetas = hayAlgo && resumenes.length > 0;
+  const barra =
+    hayAlgo && conteoTotal.todos > 0
+      ? `<div class="ve-barra">${filtrosGlobales(conteoTotal)}${
+          conTarjetas
+            ? '<span class="ve-filtro-tarjeta" data-filtro-tarjeta hidden><b data-filtro-nombre></b><button type="button" class="ve-limpiar" data-limpiar>Ver otro cliente ✕</button></span>'
+            : ''
+        }</div>`
+      : '';
+  const guia = conTarjetas ? '<p class="ve-guia" data-guia>Seleccioná un cliente arriba para ver el detalle de sus hallazgos.</p>' : '';
+  const vacio = '<p class="ve-guia" data-sin-hallazgos hidden>Este cliente no tiene hallazgos.</p>';
+  // Elegido de entrada: el que pidieron, o el único que hay.
+  const elegidoAlAbrir = clienteInicial && porCliente.has(clienteInicial) ? clienteInicial : porCliente.size === 1 ? [...porCliente.keys()][0] : null;
   // Debajo del título: de quién y de qué período (con un solo cliente, su nombre).
   const sub = [unSoloCliente ? [...porCliente.keys()][0] : porCliente.size ? `${porCliente.size} clientes` : '', ctx.periodo && `Período ${ctx.periodo}`]
     .filter(Boolean)
@@ -1454,14 +1973,24 @@ export function mostrarVentanaDeErrores(
     title: hayAlgo ? 'Hallazgos del control' : 'Control sin hallazgos',
     html: `${ESTILOS}
       <div class="ve">
-        ${sub ? `<p class="ve-sub">${sub}</p>` : ''}
+        ${
+          sub || (hayAlgo && ctx.descargarHallazgos)
+            ? `<div class="ve-cabeza">${sub ? `<p class="ve-sub">${sub}</p>` : '<span></span>'}${
+                errores.length && ctx.descargarHallazgos
+                  ? '<button type="button" class="ve-limpiar ve-descargar" data-descargar-hallazgos title="Baja los hallazgos en un Excel para guardarlos como registro">⬇ Descargar hallazgos (Excel)</button>'
+                  : ''
+              }</div>`
+            : ''
+        }
         ${
           graves
             ? `<div class="ve-grave-aviso" role="alert"><span class="ve-grave-icono" aria-hidden="true">!</span><span><strong>El control terminó con ${graves === 1 ? 'un error grave' : `${graves} errores graves`}.</strong> Hasta corregirlo, el resultado no es confiable.</span></div>`
             : ''
         }
-        ${bloqueResumen(resumenes, new Set(resumenes.map((r) => r.cliente)).size > 1, errores, hojas)}
+        ${bloqueResumen(resumenes, [...porCliente.keys()], errores, hojas, conTarjetas)}
+        ${guia}
         ${barra}
+        ${vacio}
         ${lista}
       </div>`,
     width: 'min(1080px, 96vw)',
@@ -1482,14 +2011,100 @@ export function mostrarVentanaDeErrores(
           if (a && alSubirAXubio) alSubirAXubio(a);
         });
       }
-      // Filtros globales: muestran un solo bloque (lo grave queda siempre a la vista).
-      grupoDeBotones(popup.querySelectorAll<HTMLButtonElement>('button[data-ver]'), 'aria-pressed', (b) => {
-        const ver = b.dataset['ver'];
-        for (const bloque of popup.querySelectorAll<HTMLElement>('.ve-bloque')) bloque.hidden = !!ver && bloque.dataset['bloque'] !== ver;
+      // Filtros: el cliente (tarjeta del resumen) y el estado, combinados. Con tarjetas
+      // y ninguna elegida no se ve la lista: solo la guía para elegir un cliente.
+      const filtro: { cliente: string | null; ver: string } = { cliente: elegidoAlAbrir, ver: '' };
+      const chips = popup.querySelectorAll<HTMLButtonElement>('button[data-ver]');
+      const tarjetas = popup.querySelectorAll<HTMLElement>('[data-tarjeta]');
+      const conteoActual = () => (filtro.cliente && conteoPorCliente.get(filtro.cliente)) || conteoTotal;
+      /** Si hay errores en lo que se ve, «Error» va primero: se elige solo. */
+      const priorizarError = () => {
+        if (conteoActual().error > 0) filtro.ver = 'error';
+      };
+      const filtrar = () => {
+        // Estado: «Error» desaparece en 0; los otros se deshabilitan.
+        const n = conteoActual();
+        for (const chip of chips) {
+          const id = chip.dataset['ver'] ?? '';
+          const k = n[(id || 'todos') as keyof ConteoFiltros] ?? 0;
+          const num = chip.querySelector('.ve-chip-num');
+          if (num) num.textContent = String(k);
+          chip.disabled = !!id && !k;
+          if (id === 'error') chip.hidden = !k;
+        }
+        if (filtro.ver && !n[filtro.ver as keyof ConteoFiltros]) filtro.ver = '';
+        for (const chip of chips) chip.setAttribute('aria-pressed', String((chip.dataset['ver'] ?? '') === filtro.ver));
+        const { cliente, ver } = filtro;
+        const esperando = conTarjetas && !cliente;
+        const guiaEl = popup.querySelector<HTMLElement>('[data-guia]');
+        if (guiaEl) guiaEl.hidden = !esperando;
+        const barraEl = popup.querySelector<HTMLElement>('.ve-barra');
+        if (barraEl) barraEl.hidden = esperando;
+        const sinHallazgos = popup.querySelector<HTMLElement>('[data-sin-hallazgos]');
+        if (sinHallazgos) sinHallazgos.hidden = !cliente || !!conteoPorCliente.get(cliente)?.todos;
+        // Tarjetas: la elegida resaltada, las otras atenuadas por igual (en reposo, todas normales).
+        for (const t of tarjetas) t.setAttribute('aria-pressed', String(t.dataset['tarjeta'] === cliente));
+        popup.querySelector('.ve-kpis')?.toggleAttribute('data-filtrando', !!cliente);
+        const aviso = popup.querySelector<HTMLElement>('[data-filtro-tarjeta]');
+        if (aviso) {
+          aviso.hidden = !cliente;
+          const nombre = aviso.querySelector('[data-filtro-nombre]');
+          if (nombre) nombre.textContent = cliente ?? '';
+        }
+        for (const d of popup.querySelectorAll<HTMLElement>('.ve-grupo > details')) {
+          d.hidden = !!ver && (d.dataset['bloque'] ?? d.dataset['suelta']) !== ver;
+        }
         for (const grupo of popup.querySelectorAll<HTMLElement>('.ve-grupo')) {
-          grupo.hidden = !!ver && !grupo.querySelector(`.ve-bloque[data-bloque="${ver}"], details:not(.ve-bloque)`);
+          grupo.hidden =
+            esperando || (!!cliente && grupo.dataset['cliente'] !== cliente) || (!!ver && !grupo.querySelector(':scope > details:not([hidden])'));
+        }
+      };
+      grupoDeBotones(chips, 'aria-pressed', (b) => {
+        filtro.ver = b.dataset['ver'] ?? '';
+        filtrar();
+      });
+      const alternarTarjeta = (t: HTMLElement) => {
+        filtro.cliente = filtro.cliente === t.dataset['tarjeta'] ? null : (t.dataset['tarjeta'] ?? null);
+        if (filtro.cliente) priorizarError();
+        filtrar();
+      };
+      for (const t of tarjetas) {
+        t.addEventListener('click', () => alternarTarjeta(t));
+        t.addEventListener('keydown', (ev) => {
+          if (ev.key !== 'Enter' && ev.key !== ' ') return;
+          ev.preventDefault();
+          alternarTarjeta(t);
+        });
+      }
+      popup.querySelector('[data-limpiar]')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        filtro.cliente = null;
+        filtrar();
+      });
+      // «Descargar hallazgos»: del cliente elegido arriba, o de todos.
+      const botonDescargar = popup.querySelector<HTMLButtonElement>('[data-descargar-hallazgos]');
+      const textoDescargar = () => {
+        if (botonDescargar) botonDescargar.textContent = filtro.cliente || unSoloCliente ? '⬇ Descargar hallazgos (Excel)' : '⬇ Descargar hallazgos de todos (Excel)';
+      };
+      botonDescargar?.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        if (!contexto.descargarHallazgos) return;
+        botonDescargar.disabled = true;
+        try {
+          await contexto.descargarHallazgos(filtro.cliente);
+          avisoMail('Se descargó el Excel con los hallazgos.');
+        } catch {
+          avisoMail('No se pudo descargar el Excel de los hallazgos.', 'error');
+        } finally {
+          botonDescargar.disabled = false;
         }
       });
+      for (const t of tarjetas) t.addEventListener('click', textoDescargar);
+      popup.querySelector('[data-limpiar]')?.addEventListener('click', textoDescargar);
+      textoDescargar();
+      // Al abrir: si hay errores en lo que se ve, se empieza por ellos.
+      if (!conTarjetas || filtro.cliente) priorizarError();
+      filtrar();
       // Pills del bloque «Error»: Letra / Tipo / Importe…
       for (const pills of popup.querySelectorAll<HTMLElement>('.ve-pills')) {
         const bloque = pills.closest('.ve-bloque');
@@ -1497,6 +2112,16 @@ export function mostrarVentanaDeErrores(
           const clase = b.dataset['pill'];
           for (const par of bloque?.querySelectorAll<HTMLElement>('tbody.ve-par') ?? []) par.hidden = !!clase && par.dataset['clase'] !== clase;
         });
+      }
+      // «A revisar» con Ventas y Compras: «Todos» (al abrir) o una operación, cada uno con su botón de mail.
+      for (const pills of popup.querySelectorAll<HTMLElement>('[data-pills-op]')) {
+        const bloque = pills.closest('.ve-bloque');
+        const mostrar = (op: string) => {
+          for (const t of bloque?.querySelectorAll<HTMLElement>('tbody[data-op]') ?? []) t.hidden = !!op && t.dataset['op'] !== op;
+          for (const m of bloque?.querySelectorAll<HTMLElement>('[data-op-mail]') ?? []) m.hidden = m.dataset['opMail'] !== op;
+        };
+        const botones = pills.querySelectorAll<HTMLButtonElement>('button[data-op-pill]');
+        grupoDeBotones(botones, 'aria-pressed', (b) => mostrar(b.dataset['opPill'] ?? ''));
       }
       // Tilde «cargado / resuelto» (solo Acceso Total; el empleado lo ve deshabilitado).
       const marcadas = new Set(hechas);
@@ -1540,6 +2165,9 @@ export function mostrarVentanaDeErrores(
           if (!canEdit) return;
           tildar(caja);
           sincronizar(grupoDe(caja));
+          if (caja.checked && caja.hasAttribute('data-liquidacion')) {
+            avisoMail(`Ojo: es una liquidación bancaria, ${POR_QUE_LIQUIDACION}.`, 'error');
+          }
         });
       }
       for (const todas of popup.querySelectorAll<HTMLInputElement>('input[data-incluir-todas]')) {
@@ -1550,6 +2178,10 @@ export function mostrarVentanaDeErrores(
             tildar(caja);
           }
           sincronizar(grupoDe(todas));
+          const liq = todas.closest('table')?.querySelectorAll('input[data-liquidacion]').length ?? 0;
+          if (todas.checked && liq) {
+            avisoMail(`Ojo: tildaste ${liq === 1 ? 'una liquidación bancaria' : `${liq} liquidaciones bancarias`}: ${POR_QUE_LIQUIDACION}.`, 'error');
+          }
         });
       }
       // «Aplicar cambios»: tildar solo elige; el cambio lo hace el servidor al tocar el botón.
@@ -1599,6 +2231,21 @@ export function mostrarVentanaDeErrores(
       }
       contarAplicar();
       for (const grupo of popup.querySelectorAll<HTMLElement>('.ve-grupo')) sincronizar(grupo);
+      // «Consultar al cliente»: el mail con la tabla queda copiado mientras se abre Gmail.
+      popup.addEventListener('click', (ev) => {
+        const boton = (ev.target as HTMLElement).closest<HTMLElement>('a[data-mail]');
+        const m = boton ? mailsArmados.get(boton.dataset['mail'] ?? '') : undefined;
+        if (!boton || !m) return;
+        ev.preventDefault();
+        const adjunto = adjuntos.get(boton.dataset['mail'] ?? '');
+        const descargar = adjunto && contexto.descargarExcelFaltantes;
+        void abrirMail(m, contexto.pegarEnGmail, descargar ? ' El Excel de las partidas se descargó: adjuntalo al mail.' : '');
+        if (descargar) {
+          descargar(adjunto.cliente, adjunto.operacion).catch(() =>
+            avisoMail('No se pudo descargar el Excel de las partidas para adjuntar.', 'error'),
+          );
+        }
+      });
       // Copia rápida: clic en el comprobante o la CUIT.
       popup.addEventListener('click', (ev) => {
         const celda = (ev.target as HTMLElement).closest<HTMLElement>('[data-copiar]');
@@ -1623,4 +2270,99 @@ export function mostrarVentanaDeErrores(
     showClass: { popup: '', backdrop: 'swal2-backdrop-show', icon: '' },
     hideClass: { popup: '', backdrop: '', icon: '' },
   });
+}
+
+// --- «Descargar hallazgos»: lo mismo que la ventana, en filas para un Excel sin estilos ---
+
+export type CeldaRegistro = string | number | null;
+
+/** Un hallazgo como se ve en la ventana: insignia, título, qué hacer, detalle y su tabla. */
+export interface BloqueRegistro {
+  cliente: string;
+  operacion: string;
+  insignia: string;
+  titulo: string;
+  que_hacer: string;
+  detalle: string;
+  columnas: string[];
+  filas: CeldaRegistro[][];
+}
+
+function numeroORaya(v: CeldaVista['valor'] | undefined): CeldaRegistro {
+  if (v === null || v === undefined || v === '') return '-';
+  return aNumero(v) ?? String(v);
+}
+
+function insigniaDe(e: Advertencia): string {
+  if (e.tipo === 'total_no_cierra' && e.gravedad !== 'info') return 'A revisar';
+  const clase = claseDe(e);
+  return clase === 'grave' ? 'Grave' : clase === 'aviso' ? 'A revisar' : clase === 'info' ? 'Info' : 'Error';
+}
+
+/** Las filas de un hallazgo: «Letra distinta» trae ARCA y Xubio juntas. */
+function filasRegistro(e: Advertencia): { origen: 'ARCA' | 'Xubio'; celdas: CeldaVista[]; nota: string }[] {
+  return e.comprobantes.flatMap((c) =>
+    'fila_arca' in c
+      ? [
+          { origen: 'ARCA' as const, celdas: c.fila_arca ?? [], nota: '' },
+          { origen: 'Xubio' as const, celdas: c.fila_xubio ?? [], nota: '' },
+        ]
+      : [{ origen: c.origen === 'arca' ? ('ARCA' as const) : ('Xubio' as const), celdas: c.fila ?? [], nota: c.motivo ? (NOTA_MOTIVO[c.motivo]?.texto ?? '') : '' }],
+  );
+}
+
+function tablaRegistro(e: Advertencia): { columnas: string[]; filas: CeldaRegistro[][] } {
+  const filas = filasRegistro(e);
+  if (!filas.length) return { columnas: [], filas: [] };
+  if (e.tipo === 'total_no_cierra') {
+    // Igual que la grilla de la ventana: cada alícuota y lo que suma, el total, la diferencia y Xubio.
+    const partes = filas[0].celdas.map((c) => c.columna).filter((c) => COLUMNA_QUE_SUMA.test(c.trim()));
+    return {
+      columnas: ['Fecha', 'Comprobante', 'Razón social', ...partes, 'Imp. Total', 'Diferencia', 'En Xubio'],
+      filas: filas.map(({ celdas }) => {
+        const d = normalizar(celdas);
+        const v: Record<string, CeldaVista['valor']> = {};
+        for (const c of celdas) v[c.columna] = c.valor;
+        const xubio = v['Total Xubio'];
+        return [
+          texto(d.Fecha), texto(d.Comprobante), texto(d['Razón social']),
+          ...partes.map((p) => (v[p] ? numeroORaya(v[p]) : '-')),
+          numeroORaya(d.Total), numeroORaya(v['Diferencia']),
+          xubio === null || xubio === undefined ? 'No está' : numeroORaya(xubio),
+        ];
+      }),
+    };
+  }
+  const conOrigen = new Set(filas.map((f) => f.origen)).size > 1;
+  const conNota = filas.some((f) => f.nota);
+  return {
+    columnas: [...(conOrigen ? ['Origen'] : []), 'Fecha', 'Tipo', 'Comprobante', 'CUIT', 'Razón social', ...(conNota ? ['Observación'] : []), 'Total'],
+    filas: filas.map((f) => {
+      const d = normalizar(f.celdas);
+      return [
+        ...(conOrigen ? [f.origen] : []),
+        texto(d.Fecha), abreviarTipo(texto(d.Tipo)), texto(d.Comprobante), cuit(d.CUIT), texto(d['Razón social']),
+        ...(conNota ? [f.nota] : []),
+        numeroORaya(d.Total),
+      ];
+    }),
+  };
+}
+
+/** Los hallazgos (del cliente elegido o de todos) como se ven en la ventana, para el Excel. */
+export function registroDeHallazgos(errores: readonly Advertencia[], cliente: string | null = null): BloqueRegistro[] {
+  return ordenarHallazgos(errores.filter((e) => !cliente || e.cliente === cliente))
+    .sort((a, b) => a.cliente.localeCompare(b.cliente))
+    .map((e) => {
+      const n = e.total;
+      return {
+        cliente: e.cliente,
+        operacion: e.operacion ?? '',
+        insignia: insigniaDe(e),
+        titulo: `${e.titulo}${n ? ` (${plural(n, 'comprobante', 'comprobantes')})` : ''}`,
+        que_hacer: ordenDe(e)?.orden ?? '',
+        detalle: e.detalle,
+        ...tablaRegistro(e),
+      };
+    });
 }

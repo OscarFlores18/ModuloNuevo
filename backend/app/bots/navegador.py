@@ -160,14 +160,19 @@ def _necesita_imagenes(url: str) -> bool:
     return any(host == h or host.endswith("." + h) for h in HOSTS_CON_IMAGENES)
 
 
+# Cada sitio bloqueado se anota una sola vez por apertura de la app: antes se
+# repetía en cada login (cada cliente) y llenaba backend.log de líneas iguales.
+_HOSTS_AVISADOS: set[str] = set()
+_LOCK_AVISADOS = threading.Lock()
+
+
 def _instalar_filtro_salida(context, log: Callable[[str], None]) -> None:
     modo = config.EGRESS_MODO
     filtrar = modo not in ("off", "0", "no")
     aligerar = config.BLOQUEAR_RECURSOS
     if not filtrar and not aligerar:
         return
-    avisados: set[str] = set()
-    lock = threading.Lock()
+    avisados, lock = _HOSTS_AVISADOS, _LOCK_AVISADOS
 
     def manejar(route) -> None:
         url = route.request.url
@@ -219,6 +224,9 @@ def nuevo_contexto(browser, log: Callable[[str], None] = print, **opciones):
         ancho, alto = config.PLAYWRIGHT_VIEWPORT
         opciones.setdefault("viewport", {"width": ancho, "height": alto})
     context = browser.new_context(**opciones)
+    # Lo que no pide un tiempo propio (pestañas nuevas, descargas, goto) espera lo mismo.
+    context.set_default_timeout(config.PLAYWRIGHT_ESPERA_MS)
+    context.set_default_navigation_timeout(config.PLAYWRIGHT_ESPERA_MS)
     _instalar_filtro_salida(context, log)
     return context
 

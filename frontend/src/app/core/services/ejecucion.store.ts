@@ -1,6 +1,7 @@
 import { Injectable, PLATFORM_ID, computed, inject, signal } from '@angular/core';
 import { isPlatformBrowser } from '@angular/common';
 import { AccionPausa, DetalleEjecucion, LineaLog, PedidoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../models';
+import { ToastService } from '../ui/toast';
 import { ApiService } from './api.service';
 
 const CADA_MS = 1200;
@@ -14,6 +15,7 @@ const CADA_MS = 1200;
 @Injectable({ providedIn: 'root' })
 export class EjecucionStore {
   private readonly api = inject(ApiService);
+  private readonly toast = inject(ToastService);
   private readonly navegador = isPlatformBrowser(inject(PLATFORM_ID));
 
   readonly actual = signal<DetalleEjecucion | null>(null);
@@ -114,6 +116,34 @@ export class EjecucionStore {
     if (this.siguiendo === ej.id) this.mostrar(ej, true);
   }
 
+  /** Toast al terminar el control y, en la app de escritorio, parpadeo en la barra de tareas. */
+  private avisarFin(ej: DetalleEjecucion): void {
+    const { ok, con_errores } = ej.totales;
+    const n = ej.clientes;
+    const clientes = `${n} ${n === 1 ? 'cliente' : 'clientes'}`;
+    let titulo: string;
+    if (ej.estado === 'cancelada') {
+      titulo = 'Control cancelado';
+      this.toast.info(titulo, `${ok} de ${clientes} llegaron a terminar.`);
+    } else if (ej.estado === 'error' || (con_errores && !ok)) {
+      titulo = 'El control terminó con errores';
+      this.toast.error(titulo, 'Mirá en «Qué hay que hacer» qué falló y volvé a correrlo.');
+    } else if (con_errores) {
+      titulo = 'Control terminado, con errores';
+      this.toast.aviso(titulo, `${ok} de ${clientes} OK. Los Excel bajados y el control quedaron en la carpeta de cada cliente.`);
+    } else {
+      titulo = 'Control terminado';
+      this.toast.ok(titulo, `${clientes}: los Excel de ARCA y Xubio y el control quedaron en la carpeta de cada cliente.`);
+    }
+    // App de escritorio (desktop.py expone `avisar`): si la ventana está atrás, parpadea.
+    const api = (globalThis as { pywebview?: { api?: { avisar?: (t: string) => unknown } } }).pywebview?.api;
+    try {
+      void api?.avisar?.(titulo);
+    } catch {
+      // En el navegador no existe: alcanza con el toast.
+    }
+  }
+
   private mostrar(ej: DetalleEjecucion, desdeCero: boolean): void {
     this.siguiendo = ej.id;
     this.actual.set(ej);
@@ -131,6 +161,8 @@ export class EjecucionStore {
       if (this.siguiendo !== id) return; // se cambió de ejecución mientras tanto
       this.mostrar(ej, desde === 0);
       const sigue = estaActiva(ej.estado);
+      // Recién terminó (los bots corren ocultos: si no se avisa, no hay cómo enterarse).
+      if (!sigue && previo?.id === id && estaActiva(previo.estado)) this.avisarFin(ej);
       this.hayActiva.set(sigue);
       if (sigue) this.programar();
       else void this.cargarHistorial();

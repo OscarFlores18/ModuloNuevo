@@ -15,9 +15,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # libatomic1 es necesaria para que arranque el driver de Playwright y pueda
-# instalar el resto de las dependencias de Chromium con --with-deps.
+# instalar el resto de las dependencias de Chromium con --with-deps. Tesseract
+# (con español) es el OCR de «Pasar a Excel» para fotos y PDF escaneados.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libatomic1 \
+    && apt-get install -y --no-install-recommends libatomic1 tesseract-ocr tesseract-ocr-spa \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt backend/requirements.txt

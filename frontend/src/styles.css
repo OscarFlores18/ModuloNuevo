@@ -1257,23 +1257,73 @@ input[type='checkbox'] {
   font-size: 0.9rem;
 }
 
-/* Filtro de tareas por cliente. */
+/* Filtro de tareas por cliente: una píldora por cliente (con sus pendientes) y «Todos». */
 .tr-filtro {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 12px;
-  font-size: 0.88rem;
-  font-weight: 600;
 }
 
-.tr-filtro select {
-  width: auto;
-  min-width: 220px;
+.tr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   max-width: 100%;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  min-height: 38px;
+  padding: 5px 14px;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #fff;
+  color: #334155;
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.tr-pill:hover {
+  border-color: #2563eb;
+  background: #eff6ff;
+}
+
+.tr-pill:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.tr-pill[aria-pressed='true'] {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.tr-pill-nombre {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tr-pill-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.tr-pill[aria-pressed='true'] .tr-pill-num {
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
 }
 
 /* Encabezado del bloque de archivos: plegar a la izquierda, descargar todo a la derecha. */
@@ -1831,6 +1881,18 @@ details[open] > summary .ej-chevron {
   font-size: 0.8rem;
 }
 
+/* Los clientes del control, hasta dos líneas (el resto con «…»; completos al pasar el mouse). */
+.ej-hist-clientes {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--color-texto);
+  font-size: 0.75rem;
+  line-height: 1.3;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
 /* El resultado de cada control: una etiqueta de color, que se lee de un vistazo. */
 .ej-hist-res {
   align-self: flex-start;
@@ -2120,6 +2182,107 @@ details[open] > summary .ej-chevron {
 
 .cl-resumen .cl-mal {
   color: #b91c1c;
+}
+
+/* --- Clientes: «Cargar desde JSON» ------------------------------------------------ */
+
+.cl-json {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.cl-lado > .cl-json {
+  margin-top: 16px;
+}
+.cl-json-cab {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.cl-json-cab h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+.cl-json-cab p {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  color: var(--color-tenue);
+}
+.cl-json-icono {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: var(--color-acento-fuerte);
+  font: 700 0.85rem var(--font-mono);
+}
+.cl-json-texto {
+  width: 100%;
+  min-height: 112px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--color-borde);
+  border-radius: 10px;
+  background: var(--color-panel-alt);
+  color: var(--color-texto);
+  font: 0.8rem/1.5 var(--font-mono);
+  box-sizing: border-box;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.cl-json-texto::placeholder {
+  color: #94a3b8;
+}
+.cl-json-texto:focus {
+  outline: none;
+  border-color: var(--color-acento);
+  background: var(--color-panel);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+.cl-json-texto:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.cl-json-estado {
+  min-height: 20px;
+  font-size: 0.85rem;
+}
+.cl-json-mal {
+  color: var(--color-error-texto);
+}
+.cl-json-detectados {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cl-json-detectados li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-borde);
+  border-radius: 8px;
+  background: var(--color-panel);
+}
+.cl-json-nombre {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.cl-json-pie {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
 }
 
 /* --- Faltantes a Xubio: elegir a la izquierda, resultados a la derecha -------- */
@@ -2765,85 +2928,6 @@ details[open] > summary .ej-chevron {
   right: -8px;
 }
 
-/* --- Circuito: los pasos de todo el trabajo -------------------------------- */
-.cf-circuito {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0 0 12px;
-  padding: 6px 8px;
-  overflow-x: auto;
-  border: 1px solid var(--color-borde);
-  border-radius: 10px;
-  background: #fff;
-  list-style: none;
-  scrollbar-width: thin;
-}
-
-.cf-circuito-titulo {
-  flex: none;
-  margin-right: 4px;
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.cf-circuito li {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-}
-
-.cf-circuito-paso {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 9px 4px 5px;
-  border-radius: 999px;
-  color: #475569;
-  font-size: 12.5px;
-  font-weight: 600;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background-color 0.15s, color 0.15s;
-}
-
-.cf-circuito-paso:hover {
-  background: var(--color-panel-alt);
-  color: var(--color-texto);
-}
-
-.cf-circuito-num {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  background: #e2e8f0;
-  color: #475569;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.cf-circuito-paso.actual {
-  background: rgba(37, 99, 235, 0.1);
-  color: #1d4ed8;
-}
-
-.cf-circuito-paso.actual .cf-circuito-num {
-  background: var(--color-acento);
-  color: #fff;
-}
-
-.cf-circuito-flecha {
-  color: #cbd5e1;
-  font-size: 12px;
-}
-
 /* --- Recorrido guiado ------------------------------------------------------- */
 .cf-recorrido-fondo {
   position: fixed;
@@ -3047,18 +3131,7 @@ app-root > .mf-main {
   border-radius: 8px;
 }
 
-/* Pasos del trabajo y pie */
-.cf-circuito {
-  margin-bottom: 0;
-  padding: 3px 6px;
-}
-.cf-circuito-paso {
-  padding: 2px 8px 2px 4px;
-}
-.cf-circuito-num {
-  width: 18px;
-  height: 18px;
-}
+/* Pie */
 .mf-pie {
   padding: 0 2px;
   font-size: 0.74rem;
@@ -3225,4 +3298,29 @@ app-clientes section:has(#t-candado) .mf-input,
 app-clientes section:has(#t-candado) .mf-btn {
   height: 44px;
   font-size: 1rem;
+}
+
+/* Campo de contraseña con «Ver / Ocultar» adentro: lugar para el botón (le gana al padding de .mf-input). */
+.mf-input.mf-con-ver {
+  padding-right: 76px;
+  text-overflow: ellipsis;
+}
+
+/* Edge/WebView2 agrega su propio ojito en los campos de contraseña: ya está nuestro «Ver». */
+input::-ms-reveal,
+input::-ms-clear {
+  display: none;
+}
+
+/* Versión al lado del título: para no confundir instalaciones. */
+.cf-version {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  vertical-align: middle;
+  color: rgb(255 255 255 / 85%);
 }

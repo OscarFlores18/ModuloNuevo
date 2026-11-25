@@ -1,0 +1,81 @@
+"""«Pasar a Excel»: formatos de factura en PDF que el escáner tiene que leer enteros
+(datos inventados, con la misma forma que los reales)."""
+
+from backend.app.extraccion.a_excel import comprobante_de_texto, corregir_totales
+
+# Factura de ARCA («Comprobantes en línea»): rótulos con «:» y el detalle partido en dos líneas.
+ARCA = """ORIGINAL
+Razón Social: Emisora Prueba S.A.S.
+Condición frente al IVA: IVA Responsable Inscripto
+FACTURA
+Ingresos Brutos: 285345308
+CUIT: 30716583097
+Fecha emisión: 07/10/2026
+Punto de venta: 00001 Comp. Nro: 00005243
+CUIT: 30710809883
+Apellido y Nombre/Razón Social: Receptora Prueba S.A.
+Servicio Cantidad Precio Unit. % IVA Imp.IVA Total
+Fee de acceso mensual - Estudio
+Contable 1 69.285,12 21% 14.549,88 83.835,00
+Importe Neto: $ 69.285,12
+Importe IVA: $ 14.549,88
+Importe Otros Tributos: $ 0,00
+Importe Total: $ 83.835,00
+Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operación.
+CAE N°: 86406611601602
+"""
+
+# Factura de Xubio: rótulos en una columna y valores en otra, números con coma de miles.
+XUBIO = """A
+FACTURA DE VENTA
+Número:
+Fecha:
+CUIT:
+A-00004-00000751
+20/11/2026
+30-71080988-3
+Sr. (es): CLIENTE PRUEBA S.A.
+CUIT: 30-71753882-6
+Razón Social: VENDEDORA PRUEBA S.A.
+Cód. Artículo Observaciones Cantidad Precio % Dto. Importe Alíc. IVA Impt. c/IVA
+0003 Servicios
+profesionales de auditoria.
+1.00 2,479,338.84 0.00 2,479,338.84 21.00% 3,000,000.00
+Observaciones:
+IVA 2.5: 0.00 IVA 5: 0.00 IVA 10.5: 0.00 IVA 21: 520,661.16 IVA 27: 0.00
+Bruto: 2,479,338.84 Impuestos:520,661.16 Total: $ 3,000,000.00
+CAE: 86473617087645
+"""
+
+
+def test_factura_de_arca():
+    e, items, t = comprobante_de_texto(ARCA)
+    assert (e["emisor"], e["receptor"]) == ("Emisora Prueba S.A.S.", "Receptora Prueba S.A.")
+    assert (e["emisor_cuit"], e["receptor_cuit"], e["numero"]) == ("30716583097", "30710809883", "00001-00005243")
+    assert (t["neto_gravado"], t["iva"], t["total"]) == (69285.12, 14549.88, 83835.0)
+    assert len(items) == 1
+    assert items[0].descripcion == "Fee de acceso mensual - Estudio Contable"
+    assert (items[0].cantidad, items[0].alicuota, items[0].importe) == (1, 21, 69285.12)
+
+
+def test_factura_de_xubio():
+    e, items, t = comprobante_de_texto(XUBIO)
+    assert (e["emisor"], e["emisor_cuit"]) == ("VENDEDORA PRUEBA S.A.", "30710809883")
+    assert (e["receptor"], e["receptor_cuit"]) == ("CLIENTE PRUEBA S.A.", "30717538826")
+    assert e["numero"] == "00004-00000751"
+    assert (t["neto_gravado"], t["iva"], t["total"]) == (2479338.84, 520661.16, 3000000.0)
+    assert len(items) == 1
+    i = items[0]
+    assert (i.codigo, i.descripcion) == ("0003", "Servicios profesionales de auditoria.")
+    assert (i.cantidad, i.precio, i.alicuota, i.importe) == (1, 2479338.84, 21, 2479338.84)
+
+
+def test_tique_factura_y_sa_mal_leida():
+    e, _, _ = comprobante_de_texto("FGC FUELS MARKETING $A\nC.U.I.T. Nro.: 30716583097\nCód. 001 - TIQUE FACTURA \"A\"\n")
+    assert e["tipo"].startswith("81") and e["emisor"] == "FGC FUELS MARKETING SA"
+
+
+def test_no_corrige_un_cero():
+    # IVA (9 por 3) y otros tributos (0 por 8) mal leídos; el 0,00 del no gravado no se toca.
+    t = {"neto_gravado": 83974.75, "no_gravado": 0.0, "exento": None, "iva": 17694.71, "otros_tributos": 6800.52, "total": 108417.98}
+    assert corregir_totales(t) == {"iva": 17634.71, "otros_tributos": 6808.52}

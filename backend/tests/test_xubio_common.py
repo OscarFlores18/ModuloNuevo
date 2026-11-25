@@ -77,6 +77,9 @@ class _ListaFalsa:
     def nth(self, i: int):
         return self._opciones[i]
 
+    def evaluate_all(self, js: str):
+        return [[o._texto, o._href] for o in self._opciones]
+
 
 class _NombreFalso:
     """#resaltarCompania: devuelve la empresa activa actual de la página."""
@@ -132,10 +135,9 @@ class _PaginaFalsa:
 def test_encuentra_el_link_aunque_el_menu_este_cerrado():
     pagina = _PaginaFalsa()
 
-    enlace = _link_compania_en_dom(pagina, "PICCININI y ASOCIADOS S.A.")
+    href = _link_compania_en_dom(pagina, "PICCININI y ASOCIADOS S.A.")
 
-    assert enlace is not None
-    assert enlace.get_attribute("href") == "/NXV/Relogin?tenant=tnt_14765"
+    assert href == "/NXV/Relogin?tenant=tnt_14765"
 
 
 def test_sin_empresa_en_la_lista_devuelve_none():

@@ -2,7 +2,7 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { descargarBlob } from '../../core/descargar';
-import { ResultadoConversion, mensajeDeError } from '../../core/models';
+import { ArchivoLeido, ComprobanteExtraido, ResultadoConversion, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { PerspectivaService } from '../../core/services/perspectiva.service';
@@ -13,6 +13,8 @@ import { Encabezado } from '../../core/ui/encabezado';
 import { ToastService } from '../../core/ui/toast';
 import { Precarga, borrarPrecarga, leerPrecarga } from '../ejecucion/seleccion';
 import { abreviarTipo } from '../ejecucion/ventana-errores';
+import { validarComprobante } from './comprobantes';
+import { RevisionComprobantes } from './revision';
 
 /** Lo que dice el nombre del AUX de la app: operación, período y cliente. */
 const NOMBRE_AUX = /^AUX - Control de facturas (Ventas|Compras) con AFIP - (\d{2}-\d{2}) - (.+?)(?: - \d+\S* control)?\.xlsx?$/i;
@@ -35,7 +37,7 @@ interface ArchivoElegido {
  */
 @Component({
   selector: 'app-convertir',
-  imports: [Encabezado, Alerta, FormsModule, RouterLink, Ayuda],
+  imports: [Encabezado, Alerta, FormsModule, RouterLink, Ayuda, RevisionComprobantes],
   styles: `
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
@@ -92,8 +94,8 @@ interface ArchivoElegido {
     <div class="fx-grilla">
     <section class="mf-panel" aria-labelledby="t-elegir" data-tour="elegir">
       <div class="fx-cab">
-        <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los Excel del control<app-ayuda texto="Lo más cómodo: en el control, «⬆ Subir a Xubio» trae acá solo los comprobantes que dejaste tildados. Si no, arrastrá los Excel «AUX - Control de facturas…» que dejó el control en la carpeta del cliente." /></h2>
-        <p class="mf-sub m-0 mt-1">Los archivos «AUX - Control de facturas…» de la carpeta del cliente. Pueden ser de varios clientes: el cliente, el mes y si es venta o compra se reconocen solos.</p>
+        <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Los Excel «AUX - Control de facturas…» del control van directo. Las facturas en PDF, fotos, capturas, CSV o planillas propias se leen y las revisás antes de subirlas (de las fotos se lee el QR de ARCA y el texto con OCR)." /></h2>
+        <p class="mf-sub m-0 mt-1">Los Excel del control («AUX - Control de facturas…») o comprobantes sueltos: PDF, fotos (JPG, PNG), capturas, CSV o planillas. Pueden ser de varios clientes.</p>
       </div>
 
       <div class="fx-cuerpo">
@@ -126,7 +128,7 @@ interface ArchivoElegido {
               <span class="mf-tenue text-sm">Arrastrá más acá o</span>
               <label class="mf-btn mf-btn-suave mf-btn-chico cursor-pointer">
                 Agregar
-                <input type="file" accept=".xlsx,.xls" multiple class="sr-only" (change)="elegir($event)" />
+                <input type="file" [accept]="acepta" multiple class="sr-only" (change)="elegir($event)" />
               </label>
             </span>
             <span class="fx-agregar-acciones">
@@ -135,7 +137,7 @@ interface ArchivoElegido {
             @if (convirtiendo()) {
               <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
             }
-            {{ convirtiendo() ? 'Preparando…' : 'Preparar para Xubio (' + elegidos().length + ')' }}
+            {{ convirtiendo() ? 'Leyendo…' : (hayParaLeer() ? 'Leer archivos (' : 'Preparar para Xubio (') + elegidos().length + ')' }}
           </button>
             </span>
           </div>
@@ -158,16 +160,17 @@ interface ArchivoElegido {
               <span class="mf-tenue text-sm">Viene del control. Para usar otros, arrastralos acá o</span>
               <label class="mf-btn mf-btn-suave mf-btn-chico cursor-pointer">
                 Elegir archivos
-                <input type="file" accept=".xlsx,.xls" multiple class="sr-only" (change)="elegir($event)" />
+                <input type="file" [accept]="acepta" multiple class="sr-only" (change)="elegir($event)" />
               </label>
             </span>
           </div>
         } @else {
-          <span class="font-semibold">Arrastrá los Excel del control acá</span>
+          <span class="font-semibold">Arrastrá los archivos acá</span>
+          <span class="mf-tenue text-sm">Excel del control, PDF, fotos, CSV o planillas</span>
           <span class="mf-tenue text-sm">o</span>
           <label class="mf-btn mf-btn-suave cursor-pointer">
             Elegir archivos
-            <input type="file" accept=".xlsx,.xls" multiple class="sr-only" (change)="elegir($event)" />
+            <input type="file" [accept]="acepta" multiple class="sr-only" (change)="elegir($event)" />
           </label>
         }
       </div>
@@ -180,7 +183,7 @@ interface ArchivoElegido {
     <section class="mf-panel" aria-labelledby="t-resultado" data-tour="resultado">
       <div class="fx-cab-der">
         <div class="min-w-0 flex-1">
-          <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Subilos a Xubio<app-ayuda texto="«Subir a Xubio» abre Xubio en esta PC y deja el archivo listo en «Importar desde Mis Comprobantes (ARCA)». El bot no aprieta «Importar»: lo confirmás vos en la ventana de Chrome." /></h2>
+          <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Subilos a Xubio<app-ayuda texto="«Subir a Xubio» abre Xubio en esta PC, carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y aprieta «Importar». Te avisa lo que contestó Xubio." /></h2>
           <p class="mf-sub m-0 mt-1">{{ ventanaXubio() ? 'El bot los carga en Xubio por vos, o descargás el archivo para importarlo a mano.' : 'Descargás el archivo y lo importás en Xubio (Importar > Desde Mis Comprobantes).' }}</p>
         </div>
         @if (precarga(); as p) {
@@ -194,7 +197,7 @@ interface ArchivoElegido {
         @if (convirtiendo()) {
           <div class="fx-cargando" aria-live="polite">
             <span class="inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-[var(--color-acento)]" aria-hidden="true"></span>
-            Preparando los comprobantes…
+            Leyendo los archivos…
           </div>
         } @else if (precarga() && error()) {
           <app-alerta class="mt-4" nivel="error" [mensajes]="[error()!]" [descartable]="true" (cerrado)="error.set(null)" />
@@ -274,17 +277,17 @@ interface ArchivoElegido {
                   <li class="fx-paso">
                     <span class="fx-num" aria-hidden="true">3</span>
                     <div class="min-w-0">
-                      <h3>Subilos<app-ayuda texto="Se abre Xubio en esta PC y el archivo queda cargado en «Importar desde Mis Comprobantes (ARCA)». El bot no aprieta «Importar»: lo confirmás vos en la ventana de Chrome." /></h3>
+                      <h3>Subilos<app-ayuda texto="Se abre Xubio en esta PC, el bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y aprieta «Importar». Si Xubio no confirma que importó, la ventana de Chrome queda abierta para que lo mires." /></h3>
                       <div class="fx-subir-lista">
                         @for (op of operacionesConZip(r); track op) {
                           @let clave = i + '-' + op;
                           @if (cargados()[clave]) {
-                            <span class="fx-hecho">✓ {{ op }} cargado en Xubio · falta apretar «Importar» en Chrome</span>
+                            <span class="fx-hecho">✓ {{ op }} importado en Xubio</span>
                           } @else {
                             <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="cargarEnXubio(r, i, op)" [disabled]="!!cargandoXubio() || !empresaDe(r, i) || !perspectiva.canEdit() || !ventanaXubio()" [attr.aria-busy]="cargandoXubio() === clave" [title]="ventanaXubio() ? (perspectiva.motivoBloqueo() ?? (empresaDe(r, i) ? '' : 'Elegí primero la empresa en Xubio')) : SIN_VENTANA">
                               @if (cargandoXubio() === clave) {
                                 <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
-                                Abriendo Xubio…
+                                Subiendo a Xubio…
                               } @else {
                                 ⬆ Subir {{ r.partidas[op] }} {{ r.partidas[op] === 1 ? 'comprobante' : 'comprobantes' }} de {{ op }}
                               }
@@ -294,7 +297,7 @@ interface ArchivoElegido {
                             <p class="m-0 text-sm" [style.color]="est.ok ? 'var(--color-ok-texto)' : 'var(--color-error)'">{{ est.texto }}</p>
                           }
                         }
-                        <span class="mf-tenue text-sm">{{ ventanaXubio() ? 'Vos confirmás con «Importar» en la ventana que se abre.' : SIN_VENTANA }}</span>
+                        <span class="mf-tenue text-sm">{{ ventanaXubio() ? 'El bot aprieta «Importar» en Xubio: antes te pide que confirmes.' : SIN_VENTANA }}</span>
                       </div>
                     </div>
                   </li>
@@ -317,13 +320,22 @@ interface ArchivoElegido {
           }
         } @else {
           <div class="fx-vacio">
-            <strong>Acá aparece lo que falta subir</strong>
-            <span class="text-sm">Elegí los Excel en el paso 1 y tocá «Preparar para Xubio».</span>
+            @if (revision().length) {
+              <strong>Revisá los comprobantes leídos</strong>
+              <span class="text-sm">Están abajo: corregí lo que haga falta y tocá «Preparar para Xubio».</span>
+            } @else {
+              <strong>Acá aparece lo que falta subir</strong>
+              <span class="text-sm">Elegí los archivos en el paso 1 y tocá «Preparar para Xubio».</span>
+            }
           </div>
         }
       </div>
     </section>
     </div>
+
+    @if (revision().length) {
+      <app-revision-comprobantes [(comprobantes)]="revision" [informe]="informe()" [clientes]="nombresClientes()" [preparando]="preparando()" (preparar)="prepararComprobantes()" />
+    }
   `,
 })
 export class ConvertirPantalla {
@@ -351,6 +363,17 @@ export class ConvertirPantalla {
   protected readonly estadoXubio = signal<Record<string, { ok: boolean; texto: string }>>({});
   /** «⬆ Subir a Xubio» desde un control: lo tildado ahí, ya convertido en el paso 2. */
   protected readonly precarga = signal<Precarga | null>(null);
+  /** Lo que acepta el paso 1: los AUX del control y comprobantes sueltos. */
+  protected readonly acepta = '.xlsx,.xls,.csv,.pdf,.jpg,.jpeg,.png';
+  /** Comprobantes leídos de PDF, fotos, CSV y planillas, para revisar antes de prepararlos. */
+  protected readonly revision = signal<ComprobanteExtraido[]>([]);
+  protected readonly informe = signal<ArchivoLeido[]>([]);
+  protected readonly preparando = signal(false);
+  /** Lo convertido de los AUX: queda junto a lo que se prepare de la revisión. */
+  private resultadosAux: ResultadoConversion[] = [];
+  protected readonly nombresClientes = computed(() => this.clientes.lista().map((c) => c.nombre));
+  /** Hay algo que no es un AUX del control (por el nombre): se lee y se revisa antes. */
+  protected readonly hayParaLeer = computed(() => this.elegidos().some((e) => !NOMBRE_AUX.test(e.archivo.name)));
 
   constructor() {
     void this.clientes.cargar();
@@ -424,21 +447,22 @@ export class ConvertirPantalla {
     return (['Compras', 'Ventas'] as const).filter((op) => r.zips[op]);
   }
 
-  /** Prueba: el bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y se detiene. */
+  /** El bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)», aprieta «Importar» y avisa lo que dijo Xubio. */
   protected async cargarEnXubio(r: ResultadoConversion, i: number, op: 'Ventas' | 'Compras'): Promise<void> {
     if (!this.perspectiva.canEdit()) return;
     const empresa = this.empresaDe(r, i);
     const zip = r.zips[op];
     const clave = `${i}-${op}`;
     if (!zip || !empresa || this.cargandoXubio() || this.cargados()[clave]) return;
+    // La única confirmación: el bot aprieta «Importar» en Xubio y eso no se deshace.
     const seguir = await this.alertas.confirmar(
-      `Subir ${op} a Xubio`,
-      `Se abre Xubio en esta PC, en la empresa «${empresa}», y se carga el archivo en Importar desde Mis Comprobantes (ARCA).`,
-      'Abrir Xubio',
+      `Importar ${op} en Xubio`,
+      `Se van a importar ${r.partidas[op]} ${r.partidas[op] === 1 ? 'comprobante' : 'comprobantes'} de ${op} en la empresa «${empresa}».`,
+      'Importar en Xubio',
       [
-        `${r.partidas[op]} ${r.partidas[op] === 1 ? 'comprobante' : 'comprobantes'} de ${op}.`,
-        'El bot NO aprieta «Importar»: queda la ventana abierta para que lo revises.',
-        'Cerrá esa ventana de Chrome cuando termines.',
+        'El bot abre Xubio en esta PC, carga el archivo y aprieta «Importar».',
+        'No se puede deshacer: si ya los importaste, no lo hagas de nuevo (quedarían repetidos).',
+        'Si Xubio no confirma que importó, la ventana de Chrome queda abierta para que lo mires.',
       ],
     );
     if (!seguir) return;
@@ -450,18 +474,28 @@ export class ConvertirPantalla {
     try {
       // Solo el .zip de esta operación (un único CSV en la raíz).
       const res = await this.api.cargarEnXubio(empresa, op, zip.contenido);
-      if (res.boton_importar_habilitado) {
+      const dijo = res.mensaje ? ` Xubio: «${res.mensaje}».` : '';
+      if (res.importado === true) {
+        this.cargados.update((m) => ({ ...m, [clave]: true }));
+        this.estadoXubio.update((m) => ({ ...m, [clave]: { ok: true, texto: `${op} importado en Xubio (${empresa}).${dijo}` } }));
+        this.toast.ok('Importado en Xubio', `${op} · ${empresa}`);
+      } else if (res.importado === null) {
+        // Se apretó «Importar» pero no se reconoció la respuesta: no se ofrece repetir
+        // sin mirar, porque podría duplicar los comprobantes.
         this.cargados.update((m) => ({ ...m, [clave]: true }));
         this.estadoXubio.update((m) => ({
           ...m,
-          [clave]: { ok: true, texto: `Archivo de ${op} cargado en Xubio (${empresa}). Falta apretar «Importar» en la ventana de Chrome.` },
+          [clave]: { ok: false, texto: `${op}: se apretó «Importar» pero no se pudo confirmar el resultado.${dijo} Fijate en Xubio (la ventana de Chrome quedó abierta) antes de volver a subirlo.` },
         }));
-        this.toast.ok('Listo', `${op} cargado en Xubio (${empresa}).`);
-      } else {
+        this.toast.aviso('Revisá en Xubio', `No se pudo confirmar si ${op} se importó.`);
+      } else if (!res.boton_importar_habilitado) {
         this.estadoXubio.update((m) => ({
           ...m,
-          [clave]: { ok: false, texto: `${op}: se abrió la importación pero Xubio no habilitó «Importar». Revisá la ventana de Chrome.` },
+          [clave]: { ok: false, texto: `${op}: Xubio no habilitó «Importar» con este archivo. Revisá la ventana de Chrome.` },
         }));
+      } else {
+        this.estadoXubio.update((m) => ({ ...m, [clave]: { ok: false, texto: `${op}: Xubio no lo importó.${dijo} Revisá la ventana de Chrome.` } }));
+        this.toast.error('Xubio no lo importó', res.mensaje || op);
       }
     } catch (err) {
       this.estadoXubio.update((m) => ({ ...m, [clave]: { ok: false, texto: mensajeDeError(err, 'No se pudo abrir Xubio.') } }));
@@ -491,13 +525,13 @@ export class ConvertirPantalla {
   }
 
   private sumar(archivos: File[]): void {
-    const excel = archivos.filter((a) => /\.xlsx?$/i.test(a.name));
-    if (excel.length < archivos.length) this.error.set('Solo se aceptan Excel (.xlsx).');
+    const validos = archivos.filter((a) => FORMATOS.test(a.name));
+    if (validos.length < archivos.length) this.error.set('Se aceptan Excel, CSV, PDF y fotos o capturas (JPG, PNG).');
     const ya = new Set(this.elegidos().map((e) => e.archivo.name));
-    const nuevos = excel.filter((a) => !ya.has(a.name)).map((archivo) => {
+    const nuevos = validos.filter((a) => !ya.has(a.name)).map((archivo) => {
       const m = NOMBRE_AUX.exec(archivo.name);
-      const base = archivo.name.replace(/\.xlsx?$/i, '');
-      return { archivo, operacion: m ? capitalizar(m[1]) : operacionPorNombre(base), cliente: m ? m[3] : base };
+      const base = archivo.name.replace(/\.[^.]+$/, '');
+      return { archivo, operacion: m ? capitalizar(m[1]) : etiquetaDe(archivo.name), cliente: m ? m[3] : base };
     });
     this.elegidos.update((l) => [...l, ...nuevos]);
     if (this.precarga()) this.quitarPrecarga();
@@ -505,6 +539,8 @@ export class ConvertirPantalla {
     this.empresas.set({});
     this.estadoXubio.set({});
     this.cargados.set({});
+    this.revision.set([]);
+    this.informe.set([]);
   }
 
   protected quitar(i: number): void {
@@ -514,6 +550,8 @@ export class ConvertirPantalla {
   protected limpiar(): void {
     this.elegidos.set([]);
     this.resultados.set(null);
+    this.revision.set([]);
+    this.informe.set([]);
     this.error.set(null);
   }
 
@@ -523,7 +561,29 @@ export class ConvertirPantalla {
     this.error.set(null);
     try {
       const archivos = await Promise.all(this.elegidos().map(async (e) => ({ nombre: e.archivo.name, contenido: await base64De(e.archivo, e.archivo.name) })));
-      const r = await this.api.convertirAux(archivos);
+      // Los AUX (por el nombre) van directo; el resto se lee y, si alguno resulta
+      // ser un AUX con otro nombre, vuelve marcado y también va por convertirAux.
+      let aux = archivos.filter((a) => NOMBRE_AUX.test(a.nombre));
+      const otros = archivos.filter((a) => !NOMBRE_AUX.test(a.nombre));
+      this.revision.set([]);
+      this.informe.set([]);
+      if (otros.length) {
+        const leido = await this.api.extraerComprobantes(otros);
+        const auxPorContenido = new Set(leido.archivos.filter((a) => a.tipo === 'aux').map((a) => a.nombre));
+        aux = [...aux, ...otros.filter((a) => auxPorContenido.has(a.nombre))];
+        this.informe.set(leido.archivos.filter((a) => a.tipo !== 'aux'));
+        this.revision.set(leido.comprobantes.map((c) => ({ ...c, avisos: validarComprobante(c) })));
+        if (leido.comprobantes.length) {
+          this.toast.info('Revisá lo leído', `${leido.comprobantes.length} ${leido.comprobantes.length === 1 ? 'comprobante leído' : 'comprobantes leídos'}: revisalos abajo antes de prepararlos.`);
+        }
+      }
+      if (!aux.length) {
+        this.resultadosAux = [];
+        this.resultados.set(null);
+        return;
+      }
+      const r = await this.api.convertirAux(aux);
+      this.resultadosAux = r.resultados;
       this.resultados.set(r.resultados);
       this.cargados.set({});
       this.estadoXubio.set({});
@@ -543,6 +603,27 @@ export class ConvertirPantalla {
     }
   }
 
+  /** Los comprobantes revisados al paso 2, junto a lo convertido de los AUX. */
+  protected async prepararComprobantes(): Promise<void> {
+    const incluidos = this.revision().filter((c) => c.incluir);
+    if (this.preparando() || !incluidos.length) return;
+    this.preparando.set(true);
+    this.error.set(null);
+    try {
+      const r = await this.api.prepararComprobantes(incluidos);
+      this.resultados.set([...this.resultadosAux, ...r.resultados]);
+      this.empresas.set({});
+      this.cargados.set({});
+      this.estadoXubio.set({});
+      const ok = r.resultados.reduce((n, x) => n + Object.keys(x.zips).length, 0);
+      if (ok) this.toast.ok('Listo', `${ok} ${ok === 1 ? 'archivo .zip listo' : 'archivos .zip listos'} para Xubio.`);
+    } catch (err) {
+      this.error.set(mensajeDeError(err, 'No se pudieron preparar los comprobantes.'));
+    } finally {
+      this.preparando.set(false);
+    }
+  }
+
   protected bajar(archivo: { nombre: string; contenido: string }, tipo: string): void {
     const bytes = Uint8Array.from(atob(archivo.contenido), (c) => c.charCodeAt(0));
     descargarBlob(archivo.nombre, new Blob([bytes], { type: tipo }));
@@ -554,12 +635,17 @@ export class ConvertirPantalla {
   }
 }
 
-/** Solo para la etiqueta: el servidor detecta la operación por el contenido del Excel. */
-function operacionPorNombre(nombre: string): string {
+const FORMATOS = /\.(xlsx|xls|csv|pdf|jpe?g|png)$/i;
+
+/** Solo para la etiqueta: el servidor detecta la operación por el contenido. */
+export function etiquetaDe(nombre: string): string {
+  if (/\.pdf$/i.test(nombre)) return 'PDF';
+  if (/\.(jpe?g|png)$/i.test(nombre)) return 'Imagen';
+  if (/\.csv$/i.test(nombre)) return 'CSV';
   const n = nombre.toLowerCase();
   const ventas = /venta|emitid/.test(n);
   const compras = /compra|recibid/.test(n);
-  return ventas && !compras ? 'Ventas' : compras && !ventas ? 'Compras' : 'AUX';
+  return ventas && !compras ? 'Ventas' : compras && !ventas ? 'Compras' : 'Excel';
 }
 
 function normalizar(s: string): string {

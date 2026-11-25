@@ -37,7 +37,17 @@ from ..auditor.corregir_libro import LibroIlegible, corregir_libro
 from ..bots.arca import FiltroNoDisponible
 from ..bots.sesiones import GestorSesiones
 from ..core import config
-from ..core.errors import ArchivoEnUso, BotError, SesionVencida
+from ..core.errors import (
+    ArchivoEnUso,
+    BotError,
+    Cancelado,
+    ConfigInvalida,
+    ConsentimientoRevocado,
+    CredencialInvalida,
+    EmpresaNoEncontrada,
+    LoginError,
+    SesionVencida,
+)
 from ..bots.xubio_common import es_url_de_xubio
 from ..core.controles import descartar_si_vacia, nueva_carpeta_control, numero_de_carpeta
 from ..core.paths import SUBCARPETA_CONTROL, carpeta_cliente, nombre_carpeta
@@ -148,6 +158,9 @@ class Ejecucion:
     # Errores registrados por hilo: ARCA y Xubio corren en paralelo y cada paso
     # tiene que ver solo los suyos.
     _errores_hilo: dict = field(default_factory=dict)
+    # id() de los pasos que fallaron por algo que reintentar no arregla (clave
+    # mal, empresa que no existe...): el reintento del final los saltea.
+    _no_reintentar: set = field(default_factory=set)
 
     def registrar(self, texto: str, tipo: str | None = None) -> None:
         texto = sanear(_EMOJIS.sub("", str(texto))).rstrip()
@@ -623,6 +636,18 @@ def listar_archivos(carpeta: Path, desde_ts: float | None = None) -> list[dict]:
     return archivos
 
 
+# Fallas que no se arreglan volviendo a probar. Con clave o CUIT mal, reintentar
+# además suma intentos fallidos en ARCA (puede bloquear la clave fiscal).
+_NO_SE_REINTENTA = (
+    LoginError,
+    CredencialInvalida,
+    ConfigInvalida,
+    ConsentimientoRevocado,
+    EmpresaNoEncontrada,
+    Cancelado,
+)
+
+
 def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> BaseException | None:
     paso.estado = "en_curso"
     paso.inicio = _ahora()
@@ -634,6 +659,8 @@ def _correr_paso(ej: Ejecucion, paso: Paso, funcion) -> BaseException | None:
     except Exception as exc:  # los bots tiran Exception genérica
         error = exc
         paso.estado = "error"
+        if isinstance(exc, _NO_SE_REINTENTA):
+            ej._no_reintentar.add(id(paso))
         crudo = " ".join(str(exc).split())[:400] or type(exc).__name__
         # En pantalla, en criollo; el texto técnico queda en el registro.
         paso.mensaje = mensaje_legible(crudo, portal_de_paso(paso.id))
@@ -695,6 +722,17 @@ def _error_de_paso(cliente: str, paso: Paso) -> dict:
         "comprobantes": [],
         "hoja": None,
     }
+
+
+def _pasos_a_reintentar(ej: Ejecucion, cli: ClienteEnCurso) -> list[Paso]:
+    """Pasos de ARCA o Xubio que fallaron por algo que un segundo intento puede arreglar."""
+    return [
+        x
+        for x in cli.pasos
+        if (x.id.startswith("arca_") or x.id == "xubio")
+        and x.estado == "error"
+        and id(x) not in ej._no_reintentar
+    ]
 
 
 def _pausa(ej: Ejecucion, cliente: str) -> str:
@@ -767,14 +805,27 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
             f"{len(ej.clientes)} cliente(s) · usuario {ej.usuario}"
         )
 
-        for indice, cli in enumerate(ej.clientes):
-            if ej.cancelar_pedido:
-                break
+        # Cuándo empezó cada cliente (para listar sus archivos también al reintentar).
+        inicios: dict[int, float] = {}
+
+        def procesar_cliente(indice: int, cli: ClienteEnCurso, reintento: bool = False) -> None:
+            """Un cliente: ARCA y Xubio en paralelo y después la auditoría.
+
+            `reintento`: vuelve a correr solo los pasos que fallaron (y las
+            auditorías que no se pudieron hacer), en la misma carpeta del control.
+            """
+
+            def toca(paso: Paso) -> bool:
+                return not reintento or paso.estado in ("pendiente", "error")
+
             ej.cliente_actual = indice
             cli.estado = "en_curso"
-            ej.registrar(f"[{indice + 1}/{len(ej.clientes)}] PROCESANDO: {cli.nombre}")
+            if reintento:
+                ej.registrar(f"[REINTENTO {indice + 1}/{len(ej.clientes)}] {cli.nombre}")
+            else:
+                ej.registrar(f"[{indice + 1}/{len(ej.clientes)}] PROCESANDO: {cli.nombre}")
 
-            if any(paso.id.startswith("arca_") for paso in cli.pasos):
+            if any(paso.id.startswith("arca_") and toca(paso) for paso in cli.pasos):
                 cred = servicio.arca(cli.nombre)
                 cuit_login = cred.cuit_login
                 clave_arca = cred.clave
@@ -783,12 +834,16 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                 cuit_login = clave_arca = cuit_repres = ""
 
             # Cada control tiene su carpeta: Control de facturas/1er control, 2do...
-            carpeta, _ = nueva_carpeta_control(
-                carpeta_cliente(Path(p["carpeta"]), cli.nombre, mes, anio)
-            )
-            cli.carpeta = str(carpeta)
-            inicio_cliente = time.time()
-            ej.registrar(f" -> Carpeta: {carpeta} ({carpeta.name})")
+            # El reintento usa la misma (si no se borró por quedar vacía).
+            if reintento and cli.carpeta and Path(cli.carpeta).is_dir():
+                carpeta = Path(cli.carpeta)
+            else:
+                carpeta, _ = nueva_carpeta_control(
+                    carpeta_cliente(Path(p["carpeta"]), cli.nombre, mes, anio)
+                )
+                cli.carpeta = str(carpeta)
+                ej.registrar(f" -> Carpeta: {carpeta} ({carpeta.name})")
+            inicio_cliente = inicios.setdefault(indice, time.time())
 
             servicio_arca = None
 
@@ -837,7 +892,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             )
                 return None
 
-            def correr_pasos_arca(gestor, _pasos=[x for x in cli.pasos if x.id.startswith("arca_")]):
+            def correr_pasos_arca(gestor, _pasos=[x for x in cli.pasos if x.id.startswith("arca_") and toca(x)]):
                 """Hilo de ARCA: Ventas y Compras en la misma sesión."""
                 nonlocal servicio_arca
                 try:
@@ -862,7 +917,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             pass
                         servicio_arca = None
 
-            def correr_paso_xubio(gestor, _pasos=[x for x in cli.pasos if x.id == "xubio"]):
+            def correr_paso_xubio(gestor, _pasos=[x for x in cli.pasos if x.id == "xubio" and toca(x)]):
                 """Hilo de Xubio: corre a la par de ARCA."""
                 for paso in _pasos:
                     if ej.cancelar_pedido:
@@ -891,15 +946,15 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
             # ARCA y Xubio no dependen uno del otro: se bajan en paralelo, cada
             # uno en su hilo con su navegador. La auditoría espera a los dos.
             futuros = []
-            if any(x.id.startswith("arca_") for x in cli.pasos):
+            if any(x.id.startswith("arca_") and toca(x) for x in cli.pasos):
                 futuros.append(hilo_arca.enviar(correr_pasos_arca))
-            if any(x.id == "xubio" for x in cli.pasos):
+            if any(x.id == "xubio" and toca(x) for x in cli.pasos):
                 futuros.append(hilo_xubio.enviar(correr_paso_xubio))
             for futuro in futuros:
                 futuro.result()
 
             for paso in cli.pasos:
-                if not paso.id.startswith("auditoria_"):
+                if not paso.id.startswith("auditoria_") or not toca(paso):
                     continue
                 if ej.cancelar_pedido:
                     paso.estado = "omitido"
@@ -918,6 +973,9 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                     ej.registrar(f" -> {paso.etiqueta}: omitida ({paso.mensaje})", "aviso")
                     continue
                 ej.registrar(f" -> {paso.etiqueta}")
+                # Xubio corrió bien en este control: si no dejó el Libro IVA es
+                # porque no tenía registros («Sin registros»), no un error.
+                xubio_sin_registros = any(x.id == "xubio" and x.estado in ("ok", "aviso") for x in cli.pasos)
                 errores_auditoria: list[dict] = []
                 _correr_paso(
                     ej,
@@ -931,6 +989,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                         log=ej.registrar,
                         avisar_errores=errores_auditoria.extend,
                         avisar_resumen=lambda r, _c=cli.nombre: ej.resumenes.append({**r, "cliente": _c}),
+                        libro_xubio_vacio=xubio_sin_registros,
                     ),
                 )
                 # Lo que encontró la auditoría no frena el control: el paso queda
@@ -963,12 +1022,50 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                 cli.estado = "cancelado"
             ej.registrar("-----------------------------------------")
 
+        for indice, cli in enumerate(ej.clientes):
+            if ej.cancelar_pedido:
+                break
+            procesar_cliente(indice, cli)
+
             if indice < len(ej.clientes) - 1 and not ej.cancelar_pedido:
                 accion = _pausa(ej, cli.nombre)
                 if accion == "cancelar":
                     ej.cancelar_pedido = True
                 elif accion == "no_preguntar":
                     ej.preguntar = False
+
+        # Reintento: lo que falló por ARCA o Xubio (sesión vencida, corte de
+        # internet, sitio lento) casi siempre anda en un segundo intento. Se
+        # vuelve a correr una vez, solo los pasos que fallaron.
+        a_reintentar = [
+            (indice, cli) for indice, cli in enumerate(ej.clientes) if _pasos_a_reintentar(ej, cli)
+        ]
+        if a_reintentar and not ej.cancelar_pedido:
+            ej.registrar(
+                f"[REINTENTO] {len(a_reintentar)} cliente(s) con fallas de ARCA o Xubio: "
+                "se vuelven a probar los pasos que fallaron.",
+                "aviso",
+            )
+            for indice, cli in a_reintentar:
+                if ej.cancelar_pedido:
+                    break
+                fallidos = _pasos_a_reintentar(ej, cli)
+                for x in fallidos:
+                    x.estado, x.mensaje, x.inicio, x.fin = "pendiente", "", None, None
+                # Las auditorías que no se pudieron hacer por esas fallas, también.
+                ops = {x.id.split("_", 1)[1] for x in fallidos if x.id.startswith("arca_")}
+                if any(x.id == "xubio" for x in fallidos):
+                    ops |= {"ventas", "compras"}
+                for x in cli.pasos:
+                    if x.id.startswith("auditoria_") and x.id.split("_", 1)[1] in ops and x.estado != "ok":
+                        x.estado, x.mensaje, x.inicio, x.fin = "pendiente", "", None, None
+                # Los errores de paso de este cliente se vuelven a armar al terminar.
+                ej.advertencias[:] = [
+                    a
+                    for a in ej.advertencias
+                    if not (a.get("cliente") == cli.nombre and a.get("tipo") == "paso_error")
+                ]
+                procesar_cliente(indice, cli, reintento=True)
 
         if ej.cancelar_pedido:
             for c in ej.clientes:

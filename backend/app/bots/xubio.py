@@ -19,6 +19,7 @@ from urllib.parse import urljoin
 
 from playwright.sync_api import Page, sync_playwright
 
+from ..core import config
 from ..core.errors import TimeoutDescarga
 from ..core.models import BotResult
 from .navegador import como_fuente, lanzar, nuevo_contexto
@@ -53,7 +54,7 @@ def procesar_informe_individual(
         page.goto(urljoin(page.url, url_menu))
     page.mouse.move(0, 0)
 
-    page.wait_for_selector(f"{selector_iframe} iframe", timeout=20000)
+    page.wait_for_selector(f"{selector_iframe} iframe", timeout=config.PLAYWRIGHT_ESPERA_MS)
     iframe = page.frame_locator(f"{selector_iframe} iframe")
 
     # A veces el iframe del libro aparece pero su formulario no se carga (pasaba
@@ -61,14 +62,14 @@ def procesar_informe_individual(
     # se recarga el libro por URL una vez antes de rendirse.
     campo_desde = iframe.locator("input[formcontrolname='fechaDesdeControl']")
     try:
-        campo_desde.wait_for(state="visible", timeout=25000)
+        campo_desde.wait_for(state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS)
     except Exception:
         log(f"      [INFO]: El formulario del Libro {tipo_reporte} no cargó; se recarga la página.")
         page.goto(urljoin(page.url, url_menu))
-        page.wait_for_selector(f"{selector_iframe} iframe", timeout=30000)
+        page.wait_for_selector(f"{selector_iframe} iframe", timeout=config.PLAYWRIGHT_ESPERA_MS)
         iframe = page.frame_locator(f"{selector_iframe} iframe")
         iframe.locator("input[formcontrolname='fechaDesdeControl']").wait_for(
-            state="visible", timeout=45000
+            state="visible", timeout=config.PLAYWRIGHT_ESPERA_MS
         )
 
     def escribir_fecha(input_locator, valor):
@@ -145,7 +146,7 @@ def procesar_informe_individual(
 
     if hay_datos:
         log(f"      [INFO]: Datos encontrados. Descargando Excel de {tipo_reporte}...")
-        with page.expect_download() as download_info:
+        with page.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info:
             boton_exportar.click()
 
         download = download_info.value
@@ -178,7 +179,8 @@ def procesar_informe_individual(
 # Acciones > Importar > Desde Mis Comprobantes (ARCA). La pantalla trae un iframe
 # (app.xubio.com/.../importacion-csv-afip/...) con «Seleccionar archivo» (.zip).
 #
-# Por ahora el bot sube el .zip y se detiene: NO aprieta «Importar» (prueba).
+# `preparar_importacion_arca` sube el .zip y se detiene; `importar_arca` además
+# aprieta «Importar» y lee lo que contesta Xubio.
 
 _IMPORTACION = {
     "Compras": ("Compras", "Comprobantes de Compra", "/NXV/compras/importacion-mis-comprobantes"),
@@ -209,16 +211,16 @@ def preparar_importacion_arca(
     page.mouse.move(0, 0)
 
     acciones = page.locator("button:visible, a:visible", has_text=re.compile(r"^\s*Acciones\s*$"))
-    acciones.first.wait_for(timeout=30000)
+    acciones.first.wait_for(timeout=config.PLAYWRIGHT_ESPERA_MS)
     acciones.first.click()
     page.locator("a:visible", has_text=re.compile(r"^\s*Importar\s*$")).first.click(timeout=10000)
     page.locator("li:visible", has_text=re.compile(r"Desde Mis Comprobantes", re.I)).first.click(timeout=10000)
 
     # El formulario vive en un iframe de app.xubio.com.
-    page.wait_for_selector("iframe[src*='importacion-csv-afip']", timeout=30000)
+    page.wait_for_selector("iframe[src*='importacion-csv-afip']", timeout=config.PLAYWRIGHT_ESPERA_MS)
     marco = page.frame_locator("iframe[src*='importacion-csv-afip']")
     entrada = marco.locator("input[type='file']")
-    entrada.wait_for(state="attached", timeout=30000)
+    entrada.wait_for(state="attached", timeout=config.PLAYWRIGHT_ESPERA_MS)
     entrada.set_input_files(ruta_zip)
     log(f"      [OK]: Archivo cargado: {os.path.basename(ruta_zip)}")
 
@@ -237,12 +239,144 @@ def preparar_importacion_arca(
             page.screenshot(path=captura)
         except Exception:
             pass
-    log(
-        "      [INFO]: Listo para importar: el bot NO aprieta «Importar» (prueba)."
-        if habilitado
-        else "      [AVISO]: El botón «Importar» no se habilitó: revisá el archivo en la pantalla."
-    )
+    if not habilitado:
+        log("      [AVISO]: El botón «Importar» no se habilitó: revisá el archivo en la pantalla.")
     return {"archivo_cargado": cargado, "boton_importar_habilitado": habilitado}
+
+
+# Lo que dice Xubio después de «Importar». Nunca se vio la pantalla de resultado
+# (no se puede probar sin importar de verdad), así que se reconoce por palabras.
+_RESULTADO_OK = re.compile(
+    r"import(?:aron|ó|ado|ados|ada|adas)\b|correctamente|con [ée]xito|exitosa|se (?:generaron|crearon|registraron)", re.I
+)
+_RESULTADO_MAL = re.compile(
+    r"\berror|no se pudo|no se pudieron|inv[aá]lid|rechaz|fall[oó]|ya (?:existe|fue|est[aá])|duplicad", re.I
+)
+# Si Xubio pide confirmar («¿Desea importar…?»), estos botones siguen adelante.
+_CONFIRMAR = re.compile(r"^\s*(Aceptar|Confirmar|S[ií]|Continuar|Importar)\s*$", re.I)
+ESPERA_RESULTADO_MS = 120_000
+
+_JS_TEXTO_VISIBLE = r"""() => {
+  const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const sel = '[role=alert], [role=dialog], .modal, .alert, .toast, .notification, .swal2-popup, '
+    + '[class*=mensaje], [class*=message], [class*=result], [class*=resultado], [class*=error], [class*=success], [class*=exito]';
+  const textos = [];
+  for (const el of document.querySelectorAll(sel)) {
+    if (!visible(el)) continue;
+    const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (t && t.length < 600 && !textos.includes(t)) textos.push(t);
+  }
+  return textos;
+}"""
+
+
+def _textos_visibles(page: Page) -> list[str]:
+    """Carteles visibles en la página y en sus iframes (el de la importación)."""
+    textos: list[str] = []
+    for marco in page.frames:
+        try:
+            for t in marco.evaluate(_JS_TEXTO_VISIBLE) or []:
+                if t not in textos:
+                    textos.append(t)
+        except Exception:
+            continue
+    return textos
+
+
+def _confirmar_si_pide(page: Page, log: Callable[[str], None]) -> bool:
+    """Si después de «Importar» aparece un cuadro que pide confirmar, lo acepta (una vez)."""
+    for marco in page.frames:
+        try:
+            dialogo = marco.locator("[role=dialog]:visible, .modal:visible, .swal2-popup:visible").first
+            if not dialogo.count():
+                continue
+            boton = dialogo.locator("button:visible", has_text=_CONFIRMAR).first
+            if boton.count() and boton.is_enabled():
+                texto = (boton.inner_text(timeout=2000) or "").strip()
+                boton.click(timeout=5000)
+                log(f"      [INFO]: Xubio pidió confirmar: se apretó «{texto}».")
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _guardar_resultado(page: Page, log: Callable[[str], None]) -> None:
+    """Captura y HTML de lo que mostró Xubio al importar (con capturas habilitadas)."""
+    from datetime import datetime
+    from pathlib import Path
+
+    from .navegador import capturas_permitidas
+
+    if not capturas_permitidas():
+        return
+    try:
+        carpeta = Path(config.LOG_DIR) / "diagnostico"
+        carpeta.mkdir(parents=True, exist_ok=True)
+        sello = f"{datetime.now():%Y%m%d-%H%M%S}"
+        page.screenshot(path=str(carpeta / f"xubio-importacion-{sello}.png"), full_page=True)
+        partes = [page.content()] + [f.content() for f in page.frames[1:] if "importacion" in (f.url or "")]
+        (carpeta / f"xubio-importacion-{sello}.html").write_text("\n<!-- iframe -->\n".join(partes), encoding="utf-8")
+        log(f"      [INFO]: Captura de la importación guardada en {carpeta}")
+    except Exception as exc:
+        log(f"      [AVISO]: No se pudo guardar la captura de la importación: {exc}")
+
+
+def importar_arca(
+    page: Page,
+    operacion: str,
+    ruta_zip: str,
+    log: Callable[[str], None] = print,
+    espera_ms: int = ESPERA_RESULTADO_MS,
+) -> dict:
+    """El recorrido completo: carga el .zip, aprieta «Importar» y espera lo que
+    contesta Xubio. Devuelve lo de `preparar_importacion_arca` más:
+
+    - ``importado``: True (Xubio dijo que importó), False (dijo que no o dio
+      error) o None (no se reconoció la respuesta: hay que mirar en Xubio).
+    - ``mensaje``: lo que mostró Xubio.
+    """
+    salida = preparar_importacion_arca(page, operacion, ruta_zip, log=log)
+    salida.update(importado=None, mensaje="")
+    if not salida["boton_importar_habilitado"]:
+        salida.update(importado=False, mensaje="Xubio no habilitó el botón «Importar» con este archivo.")
+        return salida
+
+    marco = page.frame_locator("iframe[src*='importacion-csv-afip']")
+    boton = marco.locator("button", has_text=re.compile(r"^\s*Importar\s*$")).first
+    antes = set(_textos_visibles(page))
+    # Un confirm() nativo también se acepta: la persona ya confirmó en la app.
+    page.on("dialog", lambda d: d.accept())
+    log("   -> Apretando «Importar» en Xubio...")
+    boton.click(timeout=10000)
+
+    confirmado = False
+    limite = time.monotonic() + espera_ms / 1000
+    nuevos: list[str] = []
+    while time.monotonic() < limite:
+        page.wait_for_timeout(700)
+        nuevos = [t for t in _textos_visibles(page) if t not in antes]
+        mal = [t for t in nuevos if _RESULTADO_MAL.search(t)]
+        ok = [t for t in nuevos if _RESULTADO_OK.search(t)]
+        if mal:
+            salida.update(importado=False, mensaje=mal[0])
+            break
+        if ok:
+            salida.update(importado=True, mensaje=ok[0])
+            break
+        if not confirmado and _confirmar_si_pide(page, log):
+            confirmado = True
+            antes |= set(nuevos)
+    if salida["importado"] is None:
+        salida["mensaje"] = nuevos[0] if nuevos else "Xubio no mostró ningún mensaje después de «Importar»."
+    _guardar_resultado(page, log)
+    if salida["importado"]:
+        log(f"      [OK]: Xubio importó el archivo: «{salida['mensaje']}»")
+    elif salida["importado"] is False:
+        log(f"      [ERROR]: Xubio no importó el archivo: «{salida['mensaje']}»")
+    else:
+        log(f"      [AVISO]: No se reconoció la respuesta de Xubio: «{salida['mensaje']}». Revisá en Xubio si se importó.")
+    return salida
 
 
 class SesionXubio:
@@ -338,6 +472,13 @@ class SesionXubio:
         if self._page is None:
             raise RuntimeError("La sesión de Xubio no está abierta.")
         return preparar_importacion_arca(self._page, operacion, ruta_zip, log=self.log, captura=captura)
+
+    def importar_arca(self, operacion: str, ruta_zip: str) -> dict:
+        """En la empresa activa: carga el .zip en «Importar desde Mis Comprobantes
+        (ARCA)», aprieta «Importar» y devuelve lo que contestó Xubio."""
+        if self._page is None:
+            raise RuntimeError("La sesión de Xubio no está abierta.")
+        return importar_arca(self._page, operacion, ruta_zip, log=self.log)
 
     def descargar(
         self,

@@ -1,10 +1,13 @@
-"""Botón «Cargar en Xubio» de la pestaña Convertir AUX (prueba).
+"""Botón «Subir a Xubio» de la pestaña Subir a Xubio.
 
 Abre Xubio en la PC del backend, entra a la empresa del cliente y, en
 Compras/Ventas > Comprobantes > Acciones > Importar > Desde Mis Comprobantes
-(ARCA), carga el .zip con el CSV de esa operación. **No aprieta «Importar»**:
-deja la ventana abierta para que la persona revise (y, si quiere, importe a mano).
-La ventana se cierra sola cuando la cierra la persona o a los 15 minutos.
+(ARCA), carga el .zip con el CSV de esa operación, **aprieta «Importar»** y lee
+lo que contesta Xubio. La confirmación la da la persona antes, en la app.
+
+- Si Xubio dice que importó, Chrome se cierra solo.
+- Si da error o no se reconoce la respuesta, la ventana queda abierta para que
+  la persona mire (se cierra cuando la cierra ella o a los 15 minutos).
 """
 
 from __future__ import annotations
@@ -25,7 +28,8 @@ from .credenciales import ServicioCredenciales
 
 logger = logging.getLogger(__name__)
 
-ESPERA_RESULTADO_S = 240
+# Login, empresa, carga del archivo y la importación (hasta 2 minutos).
+ESPERA_RESULTADO_S = 360
 VENTANA_ABIERTA_S = 15 * 60
 _en_curso = threading.Lock()
 
@@ -65,8 +69,9 @@ def preparar(
     credenciales: CredencialesXubioRepository,
     log=logger.info,
 ) -> dict:
-    """Corre el bot hasta dejar el archivo cargado. Devuelve el resultado o lanza
-    ErrorImportacion. La ventana de Chrome queda abierta en otro hilo."""
+    """Corre el bot hasta importar en Xubio. Devuelve el resultado o lanza
+    ErrorImportacion. Si no quedó claro que importó, la ventana de Chrome queda
+    abierta en otro hilo para que la persona revise."""
     if operacion not in ("Ventas", "Compras"):
         raise ErrorImportacion("Operación inválida: Ventas o Compras.")
     if not hay_pantalla():
@@ -101,16 +106,17 @@ def preparar(
 
     def trabajar() -> None:
         try:
-            # Siempre a la vista: la persona revisa y aprieta «Importar».
+            # A la vista: la persona ve lo que hace el bot.
             with SesionXubio(cred.usuario, cred.clave, log=anotar, visible=True) as sesion:
                 sesion.cambiar_empresa(cliente)
-                salida.update(sesion.preparar_importacion_arca(operacion, str(ruta_zip)))
+                salida.update(sesion.importar_arca(operacion, str(ruta_zip)))
                 listo.set()
-                # La ventana queda para la persona: se espera a que la cierre.
-                try:
-                    sesion._page.wait_for_event("close", timeout=VENTANA_ABIERTA_S * 1000)
-                except Exception:
-                    pass
+                if salida.get("importado") is not True:
+                    # Error o respuesta dudosa: la ventana queda para que la persona mire.
+                    try:
+                        sesion._page.wait_for_event("close", timeout=VENTANA_ABIERTA_S * 1000)
+                    except Exception:
+                        pass
         except Exception as exc:
             salida["error"] = str(exc) or exc.__class__.__name__
         finally:
@@ -124,7 +130,7 @@ def preparar(
 
     threading.Thread(target=trabajar, name="xubio-importar", daemon=True).start()
     if not listo.wait(ESPERA_RESULTADO_S):
-        raise ErrorImportacion("Xubio tardó demasiado en abrir la importación.", 504)
+        raise ErrorImportacion("Xubio tardó demasiado en importar: revisá en Xubio si se importó antes de volver a subirlo.", 504)
     if "error" in salida:
         raise ErrorImportacion(f"No se pudo cargar en Xubio: {salida['error']}", 502)
     return {
@@ -133,5 +139,8 @@ def preparar(
         "archivo": ruta_zip.name,
         "archivo_cargado": bool(salida.get("archivo_cargado")),
         "boton_importar_habilitado": bool(salida.get("boton_importar_habilitado")),
+        # True: Xubio dijo que importó · False: no importó · None: no se sabe (mirar en Xubio).
+        "importado": salida.get("importado"),
+        "mensaje": salida.get("mensaje") or "",
         "log": registro[-8:],
     }

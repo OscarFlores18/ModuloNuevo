@@ -1,6 +1,6 @@
 import { Component, computed, effect, inject, input, signal, untracked } from '@angular/core';
 import { Router, RouterLink } from '@angular/router';
-import { carpetaDelPeriodo, periodoLegible, periodoLegibleDe, tamanoLegible } from '../../core/fechas';
+import { periodoLegible, periodoLegibleDe, tamanoLegible } from '../../core/fechas';
 import { Advertencia, ArchivoGenerado, ClienteEjecucion, Corregido, FilaFaltanteExcel, PasoEjecucion, ResumenEjecucion, estaActiva, mensajeDeError } from '../../core/models';
 import { descargarBlob } from '../../core/descargar';
 import { reintentoDe } from '../../core/reintento';
@@ -25,7 +25,9 @@ import {
   faltanteDesdeExcel,
   faltantesParaCargar,
   filasDelExcel,
+  destildarLiquidaciones,
   mostrarVentanaDeErrores,
+  registroDeHallazgos,
 } from './ventana-errores';
 import { CorreccionElegida, elegirParaAplicar, estaIncluida, excluidasDe, guardarPrecarga, incluir, paraAplicar } from './seleccion';
 import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
@@ -112,8 +114,6 @@ export class EjecucionPantalla {
   protected readonly tamanoLegible = tamanoLegible;
 
   protected readonly descargando = signal<string | null>(null);
-  /** true: backend en esta PC, se guarda con ventanas de Windows. false (servidor): por el navegador. */
-  protected readonly dialogosLocales = signal(false);
   protected readonly errorDescarga = signal<string | null>(null);
   /** Clientes con la carpeta de archivos plegada (por nombre): de entrada, todas abiertas. */
   private readonly carpetasPlegadas = signal<ReadonlySet<string>>(new Set());
@@ -125,8 +125,28 @@ export class EjecucionPantalla {
 
   /** Lo que eligió el usuario; null = la que conviene (las tareas, si hay). */
   protected readonly pestana = signal<'tareas' | 'clientes' | null>(null);
-  /** Las tareas de un solo cliente (null = todos). */
-  protected readonly filtroCliente = signal<string | null>(null);
+  /** Lo que eligió el usuario en las píldoras: un cliente o «Todos» (null); undefined = todavía nada. */
+  private readonly eleccionCliente = signal<string | null | undefined>(undefined);
+  /**
+   * Las tareas de un solo cliente (null = todos). Sin elección, la lista arranca en
+   * el primer cliente con pendientes (o el primero): no se mezclan empresas.
+   */
+  protected readonly filtroCliente = computed<string | null>(() => {
+    const clientes = this.clientesConTareas();
+    if (clientes.length < 2) return null;
+    const e = this.eleccionCliente();
+    if (e === null || (e !== undefined && clientes.includes(e))) return e;
+    return clientes.find((c) => this.pendientesDe(c) > 0) ?? clientes[0];
+  });
+  protected elegirCliente(cliente: string | null): void {
+    this.eleccionCliente.set(cliente);
+  }
+  /** Las tareas que se ven (las del cliente elegido) y cuántas faltan: para «quedan X de Y». */
+  protected readonly tareasVista = computed(() => {
+    const solo = this.filtroCliente();
+    return solo ? this.tareas().filter((t) => t.cliente === solo) : this.tareas();
+  });
+  protected readonly pendientesVista = computed(() => this.tareasVista().filter((t) => !this.estaHecha(t)).length);
 
   /** Terminado y con algo para hacer o ya corregido: hay pestañas. */
   protected readonly hayTareas = computed(() => !this.activa() && (this.tareas().length > 0 || this.corregidos().length > 0));
@@ -134,7 +154,7 @@ export class EjecucionPantalla {
 
   /** «Ver sus tareas» desde un cliente: la pestaña de tareas con solo las de él. */
   protected verTareasDe(cliente: string): void {
-    this.filtroCliente.set(this.clientes().length > 1 ? cliente : null);
+    this.eleccionCliente.set(cliente);
     this.pestana.set('tareas');
     this.alInicio();
   }
@@ -188,8 +208,7 @@ export class EjecucionPantalla {
   protected readonly hechas = signal<ReadonlySet<string>>(new Set());
   protected readonly pendientes = computed(() => this.tareas().filter((t) => !this.estaHecha(t)).length);
   protected readonly gruposTareas = computed(() => {
-    const solo = this.filtroCliente();
-    const visibles = solo ? this.tareas().filter((t) => t.cliente === solo) : this.tareas();
+    const visibles = this.tareasVista();
     return GRUPOS.map((g) => ({ ...g, tareas: visibles.filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length);
   });
   /** Para el filtro: los clientes que tienen tareas. */
@@ -342,6 +361,7 @@ export class EjecucionPantalla {
       this.toast.error('No se encontró el AUX de este control.', `${c.nombre} · ${a.operacion}: usá «Subir a Xubio» con el archivo.`);
       return;
     }
+    destildarLiquidaciones([a], e.id);
     const filas = this.faltantesDe(a);
     const partidas = filas.filter((f) => this.incluida(a, f));
     if (!partidas.length) {
@@ -579,11 +599,24 @@ export class EjecucionPantalla {
     return grupos;
   });
 
-  /** «PICCININI y ASOCIADOS S.A.» o «PICCININI… y 2 más»; sin nombres (control viejo), el período. */
+  /**
+   * El historial es de EJECUCIONES: el título es el período del control
+   * («Septiembre 2026»), no uno de sus clientes. Los clientes van abajo, todos, en chico.
+   */
   protected tituloHist(h: ResumenEjecucion): string {
-    const n = h.nombres ?? [];
-    if (!n.length) return periodoLegibleDe(h.periodo);
-    return n.length === 1 ? n[0] : `${n[0]} y ${n.length - 1} más`;
+    const p = periodoLegibleDe(h.periodo);
+    return p.charAt(0).toUpperCase() + p.slice(1);
+  }
+
+  /** «7 clientes · 17:26». */
+  protected metaHist(h: ResumenEjecucion): string {
+    const n = h.nombres?.length || h.clientes;
+    return [n ? `${n} ${n === 1 ? 'cliente' : 'clientes'}` : '', this.horaDe(h.creada)].filter(Boolean).join(' · ');
+  }
+
+  /** Los clientes del control, separados por coma (la línea se corta con «…»; el título del ítem los tiene todos). */
+  protected clientesHist(h: ResumenEjecucion): string {
+    return (h.nombres ?? []).join(', ');
   }
 
   protected horaDe(iso: string): string {
@@ -601,12 +634,48 @@ export class EjecucionPantalla {
 
   protected readonly conteoErrores = computed(() => contarErrores(this.ej()?.advertencias ?? []));
 
-  /** Mails de los clientes y período, para «Consultar al cliente». */
+  /**
+   * Mails de los clientes, período y cuenta de Gmail para «Consultar al
+   * cliente». La cuenta es el usuario de Xubio con el que se corrió el control
+   * (la de la empresa): Gmail redacta con ella (`authuser`).
+   */
   private contextoVentana(): ContextoVentana {
     const emails: Record<string, string> = {};
     for (const c of this.clientesStore.lista()) if (c.email) emails[c.nombre] = c.email;
-    return { emails, periodo: this.ej()?.periodo ?? '' };
+    // Controles viejos sin usuario en los parámetros: el de Xubio guardado en Ajustes.
+    const cuenta = this.ej()?.parametros?.xubio_usuario?.trim() || this.cuentaXubio();
+    // Backend en esta PC: aprieta Ctrl+V en Gmail por nosotros.
+    const pegarEnGmail = this.enEstaPc() ? () => this.api.pegarMail() : undefined;
+    return { emails, periodo: this.ej()?.periodo ?? '', cuenta, pegarEnGmail, descargarExcelFaltantes: (c, op) => this.descargarExcelFaltantes(c, op),
+      descargarHallazgos: (c) => this.descargarHallazgos(c),
+    };
   }
+
+  /** «Descargar hallazgos»: los avisos del control en un Excel, como registro. */
+  private async descargarHallazgos(cliente: string | null): Promise<void> {
+    const e = this.ej();
+    if (!e) throw new Error('Sin control');
+    const bloques = registroDeHallazgos(e.advertencias ?? [], cliente);
+    if (!bloques.length) throw new Error('Sin hallazgos');
+    const { nombre, contenido } = await this.api.hallazgosExcel(e.id, cliente, bloques);
+    const bytes = Uint8Array.from(atob(contenido), (c) => c.charCodeAt(0));
+    descargarBlob(nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  }
+
+  /** «Pedir que las carguen»: baja el Excel de las partidas de ARCA no encontradas para adjuntarlo. */
+  private async descargarExcelFaltantes(cliente: string, operacion: string | null): Promise<void> {
+    const e = this.ej();
+    const indice = e?.detalle_clientes.findIndex((c) => c.nombre === cliente) ?? -1;
+    if (!e || indice < 0) throw new Error('Cliente no encontrado');
+    const { nombre, contenido } = await this.api.faltantesExcel(e.id, indice, operacion);
+    const bytes = Uint8Array.from(atob(contenido), (c) => c.charCodeAt(0));
+    descargarBlob(nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+  }
+
+  /** Usuario de Xubio guardado en Ajustes (la cuenta de la empresa), de respaldo para `authuser`. */
+  private readonly cuentaXubio = signal('');
+  /** El backend corre en esta PC (puede apretar teclas en Gmail). */
+  private readonly enEstaPc = signal(false);
 
   /** Cuántas filas de faltantes se muestran en la tarjeta (el resto, en «Ver comprobantes»). */
   protected readonly maxFaltantes = 8;
@@ -614,7 +683,7 @@ export class EjecucionPantalla {
   protected verErrores(): void {
     const a = this.ej()?.advertencias;
     if (a?.length || this.hojas().sinLibro.size || this.hojas().sinArca.size)
-      void mostrarVentanaDeErrores(a ?? [], this.ej()?.resumenes ?? [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojas(), this.aplicarDesdeVentana, this.contextoVentana());
+      void mostrarVentanaDeErrores(a ?? [], this.ej()?.resumenes ?? [], this.perspectiva.canEdit(), this.alSubir, this.ej()?.id, this.hojas(), this.aplicarDesdeVentana, this.contextoVentana(), this.filtroCliente() ?? undefined);
   }
 
   protected readonly siguienteCliente = computed(() => {
@@ -625,9 +694,15 @@ export class EjecucionPantalla {
   });
 
   constructor() {
-    this.api.ajustes().then((a) => this.dialogosLocales.set(a.dialogos_locales), () => this.dialogosLocales.set(false));
     void this.store.cargarHistorial();
     void this.clientesStore.cargar();
+    this.api.ajustes().then(
+      (a) => {
+        this.cuentaXubio.set(a.xubio?.usuario?.trim() ?? '');
+        this.enEstaPc.set(!!a.dialogos_locales);
+      },
+      () => undefined,
+    );
 
     // El reloj corre solo con el control activo.
     effect((alLimpiar) => {
@@ -656,12 +731,19 @@ export class EjecucionPantalla {
       const id = this.ej()?.id;
       untracked(() => this.hechas.set(id ? leerHechas(id) : new Set()));
     });
+
+    // Las liquidaciones bancarias (ya están en Xubio en el extracto) arrancan destildadas.
+    effect(() => {
+      const e = this.ej();
+      const advertencias = e?.advertencias;
+      if (e && advertencias?.length) untracked(() => destildarLiquidaciones(advertencias, e.id));
+    });
   }
 
   private async abrir(id: string | undefined): Promise<void> {
     this.carpetasPlegadas.set(new Set());
     this.pestana.set(null);
-    this.filtroCliente.set(null);
+    this.eleccionCliente.set(undefined);
     this.errorDescarga.set(null);
     if (id) {
       this.store.seguir(id);
@@ -713,31 +795,30 @@ export class EjecucionPantalla {
     });
   }
 
-  /** El servidor (esta misma PC) abre «Guardar como» y copia ahí el archivo. */
+  /**
+   * Descarga del navegador, igual que en «Subir a Xubio»: va a Descargas y en la
+   * app de escritorio se ve en el panel de descargas de arriba a la derecha.
+   */
   protected async descargar(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
     const e = this.ej();
     if (!e) return;
     this.descargando.set(`${c.indice}/${archivo.nombre}`);
     this.errorDescarga.set(null);
     try {
-      if (!this.dialogosLocales()) {
-        descargarBlob(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
-        this.toast.ok('Archivo descargado', archivo.nombre);
-        return;
-      }
-      const r = await this.api.guardarArchivo(e.id, c.indice, archivo.nombre);
-      if (!r.cancelado) this.toast.ok('Archivo guardado', r.ruta);
+      descargarBlob(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudo guardar «${archivo.nombre}».`));
+      const msg = mensajeDeError(err, `No se pudo descargar «${archivo.nombre}».`);
+      this.errorDescarga.set(msg);
+      this.toast.error('No se pudo descargar', msg);
     } finally {
       this.descargando.set(null);
     }
   }
 
   /**
-   * Modo servidor: un .zip con Cliente/mmaaaa/Control de facturas/N° control. Modo local:
-   * el servidor (esta misma PC) abre la ventana para elegir carpeta. Elegida: adentro van
-   * mmaaaa con los archivos. Cerrada sin elegir: se crea Descargas/Cliente/mmaaaa.
+   * Sin .zip. En esta PC (app de escritorio): los archivos van a las carpetas de
+   * siempre, Descargas/Cliente/mmaaaa/Control de facturas/N° control. Con el backend
+   * en un servidor el navegador no puede armar carpetas: cada archivo suelto a Descargas.
    */
   protected async descargarTodos(c: ClienteVista): Promise<void> {
     const e = this.ej();
@@ -745,19 +826,24 @@ export class EjecucionPantalla {
     this.descargando.set(`${c.indice}/*`);
     this.errorDescarga.set(null);
     try {
-      if (!this.dialogosLocales()) {
-        // Mismo nombre que arma el backend: sin caracteres inválidos ni punto final («S.A.»).
-        const cliente = c.nombre.replace(/[\\/*?:"<>|]/g, '').trim().replace(/[. ]+$/, '') || 'Cliente';
-        descargarBlob(`${cliente} - ${carpetaDelPeriodo(e.parametros.desde)}.zip`, await this.api.zip(e.id, c.indice));
-        this.toast.ok('Archivos descargados', 'Un .zip con las carpetas del cliente y del período.');
+      if (this.enEstaPc()) {
+        const r = await this.api.exportar(e.id, c.indice);
+        if (r.fallas.length) {
+          this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
+          this.toast.error(`${r.fallas.length} ${r.fallas.length === 1 ? 'archivo no se pudo guardar' : 'archivos no se pudieron guardar'}`, r.fallas[0].motivo);
+        }
+        if (r.copiados.length) this.toast.ok('Archivos guardados', r.carpeta);
         return;
       }
-      const r = await this.api.exportar(e.id, c.indice);
-      const donde = r.elegida ? r.carpeta : `${r.carpeta} (no elegiste carpeta: se creó en Descargas)`;
-      if (r.copiados.length) this.toast.ok('Archivos guardados', `${r.copiados.length} ${r.copiados.length === 1 ? 'archivo' : 'archivos'} en ${donde}`);
-      if (r.fallas.length) this.errorDescarga.set(r.fallas.map((f) => `No se pudo guardar «${f.nombre}»: ${f.motivo}`).join(' '));
+      for (const [i, archivo] of c.archivos.entries()) {
+        // Una pausa corta entre descargas para que el navegador no las corte.
+        if (i) await new Promise((r) => setTimeout(r, 400));
+        descargarBlob(archivo.nombre, await this.api.archivo(e.id, c.indice, archivo.nombre));
+      }
     } catch (err) {
-      this.errorDescarga.set(mensajeDeError(err, `No se pudieron guardar los archivos de ${c.nombre}.`));
+      const msg = mensajeDeError(err, `No se pudieron descargar los archivos de ${c.nombre}.`);
+      this.errorDescarga.set(msg);
+      this.toast.error('No se pudo descargar', msg);
     } finally {
       this.descargando.set(null);
     }
