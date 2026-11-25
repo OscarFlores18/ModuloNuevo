@@ -158,7 +158,10 @@ def tiene(linea: str, frase: str, umbral: float = 0.75) -> bool:
 def _totales(lineas: list[str]) -> dict[str, float | None]:
     t: dict[str, float | None] = {}
     iva_por_alicuota = 0.0
-    for linea in lineas:
+    neto_sin_rotulo = None
+    # Varios importes en una línea («Bruto: 100 Impuestos: 21 Total: 121»): cada uno con su rótulo.
+    segmentos = [s for linea in lineas for s in re.split(r"(?<=\d)\s+(?=[A-Za-zÁÉÍÓÚáéíóú])", linea)]
+    for linea in segmentos:
         v = _ultimo_importe(linea)
         if v is None:
             continue
@@ -166,18 +169,25 @@ def _totales(lineas: list[str]) -> dict[str, float | None]:
             t.setdefault("no_gravado", v)
         elif tiene(linea, "neto gravado") or tiene(linea, "subtotal gravado"):
             t.setdefault("neto_gravado", v)
+        elif re.match(r"^\s*(?:importe\s+neto|bruto|subtotal)\b", norm(linea)):
+            neto_sin_rotulo = neto_sin_rotulo if neto_sin_rotulo is not None else v
+        elif re.match(r"^\s*importe\s+iva\b", norm(linea)):
+            t.setdefault("iva", v)
         elif tiene(linea, "exento") or tiene(linea, "exentas"):
             t.setdefault("exento", v)
         elif tiene(linea, "otros tributos"):
             t.setdefault("otros_tributos", v)
         elif tiene(linea, "total iva"):
             t.setdefault("iva", v)
-        elif re.search(r"\biva\s*\d{1,2}(?:[.,]\d{1,2})?\s*%", norm(linea)):
+        elif re.search(r"\biva\s*\d{1,2}(?:[.,]\d{1,2})?\s*(?:%|:)", norm(linea)):
             iva_por_alicuota += v
         elif re.match(r"^\s*(?:importe\s+)?total\b(?!\s+(?:iva|otros|neto))", norm(linea)) or tiene(linea, "total a pagar"):
             t.setdefault("total", v)
     if "iva" not in t and iva_por_alicuota:
         t["iva"] = round(iva_por_alicuota, 2)
+    # «Importe neto» / «Bruto» / «Subtotal»: el neto gravado si no hay otro rótulo de neto.
+    if neto_sin_rotulo is not None and not any(k in t for k in ("neto_gravado", "no_gravado", "exento")):
+        t["neto_gravado"] = neto_sin_rotulo
     return t
 
 
@@ -187,7 +197,8 @@ def _nombre_cerca(lineas: list[str], indice: int) -> str:
         linea = lineas[j].strip()
         letras = sum(ch.isalpha() for ch in linea)
         if letras >= 4 and letras >= 0.6 * len(linea.replace(" ", "")) and ":" not in linea:
-            return re.sub(r"\s{2,}", " ", linea)[:200]
+            # «$A» / «$RL» al final es «SA» / «SRL» mal leído.
+            return re.sub(r"\$(?=(?:A|RL|AS)\b)", "S", re.sub(r"\s{2,}", " ", linea))[:200]
     return ""
 
 
@@ -204,6 +215,10 @@ def _encabezado(texto: str, lineas: list[str]) -> dict[str, str]:
             m = re.search(r"(\d{2})[-\s.]?(\d{8})[-\s.]?(\d)\b", linea)
             if m:
                 posiciones.append((i, "".join(m.groups())))
+        # Rótulos en una columna y valores en otra (Xubio): la CUIT sola en su línea.
+        elif m := re.fullmatch(r"\s*(\d{2})-(\d{8})-(\d)\s*", linea):
+            if cuit_valido("".join(m.groups())):
+                posiciones.append((i, "".join(m.groups())))
     vistos: list[str] = []
     for i, c in posiciones:
         if c in vistos:
@@ -218,20 +233,34 @@ def _encabezado(texto: str, lineas: list[str]) -> dict[str, str]:
         e["emisor_cuit"] = encontrados[0]
         if len(encontrados) > 1:
             e["receptor_cuit"] = encontrados[1]
+    # Con rótulo, la razón social manda: «Sr.(es):» / «Apellido y Nombre» / «Cliente:» es
+    # el receptor; la primera otra «Razón Social:», el emisor.
+    con_rotulo: dict[str, str] = {}
+    for m in re.finditer(r"^(.*?)(?:raz[oó]n\s+social|se[ñn]or(?:\s*\(?es\)?)?|sr\.?\s*\(?es\)?)\s*:\s*(.+)$", texto, re.IGNORECASE | re.MULTILINE):
+        nombre = re.sub(r"\s{2,}", " ", m.group(2)).strip()[:200]
+        if sum(ch.isalpha() for ch in nombre) < 3:
+            continue
+        receptor = re.search(r"apellido|cliente|se[ñn]or|\bsr\b", (m.group(0)[: m.start(2) - m.start(0)]).lower())
+        con_rotulo.setdefault("receptor" if receptor or "emisor" in con_rotulo else "emisor", nombre)
+    e.update(con_rotulo)
 
     codigo = tipo_del_texto(texto)
     if codigo is None and (m := re.search(r"\b0?(\d{2,3})\s*[-~—]\s*\S*\s*(?:tique\s+)?factura", norm(texto))):
         codigo = int(m.group(1))
     if codigo is None and (m := re.search(r"t\w?que\s+factura\W+([abc])\b", norm(texto))):
         codigo = {"a": 81, "b": 82, "c": 111}[m.group(1)]
+    if codigo in (1, 6, 11) and re.search(r"t\w?que\s+factura", norm(texto)):
+        codigo = {1: 81, 6: 82, 11: 111}[codigo]
     if codigo in TIPOS:
         e["tipo"] = nombre_tipo(codigo)
-    if m := re.search(r"\b(\d{4,5})\s*-\s*(\d{8})\b", texto):
-        e["numero"] = f"{int(m.group(1)):05d}-{m.group(2)}"
+    if m := re.search(r"\b(\d{4,5})\s*-\s*(\d{8})\b", texto) or re.search(
+        r"punto\s+de\s+venta\W{0,3}(\d{1,5})\b.{0,25}?n(?:ro|ú?mero|[°º])\.?\s*:?\s*(\d{1,8})\b", texto, re.IGNORECASE
+    ):
+        e["numero"] = f"{int(m.group(1)):05d}-{int(m.group(2)):08d}"
     if m := re.search(r"Fecha[^\d\n]{0,25}(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})", texto, re.IGNORECASE) or re.search(r"\b(\d{2}/\d{2}/\d{4})\b", texto):
         iso = fecha_iso(m.group(1))
         e["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else m.group(1)
-    if m := re.search(r"C\.?\s?A\.?\s?E\.?\s*(?:N[°º.]?)?\s*:?\s*(\d{14})\b", texto, re.IGNORECASE):
+    if m := re.search(r"C\.?\s?A\.?\s?E\.?\s*(?:N[°º.*o]?)?\s*:?\s*(\d{14})\b", texto, re.IGNORECASE):
         e["cae"] = m.group(1)
     return e
 
@@ -242,8 +271,20 @@ _CANT_PRECIO = re.compile(r"^\s*\*?\s*(\d+(?:[.,]\d+)?)\s*[-x×*]\s*(\d[\d.,]*)"
 
 def _es_fin_del_detalle(linea: str) -> bool:
     return any(tiene(linea, f) for f in ("subtotal", "neto gravado", "no gravado", "total iva", "otros tributos", "ajuste")) or bool(
-        re.match(r"^\s*(?:importe\s+)?total\b", norm(linea))
+        re.match(r"^\s*(?:importe\s+(?:total|neto|iva)|total|bruto|iva\s*\d|observaciones\s*:)", norm(linea))
     )
+
+
+def _inicio_del_detalle(lineas: list[str]) -> int:
+    """La línea de títulos del detalle: «Descripción», «Producto», «Servicio»…, mejor
+    si en la misma línea dice cantidad, precio o importe (así no se toma una leyenda
+    del pie como «…los datos ingresados en el detalle…»)."""
+    titulos = ("descripcion", "producto", "detalle", "servicio", "articulo", "concepto")
+    columnas = ("cantidad", "precio", "importe", "total", "subtotal")
+    for i, l in enumerate(lineas):
+        if any(tiene(l, t) for t in titulos) and any(tiene(l, c) for c in columnas):
+            return i
+    return next((i for i, l in enumerate(lineas) if tiene(l, "descripcion") or tiene(l, "producto") or tiene(l, "detalle")), -1)
 
 
 def _items(lineas: list[str]) -> list[Item]:
@@ -253,7 +294,9 @@ def _items(lineas: list[str]) -> list[Item]:
     """
     items: list[Item] = []
     descripcion_previa = ""
-    inicio = next((i for i, l in enumerate(lineas) if tiene(l, "descripcion") or tiene(l, "producto") or tiene(l, "detalle")), -1)
+    # La descripción partida en varias líneas (facturas en PDF): se junta.
+    partida: list[str] = []
+    inicio = _inicio_del_detalle(lineas)
     for linea in lineas[inicio + 1 :] if inicio >= 0 else lineas:
         if _es_fin_del_detalle(linea):
             if items:
@@ -268,10 +311,19 @@ def _items(lineas: list[str]) -> list[Item]:
             alicuota = importe(ali.group(1) or ali.group(2))
             cant = precio = None
             if m := _CANT_PRECIO.match(limpia):
+                # Tique: «1.0000-31000.0000 (21.00) 25619.83».
                 cant, precio = importe(m.group(1)), importe(m.group(2))
-            codigo, desc = _separar_codigo(descripcion_previa)
+                codigo, desc = _separar_codigo(descripcion_previa)
+            else:
+                # Factura: «1.00 2,479,338.84 0.00 2,479,338.84 21.00% 3,000,000.00»:
+                # cantidad, precio, (descuento), importe sin IVA, alícuota, con IVA.
+                antes = [n for n in (importe(x.group(0)) for x in _NUMERO.finditer(limpia[: ali.start()])) if n is not None]
+                if len(antes) >= 2:
+                    valor = antes[-1]
+                    cant, precio = (antes[0], antes[1]) if len(antes) >= 3 else (None, None)
+                codigo, desc = _separar_codigo(" ".join(partida) or descripcion_previa)
             items.append(Item(codigo=codigo, descripcion=desc, cantidad=cant, precio=precio, alicuota=alicuota, importe=valor))
-            descripcion_previa = ""
+            descripcion_previa, partida = "", []
         elif valor is not None and len(letras) >= 3 and re.match(r"^\W*[A-Za-zÁÉÍÓÚÑáéíóúñ(]", limpia) and len(numeros(limpia)) >= 2:
             # Descripción y números en la misma línea.
             texto = re.split(r"\s+\d", limpia, maxsplit=1)[0]
@@ -282,17 +334,22 @@ def _items(lineas: list[str]) -> list[Item]:
                 antes = [importe(m.group(0)) for m in _NUMERO.finditer(limpia[len(texto):ali.start()])]
                 antes = [n for n in antes if n is not None]
                 valor = antes[-1] if antes else valor
-            codigo, desc = _separar_codigo(texto)
+            codigo, desc = _separar_codigo(" ".join([*partida, texto]))
             items.append(Item(codigo=codigo, descripcion=desc, cantidad=nums[0] if len(nums) >= 3 else None,
                               precio=nums[1] if len(nums) >= 3 else None, alicuota=alicuota, importe=valor))
+            descripcion_previa, partida = "", []
         elif len(letras) >= 4 and not re.match(r"^\s*itc\b", norm(limpia)):
             descripcion_previa = limpia
+            partida = [*partida, limpia][-8:]
     return items
 
 
 def _separar_codigo(texto: str) -> tuple[str, str]:
-    texto = texto.strip()
+    texto = re.sub(r"\s{2,}", " ", texto.strip())
     if m := re.match(r"^\(?\s*(\w{2,12})\s*\)\s*(.+)$", texto):
+        return m.group(1), m.group(2).strip()
+    # «0003 Servicios profesionales…»: el código numérico adelante.
+    if m := re.match(r"^(\d{2,12})\s+([A-Za-zÁÉÍÓÚÑáéíóúñ].+)$", texto):
         return m.group(1), m.group(2).strip()
     return "", texto
 
@@ -337,6 +394,12 @@ def _combinar_totales(lecturas: list[dict[str, float | None]]) -> dict[str, floa
 def _combinar(pasadas: list[str]) -> tuple[str, dict[str, str], list[Item], dict[str, float | None], dict[str, list[str]]]:
     leidas = [comprobante_de_texto(t) for t in pasadas]
     totales = _combinar_totales([l[2] for l in leidas])
+    netos = {l[2]["neto_gravado"] for l in leidas if l[2].get("neto_gravado") is not None}
+    sumas = [sum(x.importe or 0 for x in l[1]) for l in leidas if l[1]]
+    if not _cierra(totales) and len(netos) > 1 and sumas:
+        # Sin cuentas que cierren, el neto leído más parecido a lo que suma el detalle
+        # («3.974,75» / «83.974,75» con ítems que suman 83.954,68: el segundo).
+        totales["neto_gravado"] = min(netos, key=lambda n: min(abs(n - s) for s in sumas))
     encabezado: dict[str, str] = {}
     dudas: dict[str, list[str]] = {}
     for campo in ETIQUETAS_ENCABEZADO:
@@ -630,7 +693,8 @@ def corregir_totales(t: dict[str, float | None], suma_items: float | None = None
     soluciones: list[dict[str, float]] = []
     for cuantos in (1, 2):
         for campos in itertools.combinations(presentes, cuantos):
-            if all(not t[c] for c in campos):
+            # Un importe en 0 no se «corrige» (0,00 → 8,00 no es un error de lectura).
+            if any(not t[c] for c in campos):
                 continue
             opciones = [_variantes_importe(t[c]) for c in campos]
             for valores in itertools.product(*opciones):
@@ -664,8 +728,19 @@ def _verificar_totales(t: dict[str, float | None], suma_items: float | None = No
     else:
         diferencia = round(total - suma, 2)
         sugerida = False
+        # Primero, dígitos que el lector confunde (es lo que más pasa en fotos).
+        if correccion := corregir_totales(t, suma_items):
+            for campo, valor in correccion.items():
+                v.append(Verificacion(
+                    campo=campo, nivel="error",
+                    mensaje=(f"Los importes no suman el total. {ETIQUETAS_TOTALES[campo]}: se leyó {_fmt(t.get(campo))} y "
+                             f"seguro es {_fmt(valor)} (el lector confunde dígitos como 6 y 8); con ese valor "
+                             "neto + IVA + otros tributos da el total y el IVA da justo una alícuota."),
+                    sugerencia=valor,
+                ))
+            sugerida = True
         # ¿Qué importe, corregido, hace cerrar la cuenta? El neto, si con el IVA da una alícuota.
-        if iva:
+        if iva and not sugerida:
             neto_calc = round(total - (suma - (neto or 0)), 2)
             if neto_calc > 0 and _alicuota_de(neto_calc, iva):
                 v.append(Verificacion(
@@ -686,16 +761,6 @@ def _verificar_totales(t: dict[str, float | None], suma_items: float | None = No
                     sugerencia=iva_calc,
                 ))
                 sugerida = True
-        if not sugerida and (correccion := corregir_totales(t, suma_items)):
-            for campo, valor in correccion.items():
-                v.append(Verificacion(
-                    campo=campo, nivel="error",
-                    mensaje=(f"Los importes no suman el total. {ETIQUETAS_TOTALES[campo]}: se leyó {_fmt(t.get(campo))} y "
-                             f"seguro es {_fmt(valor)} (el lector confunde dígitos como 6 y 8); con ese valor "
-                             "neto + IVA + otros tributos da el total y el IVA da justo una alícuota."),
-                    sugerencia=valor,
-                ))
-            sugerida = True
         if not sugerida:
             v.append(Verificacion(
                 campo="total", nivel="error",
