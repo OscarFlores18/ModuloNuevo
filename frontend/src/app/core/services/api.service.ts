@@ -2,7 +2,7 @@ import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
-import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido } from '../models';
+import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido, LecturaExcel, Verificacion } from '../models';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -40,6 +40,24 @@ export class ApiService {
     );
   }
 
+  /** «Pasar a Excel»: lo leído de cada archivo, con la verificación. */
+  leerAExcel(archivos: ArchivoSubido[]): Promise<{ lecturas: LecturaExcel[] }> {
+    return firstValueFrom(
+      this.http.post<{ lecturas: LecturaExcel[] }>(`${this.url}/a-excel/leer`, { archivos }).pipe(errorLegible('No se pudieron leer los archivos.')),
+    );
+  }
+  /** La verificación de nuevo, con lo corregido en pantalla. */
+  verificarAExcel(lectura: LecturaExcel): Promise<{ verificaciones: Verificacion[] }> {
+    return firstValueFrom(
+      this.http.post<{ verificaciones: Verificacion[] }>(`${this.url}/a-excel/verificar`, { lectura }).pipe(errorLegible('No se pudo verificar.')),
+    );
+  }
+  /** El .xlsx (en base64). */
+  generarAExcel(lectura: LecturaExcel): Promise<{ nombre: string; contenido: string }> {
+    return firstValueFrom(
+      this.http.post<{ nombre: string; contenido: string }>(`${this.url}/a-excel/generar`, { lectura }).pipe(errorLegible('No se pudo armar el Excel.')),
+    );
+  }
   /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */
   extraerComprobantes(archivos: ArchivoSubido[]): Promise<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }> {
     return firstValueFrom(

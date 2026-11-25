@@ -38,6 +38,7 @@ from ...core.controles import resumen_controles
 from ...core.storage import ClientesRepository, CredencialesXubioRepository
 from ...core.usuarios import Usuario, usuario_actual, usuario_por_defecto
 from ...extraccion import servicio as extraccion_srv
+from ...extraccion import a_excel
 from ...extraccion.modelo import Comprobante
 from ...services import ejecuciones as ejecuciones_srv
 from ...services import importacion_xubio as importacion_srv
@@ -400,6 +401,57 @@ def extraer_comprobantes(body: ExtraerRequest, clientes: ClientesRepository = De
             raise HTTPException(status_code=413, detail={"mensaje": f"«{a.nombre}» es demasiado grande."})
         archivos.append((a.nombre, datos))
     return extraccion_srv.extraer(archivos, clientes.listar_publico())
+
+
+# --- Pasar a Excel: cualquier archivo a .xlsx, verificando lo leído ---------------
+
+
+class LeerAExcelRequest(BaseModel):
+    archivos: list[ArchivoComprobantes] = Field(min_length=1, max_length=20)
+
+
+@router.post("/a-excel/leer")
+def leer_a_excel(body: LeerAExcelRequest) -> dict:
+    """Lo leído de cada archivo (foto, captura, PDF, CSV, Excel), con la
+    verificación, para revisarlo antes de armar el Excel."""
+    lecturas: list[dict] = []
+    for a in body.archivos:
+        nombre = Path(a.nombre).name
+        try:
+            datos = base64.b64decode(a.contenido, validate=True)
+        except (binascii.Error, ValueError):
+            lecturas.append({"archivo": nombre, "error": f"No se pudo leer «{nombre}»."})
+            continue
+        if len(datos) > MAX_BYTES_AUX:
+            lecturas.append({"archivo": nombre, "error": f"«{nombre}» es demasiado grande (más de 25 MB)."})
+            continue
+        try:
+            lecturas.append(a_excel.leer(nombre, datos).model_dump())
+        except ValueError as exc:
+            lecturas.append({"archivo": nombre, "error": str(exc)})
+        except Exception as exc:  # que un archivo raro no corte los demás
+            lecturas.append({"archivo": nombre, "error": f"No se pudo leer «{nombre}»: {exc}"})
+    return {"lecturas": lecturas}
+
+
+class LecturaRequest(BaseModel):
+    lectura: a_excel.Lectura
+
+
+@router.post("/a-excel/verificar")
+def verificar_a_excel(body: LecturaRequest) -> dict:
+    """La verificación otra vez, con lo que se corrigió en la pantalla."""
+    return {"verificaciones": [v.model_dump() for v in a_excel.verificar(body.lectura)]}
+
+
+@router.post("/a-excel/generar")
+def generar_a_excel(body: LecturaRequest) -> dict:
+    lectura = body.lectura
+    lectura.verificaciones = a_excel.verificar(lectura)
+    return {
+        "nombre": a_excel.nombre_excel(lectura),
+        "contenido": base64.b64encode(a_excel.generar(lectura)).decode("ascii"),
+    }
 
 
 class PrepararRequest(BaseModel):

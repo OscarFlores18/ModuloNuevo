@@ -92,3 +92,20 @@ def texto_de_imagen(imagen) -> str:
     pytesseract.pytesseract.tesseract_cmd = ejecutable()
     # psm 6: un bloque de texto uniforme, lo que mejor separa las líneas de una factura.
     return pytesseract.image_to_string(preparar_imagen(imagen), lang=_idioma(), config="--psm 6", timeout=90)
+
+
+def texto_de_imagen_variante(imagen, lado: int, psm: int) -> str:
+    """Otra pasada de OCR con otro tamaño y otro modo de página. Leer la misma
+    imagen de dos o tres formas y comparar es lo que permite avisar qué datos
+    pueden estar mal leídos (y elegir el que cierra con las cuentas)."""
+    if not disponible():
+        raise OCRNoDisponible("Tesseract no está instalado: no se puede leer el texto de las imágenes.")
+    import pytesseract
+    from PIL import Image, ImageOps
+
+    pytesseract.pytesseract.tesseract_cmd = ejecutable()
+    img = ImageOps.exif_transpose(imagen).convert("L")
+    escala = lado / max(img.size)
+    img = img.resize((int(img.width * escala), int(img.height * escala)), Image.LANCZOS)
+    img = ImageOps.autocontrast(img, cutoff=1)
+    return pytesseract.image_to_string(img, lang=_idioma(), config=f"--psm {psm}", timeout=90)
