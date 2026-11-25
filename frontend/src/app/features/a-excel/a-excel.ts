@@ -6,9 +6,11 @@ import { ApiService } from '../../core/services/api.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
+import { Factura } from './factura';
 import { ToastService } from '../../core/ui/toast';
 import {
-  ACEPTA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, FORMATOS_A_EXCEL, aNumero, aTexto, contar, itemVacio, nivelDe, sinDuda, sumaItems, usarSugerencia,
+  ACEPTA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
+  cuitConGuiones, detectarEmpresa, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
 } from './logica';
 
 /**
@@ -26,7 +28,7 @@ import {
  */
 @Component({
   selector: 'app-a-excel',
-  imports: [Encabezado, Alerta, Ayuda],
+  imports: [Encabezado, Alerta, Ayuda, Factura],
   styles: `
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
@@ -87,6 +89,39 @@ import {
     .ax-tabla td { padding: 3px 5px; border-bottom: 1px solid #f1f5f9; }
     .ax-tabla tfoot td { font-weight: 700; padding: 6px; }
     .ax-texto { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .75rem; background: #f8fafc; padding: 10px; border-radius: 8px; max-height: 320px; overflow: auto; }
+    /* Para el estudio */
+    .fx-estudio { margin-top: 16px; padding: 14px 16px; border: 1px solid #c7d2fe; border-radius: 12px; background: #f8f9ff; }
+    .fx-estudio h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: .98rem; font-weight: 800; color: #312e81; }
+    .fx-est-fila { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+    .fx-est-fila label { display: flex; flex-direction: column; gap: 3px; flex: 1 1 200px; font-size: .74rem; font-weight: 700; color: #64748b; }
+    .fx-seg { display: inline-flex; border: 1px solid #c7d2fe; border-radius: 8px; overflow: hidden; }
+    .fx-seg button { border: 0; background: #fff; padding: 6px 14px; font-weight: 700; font-size: .85rem; color: #475569; cursor: pointer; }
+    .fx-seg button + button { border-left: 1px solid #c7d2fe; }
+    .fx-seg button[aria-pressed="true"] { background: #4338ca; color: #fff; }
+    .fx-seg button:disabled { cursor: not-allowed; opacity: .55; }
+    .fx-detec { margin: 10px 0 0; padding: 7px 10px; border-radius: 8px; font-size: .84rem; line-height: 1.35; }
+    .fx-detec.ok { background: #f0fdf4; color: #166534; }
+    .fx-detec.aviso { background: #fffbeb; color: #92400e; }
+    .fx-adapt { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
+    .fx-adapt div { padding: 8px 10px; border: 1px solid var(--color-borde); border-radius: 8px; background: #fff; min-width: 0; }
+    .fx-adapt dt { font-size: .7rem; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: .03em; }
+    .fx-adapt dd { margin: 2px 0 0; font-weight: 700; font-size: .88rem; overflow-wrap: anywhere; }
+    .fx-adapt dd small { display: block; font-weight: 500; color: #64748b; font-variant-numeric: tabular-nums; }
+    .fx-bloque { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #c7d2fe; }
+    .fx-bloque-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; }
+    .fx-bloque-cab strong { font-size: .9rem; }
+    .fx-chip { padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 800; }
+    .fx-chip.gris { background: #f1f5f9; color: #475569; }
+    .fx-chip.pronto { background: #ede9fe; color: #5b21b6; }
+    .fx-arca { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: .84rem; color: #475569; }
+    .fx-arca ul { margin: 0; padding-left: 18px; }
+    .fx-opciones { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+    .fx-opcion { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1.5px solid var(--color-borde); border-radius: 10px; background: #fff; text-align: left; cursor: pointer; font: inherit; }
+    .fx-opcion[aria-pressed="true"] { border-color: #4338ca; background: #eef2ff; box-shadow: inset 0 0 0 1px #4338ca; }
+    .fx-opcion:disabled { cursor: not-allowed; opacity: .55; }
+    .fx-opcion strong { font-size: .88rem; color: #1e1b4b; }
+    .fx-opcion span { font-size: .78rem; color: #64748b; line-height: 1.3; }
+    .fx-xubio-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
   `,
   template: `
     <app-encabezado
@@ -182,6 +217,68 @@ import {
             @if (l.error) {
               <app-alerta class="mt-4" nivel="error" [mensajes]="[l.error]" />
             } @else {
+              @if (l.tipo === 'comprobante') {
+                <section class="fx-estudio" aria-labelledby="fx-estudio-t" data-tour="ax-estudio">
+                  <h3 id="fx-estudio-t">Para el estudio<app-ayuda texto="Busca las CUIT de la factura entre los clientes cargados: si la empresa es el receptor es una compra; si es el emisor, una venta. Podés cambiar la empresa o la operación a mano." /></h3>
+                  <div class="fx-est-fila">
+                    <label>
+                      Empresa del estudio
+                      <select class="ax-in" (change)="elegirEmpresa($any($event.target).value)" [disabled]="!empresas().length">
+                        <option value="" [selected]="!estudio()">{{ empresas().length ? '— Elegí la empresa —' : 'Sin clientes para elegir' }}</option>
+                        @for (e of empresas(); track e.nombre) { <option [value]="e.nombre" [selected]="estudio()?.empresa === e.nombre">{{ e.nombre }}</option> }
+                      </select>
+                    </label>
+                    <div class="fx-seg" role="group" aria-label="Operación">
+                      <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Compras'" [disabled]="!estudio()" (click)="elegirOperacion('Compras')">Compra</button>
+                      <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Ventas'" [disabled]="!estudio()" (click)="elegirOperacion('Ventas')">Venta</button>
+                    </div>
+                  </div>
+
+                  @if (estudio(); as f) {
+                    @if (f.origen !== 'manual') {
+                      <p class="fx-detec ok">✓ Detectada por la CUIT del {{ f.origen }}: es {{ f.operacion === 'Compras' ? 'una compra' : 'una venta' }} de <b>{{ f.empresa }}</b>.</p>
+                    } @else {
+                      <p class="fx-detec aviso">{{ avisoManual() }}</p>
+                    }
+                    <dl class="fx-adapt" aria-label="La factura desde la empresa">
+                      <div><dt>Libro</dt><dd>IVA {{ f.operacion }}</dd></div>
+                      <div><dt>{{ f.operacion === 'Compras' ? 'Proveedor' : 'Cliente' }}</dt><dd>{{ f.contraparte.nombre || 'Sin nombre' }}<small>{{ f.contraparte.cuit ? cuit(f.contraparte.cuit) : 'Sin CUIT' }}</small></dd></div>
+                      <div><dt>Comprobante</dt><dd>{{ l.encabezado['tipo'] || 'Sin tipo' }}<small>{{ l.encabezado['numero'] || 'sin número' }}</small></dd></div>
+                      <div><dt>Fecha</dt><dd>{{ l.encabezado['fecha'] || '—' }}</dd></div>
+                      <div><dt>Total</dt><dd>{{ l.totales['total'] !== null && l.totales['total'] !== undefined ? '$ ' + texto(l.totales['total']) : '—' }}</dd></div>
+                    </dl>
+                  } @else {
+                    <p class="fx-detec aviso">
+                      @if (!empresas().length) { No se pudieron ver los clientes del estudio (cargalos o desbloqueá «Clientes»). }
+                      @else { Ninguna CUIT de la factura es de un cliente del estudio. Elegí la empresa arriba si corresponde. }
+                    </p>
+                  }
+
+                  <div class="fx-bloque" data-tour="ax-arca">
+                    <div class="fx-bloque-cab"><strong>En ARCA</strong><span class="fx-chip gris">Sin consultar</span><span class="fx-chip pronto">Próximamente</span></div>
+                    <div class="fx-arca">
+                      <span>Se va a buscar en «Mis Comprobantes» {{ estudio() ? 'de ' + estudio()!.empresa : 'de la empresa' }} por:</span>
+                      <ul><li>CUIT {{ estudio()?.operacion === 'Ventas' ? 'del receptor' : 'del emisor' }}, punto de venta y número</li><li>fecha y total</li></ul>
+                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" disabled title="Todavía no está conectado">Buscar en ARCA</button>
+                    </div>
+                  </div>
+
+                  <div class="fx-bloque" data-tour="ax-xubio">
+                    <div class="fx-bloque-cab"><strong>En Xubio</strong><span class="fx-chip pronto">Próximamente</span></div>
+                    <div class="fx-opciones" role="group" aria-label="Qué hacer en Xubio">
+                      @for (o of opcionesXubio(); track o.id) {
+                        <button type="button" class="fx-opcion" [attr.aria-pressed]="opcionXubio() === o.id" [disabled]="!estudio()" (click)="elegirXubio(o.id)">
+                          <strong>{{ o.titulo }}</strong><span>{{ o.texto }}</span>
+                        </button>
+                      }
+                    </div>
+                    <div class="fx-xubio-pie">
+                      <button type="button" class="mf-btn" disabled title="Todavía no está conectado">{{ textoXubio() }}</button>
+                      <span class="mf-tenue">Por ahora: generá el Excel abajo y cargalo a mano en Xubio.</span>
+                    </div>
+                  </div>
+                </section>
+              }
               <ol class="fx-pasos">
                 <li class="fx-paso">
                   <span class="fx-num" aria-hidden="true">1</span>
@@ -262,50 +359,21 @@ import {
               </ul>
 
               @if (l.tipo === 'comprobante') {
-                <h3 class="ax-sub">Encabezado</h3>
-                <div class="ax-campos">
-                  @for (c of camposEncabezado; track c.id) {
-                    <label>{{ c.etiqueta }}
-                      <input class="ax-in" [class]="nivel(c.id)" [value]="l.encabezado[c.id] ?? ''" (change)="cambiarEncabezado(c.id, $any($event.target).value)" />
-                    </label>
-                  }
-                </div>
-
-                <h3 class="ax-sub">Importes</h3>
-                <div class="ax-campos">
-                  @for (c of camposTotales; track c.id) {
-                    <label>{{ c.etiqueta }}
-                      <input class="ax-in num" [class]="nivel(c.id)" [value]="texto(l.totales[c.id])" (change)="cambiarTotal(c.id, $any($event.target).value)" />
-                    </label>
-                  }
-                </div>
-
-                <h3 class="ax-sub">Detalle ({{ l.items.length }} {{ l.items.length === 1 ? 'ítem' : 'ítems' }})</h3>
-                <div class="ax-caja">
-                  <table class="ax-tabla">
-                    <thead><tr><th>Código</th><th>Descripción</th><th>Cant.</th><th>Precio</th><th>IVA %</th><th>Importe</th><th></th></tr></thead>
-                    <tbody>
-                      @for (x of l.items; track $index; let i = $index) {
-                        <tr>
-                          <td style="width: 90px"><input class="ax-in" [value]="x.codigo" (change)="cambiarItem(i, 'codigo', $any($event.target).value)" /></td>
-                          <td><input class="ax-in" [value]="x.descripcion" (change)="cambiarItem(i, 'descripcion', $any($event.target).value)" /></td>
-                          <td style="width: 70px"><input class="ax-in num" [value]="texto(x.cantidad)" (change)="cambiarItem(i, 'cantidad', $any($event.target).value)" /></td>
-                          <td style="width: 100px"><input class="ax-in num" [value]="texto(x.precio)" (change)="cambiarItem(i, 'precio', $any($event.target).value)" /></td>
-                          <td style="width: 60px"><input class="ax-in num" [value]="x.alicuota ?? ''" (change)="cambiarItem(i, 'alicuota', $any($event.target).value)" /></td>
-                          <td style="width: 110px"><input class="ax-in num" [value]="texto(x.importe)" (change)="cambiarItem(i, 'importe', $any($event.target).value)" /></td>
-                          <td><button type="button" class="mf-btn-link text-xs" (click)="sacarItem(i)" aria-label="Sacar el ítem">✕</button></td>
-                        </tr>
-                      }
-                    </tbody>
-                    <tfoot>
-                      <tr>
-                        <td colspan="2"><button type="button" class="mf-btn-link text-sm" (click)="agregarItem()">+ Agregar ítem</button></td>
-                        <td colspan="3" class="text-right">Suma del detalle</td>
-                        <td class="text-right">{{ texto(suma()) }}</td><td></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
+                <app-factura
+                  [lectura]="l"
+                  [estudio]="estudio()"
+                  [sesion]="sesion()"
+                  [nivel]="nivelFn"
+                  [ocupado]="generando() || verificando()"
+                  (encabezado)="cambiarEncabezado($event[0], $event[1])"
+                  (total)="cambiarTotal($event[0], $event[1])"
+                  (item)="cambiarItem($event[0], $event[1], $event[2])"
+                  (agregar)="agregarItem()"
+                  (sacar)="sacarItem($event)"
+                  (guardar)="generar()"
+                  (eliminar)="quitar(indice())"
+                  (cancelar)="volverArriba()"
+                />
               } @else {
                 @for (h of l.hojas; track h.nombre) {
                   <h3 class="ax-sub">{{ h.nombre }} · {{ h.filas.length }} filas</h3>
@@ -325,7 +393,7 @@ import {
               @if (l.texto) {
                 <details class="mt-4">
                   <summary class="cursor-pointer text-sm font-semibold">Ver el texto que se leyó</summary>
-                  <div class="ax-texto mt-2">{{ l.texto }}</div>
+                  <div class="ax-texto mt-2">{{ textoSinCae(l.texto) }}</div>
                 </details>
               }
             </div>
@@ -360,13 +428,95 @@ export class PasarAExcel implements OnDestroy {
     const l = this.actual();
     return l ? (this.vistas()[l.archivo] ?? null) : null;
   });
-  protected readonly aMirar = computed(() => (this.actual()?.verificaciones ?? []).filter((v) => v.nivel !== 'ok'));
-  protected readonly bien = computed(() => (this.actual()?.verificaciones ?? []).filter((v) => v.nivel === 'ok'));
+  // El CAE no se muestra: sus controles tampoco.
+  private readonly verificaciones = computed(() => (this.actual()?.verificaciones ?? []).filter((v) => v.campo !== 'cae'));
+  protected readonly aMirar = computed(() => this.verificaciones().filter((v) => v.nivel !== 'ok'));
+  protected readonly bien = computed(() => this.verificaciones().filter((v) => v.nivel === 'ok'));
   protected readonly suma = computed(() => sumaItems(this.actual()?.items ?? []));
 
   protected readonly errores = (l: LecturaExcel) => contar(l, 'error');
   protected readonly avisos = (l: LecturaExcel) => contar(l, 'aviso');
   protected readonly texto = aTexto;
+
+  // --- Para el estudio (solo pantalla: ARCA y Xubio todavía no están conectados) ---
+  /** Los clientes del estudio con sus CUIT; vacío si Clientes está bloqueado o no hay. */
+  protected readonly empresas = signal<EmpresaEstudio[]>([]);
+  /** Lo que se eligió a mano por archivo (manda sobre lo detectado). */
+  private readonly elegido = signal<Record<string, { empresa: string; operacion: Operacion | null }>>({});
+  private readonly xubioElegido = signal<Record<string, string>>({});
+  protected readonly cuit = cuitConGuiones;
+  /** El usuario de Xubio guardado: el estudio que está trabajando. */
+  protected readonly sesion = signal('');
+  protected readonly nivelFn = (campo: string) => this.nivel(campo);
+  protected readonly textoSinCae = sinCae;
+
+  /** La factura vista desde la empresa del estudio (detectada o elegida). */
+  protected readonly estudio = computed<FacturaDelEstudio | null>(() => {
+    const l = this.actual();
+    if (!l || l.tipo !== 'comprobante') return null;
+    const detectada = detectarEmpresa(l.encabezado, this.empresas());
+    const manual = this.elegido()[l.archivo];
+    if (!manual) return detectada;
+    if (!manual.empresa) return null;
+    const mismaEmpresa = detectada?.empresa === manual.empresa;
+    const operacion = manual.operacion ?? (mismaEmpresa ? detectada!.operacion : 'Compras');
+    const origen = mismaEmpresa && operacion === detectada!.operacion ? detectada!.origen : 'manual';
+    return adaptar(l.encabezado, manual.empresa, operacion, origen);
+  });
+
+  /** Por qué lo elegido a mano no coincide con la factura. */
+  protected readonly avisoManual = computed(() => {
+    const l = this.actual();
+    const f = this.estudio();
+    if (!l || !f) return '';
+    const detectada = detectarEmpresa(l.encabezado, this.empresas().filter((e) => e.nombre === f.empresa));
+    if (!detectada) return `Elegida a mano: ninguna CUIT de la factura es de ${f.empresa}. Revisá que sea la empresa correcta.`;
+    const es = detectada.operacion === 'Compras' ? 'una compra' : 'una venta';
+    return `Ojo: ${f.empresa} es el ${detectada.origen} de la factura, así que es ${es}. La marcaste como ${f.operacion === 'Compras' ? 'compra' : 'venta'}.`;
+  });
+
+  protected readonly opcionesXubio = computed(() => {
+    const compra = this.estudio()?.operacion !== 'Ventas';
+    return [
+      { id: 'cargar', titulo: compra ? 'Cargar como compra' : 'Cargar como venta', texto: compra ? 'Factura de proveedor con sus importes y alícuotas.' : 'Factura de venta con sus importes y alícuotas.' },
+      { id: 'detalle', titulo: 'Con el detalle', texto: 'Cada ítem de la factura como una línea en Xubio.' },
+      { id: 'arca', titulo: 'Desde Mis Comprobantes', texto: 'Importarla con el archivo de ARCA, como en «Subir a Xubio».' },
+    ];
+  });
+  protected readonly opcionXubio = computed(() => {
+    const l = this.actual();
+    return l ? (this.xubioElegido()[l.archivo] ?? 'cargar') : 'cargar';
+  });
+  protected readonly textoXubio = computed(() => {
+    const f = this.estudio();
+    const o = this.opcionesXubio().find((x) => x.id === this.opcionXubio());
+    return f && o ? `${o.titulo} en Xubio · ${f.empresa}` : 'Elegí la empresa para cargarla en Xubio';
+  });
+
+  constructor() {
+    this.api.ajustes().then((a) => this.sesion.set(a.xubio?.usuario ?? ''), () => undefined);
+    // Si Clientes está bloqueado, el panel avisa y se elige a mano después.
+    this.api.clientes().then(
+      (cs) => this.empresas.set(cs.map((c) => ({ nombre: c.nombre, cuits: [c.arca.cuit_representado, c.arca.cuit_login].filter(Boolean) }))),
+      () => this.empresas.set([]),
+    );
+  }
+
+  protected elegirEmpresa(nombre: string): void {
+    const l = this.actual();
+    if (l) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: nombre, operacion: null } }));
+  }
+
+  protected elegirOperacion(operacion: Operacion): void {
+    const l = this.actual();
+    const f = this.estudio();
+    if (l && f) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: f.empresa, operacion } }));
+  }
+
+  protected elegirXubio(id: string): void {
+    const l = this.actual();
+    if (l) this.xubioElegido.update((m) => ({ ...m, [l.archivo]: id }));
+  }
 
   ngOnDestroy(): void {
     Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));
@@ -401,6 +551,10 @@ export class PasarAExcel implements OnDestroy {
     if (e) return `${e} ${e === 1 ? 'error' : 'errores'}${a ? ` · ${a} para mirar` : ''}`;
     if (a) return `${a} para mirar`;
     return 'Todo verificado';
+  }
+
+  protected volverArriba(): void {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
   protected irARevision(): void {
