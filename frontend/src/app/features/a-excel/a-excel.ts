@@ -69,7 +69,7 @@ import {
       bajada="Fotos, capturas, PDF, CSV o Excel viejo (.xls) a un Excel. Antes de armarlo te muestro lo que leí para que lo verifiques."
     />
 
-    <section class="mf-panel">
+    <section class="mf-panel" data-tour="ax-archivos">
       <label class="zona" [class.encima]="encima()" (dragover)="$event.preventDefault(); encima.set(true)" (dragleave)="encima.set(false)" (drop)="soltar($event)">
         <strong>Arrastrá los archivos acá o tocá para elegirlos</strong>
         <span class="mf-sub">Foto o captura (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX · hasta 20 por vez</span>
@@ -93,7 +93,7 @@ import {
     </section>
 
     @if (actual(); as l) {
-      <section class="mf-panel mt-4" aria-labelledby="ax-titulo">
+      <section class="mf-panel mt-4" aria-labelledby="ax-titulo" data-tour="ax-verificar">
         @if (l.error) {
           <app-alerta nivel="error" [mensajes]="[l.error]" />
         } @else {
@@ -198,7 +198,7 @@ import {
 
               <div class="ax-pie">
                 @if (errores(l)) { <span class="text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</span> }
-                <button type="button" class="mf-btn" (click)="generar()" [disabled]="generando() || verificando()">
+                <button type="button" class="mf-btn" (click)="generar()" [disabled]="generando() || verificando()" data-tour="ax-generar">
                   {{ generando() ? 'Armando…' : errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
                 </button>
               </div>

@@ -164,7 +164,7 @@
             } @else { Aplicar cambios ({{ nSel }}) }
           </button>
         }
-        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()" [disabled]="aplicando()">Ver todos los hallazgos</button>
+        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verErrores()" [disabled]="aplicando()" data-tour="hallazgos">Ver todos los hallazgos</button>
       </header>
 
       @if (clientesConTareas().length > 1) {

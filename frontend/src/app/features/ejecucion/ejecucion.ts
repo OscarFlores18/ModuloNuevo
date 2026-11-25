@@ -645,7 +645,6 @@ export class EjecucionPantalla {
     // Backend en esta PC: aprieta Ctrl+V en Gmail por nosotros.
     const pegarEnGmail = this.enEstaPc() ? () => this.api.pegarMail() : undefined;
     return { emails, periodo: this.ej()?.periodo ?? '', cuenta, pegarEnGmail, descargarExcelFaltantes: (c, op) => this.descargarExcelFaltantes(c, op),
-      descargarErroresExcel: (c, op) => this.descargarErroresExcel(c, op),
       descargarHallazgos: (c) => this.descargarHallazgos(c),
     };
   }
@@ -669,26 +668,6 @@ export class EjecucionPantalla {
     const { nombre, contenido } = await this.api.faltantesExcel(e.id, indice, operacion);
     const bytes = Uint8Array.from(atob(contenido), (c) => c.charCodeAt(0));
     descargarBlob(nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-  }
-
-  /**
-   * «Descargar errores Excel» (bloque «A revisar»): baja el .xlsx de las partidas del Libro IVA
-   * no encontradas en ARCA de ese cliente y operación. Devuelve el nombre, o null si no hay partidas.
-   */
-  private async descargarErroresExcel(cliente: string, operacion: string): Promise<string | null> {
-    const e = this.ej();
-    const indice = e?.detalle_clientes.findIndex((c) => c.nombre === cliente) ?? -1;
-    if (!e || indice < 0) throw new Error('Cliente no encontrado en este control.');
-    let respuesta: { nombre: string; contenido: string };
-    try {
-      respuesta = await this.api.erroresExcel(e.id, indice, operacion);
-    } catch (err) {
-      if ((err as { status?: number }).status === 404 && /No hay partidas/.test(mensajeDeError(err, ''))) return null;
-      throw new Error(mensajeDeError(err, 'No se pudo descargar el Excel de errores.'));
-    }
-    const bytes = Uint8Array.from(atob(respuesta.contenido), (c) => c.charCodeAt(0));
-    descargarBlob(respuesta.nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
-    return respuesta.nombre;
   }
 
   /** Usuario de Xubio guardado en Ajustes (la cuenta de la empresa), de respaldo para `authuser`. */
