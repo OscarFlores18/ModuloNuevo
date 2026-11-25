@@ -438,8 +438,8 @@ def _totales_que_no_cierran(operacion, df_arca, df_xubio, columnas_arca, col_cui
         mostrar += [(str(c), c) for c in resto]
     else:
         mostrar = [(str(c), c) for c in partes]
-    # La columna que está vacía (o en 0) en todos, no se muestra.
-    mostrar = [(t, c) for t, c in mostrar if any(_numero(fa.get(c)) for fa, _, _ in no_cierran)]
+    # El no gravado, el exento y los otros tributos van siempre (vacíos, con «-»):
+    # son lo que debería sumar el Imp. Total. Las alícuotas, solo las que se usan.
 
     salida, bien_en_xubio = [], 0
     for fa, total, diferencia in no_cierran:
