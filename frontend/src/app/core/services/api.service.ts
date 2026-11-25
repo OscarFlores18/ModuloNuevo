@@ -41,7 +41,7 @@ export class ApiService {
     );
   }
 
-  /** «Pasar a Excel»: lo leído de cada archivo, con la verificación. */
+  /** «Conversor De Facturas»: lo leído de cada archivo, con la verificación. */
   leerAExcel(archivos: ArchivoSubido[]): Promise<{ lecturas: LecturaExcel[] }> {
     return firstValueFrom(
       this.http.post<{ lecturas: LecturaExcel[] }>(`${this.url}/a-excel/leer`, { archivos }).pipe(errorLegible('No se pudieron leer los archivos.')),

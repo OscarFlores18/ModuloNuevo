@@ -12,12 +12,15 @@ import {
 } from './logica';
 
 /**
- * «Pasar a Excel»: cualquier archivo (foto, captura, PDF, CSV, Excel) a .xlsx.
+ * «Conversor De Facturas» (antes «Pasar a Excel»): cualquier archivo (foto,
+ * captura, PDF, CSV, Excel) a .xlsx. Con la misma estructura que «Subir a Xubio»:
  *
- * 1. Subir: POST /api/a-excel/leer → una `LecturaExcel` por archivo.
- * 2. Verificar: a la izquierda el archivo, a la derecha lo leído (editable) y lo
- *    que hay que mirar. Cada cambio vuelve a pedir POST /api/a-excel/verificar.
- * 3. Generar: POST /api/a-excel/generar → el .xlsx se descarga.
+ * - Izquierda, «1. Elegí los archivos»: se arrastran y se leen solos
+ *   (POST /api/a-excel/leer → una `LecturaExcel` por archivo).
+ * - Derecha, «2. Pasalos a Excel»: del archivo elegido, qué hay que mirar y el
+ *   botón para generar el .xlsx (POST /api/a-excel/generar).
+ * - Abajo, a todo el ancho: el archivo y lo leído para corregir. Cada cambio
+ *   vuelve a pedir POST /api/a-excel/verificar.
  *
  * Ver docs/pasar-a-excel.md para cómo está armado y qué falta.
  */
@@ -25,13 +28,36 @@ import {
   selector: 'app-a-excel',
   imports: [Encabezado, Alerta, Ayuda],
   styles: `
-    :host { display: block; }
+    :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
     .zona.encima { border-color: var(--color-acento); background: #eff6ff; }
-    .ax-archivos { display: flex; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
-    .ax-pill { display: inline-flex; align-items: center; gap: 6px; max-width: 260px; padding: 4px 10px; border: 1px solid #cbd5e1; border-radius: 999px; background: #fff; font-size: .8rem; cursor: pointer; }
-    .ax-pill[aria-pressed='true'] { border-color: var(--color-acento); background: #eff6ff; font-weight: 700; }
-    .ax-pill span.n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .zona.con-archivos { align-items: stretch; justify-content: space-between; padding: 12px; gap: 12px; }
+    .fx-elegidos { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .fx-elegidos li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--color-borde); border-radius: 8px; background: #fff; cursor: pointer; }
+    .fx-elegidos li.activo { border-color: var(--color-acento); background: #eff6ff; box-shadow: inset 3px 0 0 var(--color-acento); }
+    .fx-agregar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+    .fx-agregar-mas, .fx-agregar-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+    .op { display: inline-block; min-width: 76px; padding: 0 8px; border-radius: 4px; font-size: .74rem; font-weight: 800; text-transform: uppercase; text-align: center; }
+    .op-factura { background: #e0f2fe; color: #075985; }
+    .op-tabla { background: #fef3c7; color: #92400e; }
+    .op-error { background: #fee2e2; color: #991b1b; }
+    .fx-cab-der { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding-bottom: 14px; border-bottom: 1px solid var(--color-borde); }
+    .fx-res-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 14px; font-size: 1rem; }
+    .fx-res-cab .op { padding: 3px 8px; min-width: 0; }
+    .fx-pasos { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-direction: column; gap: 22px; }
+    .fx-paso { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; }
+    .fx-num { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: #eff6ff; color: var(--color-acento); font-weight: 800; font-size: .9rem; }
+    .fx-paso h3 { display: flex; align-items: center; gap: 4px; margin: 4px 0 8px; font-size: .98rem; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--color-texto, #0f172a); }
+    .fx-cargando { display: flex; align-items: center; gap: 10px; padding: 40px 0; justify-content: center; color: var(--color-tenue); font-weight: 600; }
+    .fx-subir { padding: 10px 18px; font-size: .95rem; }
+    .fx-estado { display: flex; flex-wrap: wrap; gap: 6px; }
+    .fx-estado span { padding: 4px 10px; border-radius: 999px; font-size: .82rem; font-weight: 700; }
+    .fx-estado .e-error { background: #fef2f2; color: #991b1b; }
+    .fx-estado .e-aviso { background: #fffbeb; color: #92400e; }
+    .fx-estado .e-ok { background: #f0fdf4; color: #166534; }
+    .fx-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--color-borde); }
+    .fx-link { border: 0; background: none; padding: 0; color: var(--color-tenue); font-size: .85rem; text-decoration: underline; cursor: pointer; }
+    .fx-link:hover { color: var(--color-acento); }
     .ax-punto { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #16a34a; }
     .ax-punto.aviso { background: #f59e0b; } .ax-punto.error { background: #dc2626; }
     .ax-grilla { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
@@ -61,42 +87,152 @@ import {
     .ax-tabla td { padding: 3px 5px; border-bottom: 1px solid #f1f5f9; }
     .ax-tabla tfoot td { font-weight: 700; padding: 6px; }
     .ax-texto { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .75rem; background: #f8fafc; padding: 10px; border-radius: 8px; max-height: 320px; overflow: auto; }
-    .ax-pie { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--color-borde); }
   `,
   template: `
     <app-encabezado
-      titulo="Pasar a Excel"
+      titulo="Conversor De Facturas"
       bajada="Fotos, capturas, PDF, CSV o Excel viejo (.xls) a un Excel. Antes de armarlo te muestro lo que leí para que lo verifiques."
     />
 
-    <section class="mf-panel">
-      <label class="zona" [class.encima]="encima()" (dragover)="$event.preventDefault(); encima.set(true)" (dragleave)="encima.set(false)" (drop)="soltar($event)">
-        <strong>Arrastrá los archivos acá o tocá para elegirlos</strong>
-        <span class="mf-sub">Foto o captura (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX · hasta 20 por vez</span>
-        <input type="file" multiple class="sr-only" [attr.accept]="acepta" (change)="elegir($event)" />
-        @if (leyendo()) {
-          <span class="inline-flex items-center gap-2 font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo… (las fotos tardan unos segundos: se leen tres veces para comparar)</span>
-        }
-      </label>
-      @if (error(); as err) { <app-alerta class="mt-3 block" nivel="error" [mensajes]="[err]" /> }
+    <!-- Izquierda: elegir los archivos. Derecha: el archivo elegido, paso a paso. Abajo: corregir lo leído -->
+    <div class="fx-grilla">
+      <section class="mf-panel" aria-labelledby="t-elegir">
+        <div class="fx-cab">
+          <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Se leen apenas los soltás. De las fotos se lee el texto con OCR (tres veces, para comparar); de los PDF digitales, su texto; de CSV y planillas, las celdas." /></h2>
+          <p class="mf-sub m-0 mt-1">Facturas o tablas: fotos o capturas (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX. Hasta 20 por vez.</p>
+        </div>
 
-      @if (lecturas().length) {
-        <div class="ax-archivos" role="group" aria-label="Archivos leídos">
-          @for (l of lecturas(); track l.archivo; let i = $index) {
-            <button type="button" class="ax-pill" [attr.aria-pressed]="i === indice()" (click)="indice.set(i)" [title]="l.archivo">
-              <span class="ax-punto" [class.error]="l.error || errores(l)" [class.aviso]="!l.error && !errores(l) && avisos(l)"></span>
-              <span class="n">{{ l.archivo }}</span>
-            </button>
+        <div class="fx-cuerpo">
+          <div
+            class="zona"
+            [class.con-archivos]="lecturas().length"
+            [class.encima]="encima()"
+            (dragover)="$event.preventDefault(); encima.set(true)"
+            (dragleave)="encima.set(false)"
+            (drop)="soltar($event)"
+          >
+            @if (lecturas().length) {
+              <ul class="fx-elegidos" aria-label="Archivos leídos">
+                @for (l of lecturas(); track l.archivo; let i = $index) {
+                  <li [class.activo]="i === indice()" (click)="indice.set(i)" [attr.aria-current]="i === indice() ? 'true' : null">
+                    <span [class]="'op ' + claseTipo(l)">{{ nombreTipo(l) }}</span>
+                    <span class="min-w-0 flex-1 text-left">
+                      <strong class="block truncate" [title]="l.archivo">{{ l.archivo }}</strong>
+                      <span class="mf-tenue block truncate text-sm">{{ resumen(l) }}</span>
+                    </span>
+                    <span class="ax-punto" [class.error]="l.error || errores(l)" [class.aviso]="!l.error && !errores(l) && avisos(l)" aria-hidden="true"></span>
+                    <button type="button" class="mf-icono-btn" (click)="quitar(i); $event.stopPropagation()" [attr.aria-label]="'Quitar ' + l.archivo" [disabled]="leyendo()">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                    </button>
+                  </li>
+                }
+              </ul>
+              <div class="fx-agregar">
+                <span class="fx-agregar-mas">
+                  @if (leyendo()) {
+                    <span class="inline-flex items-center gap-2 text-sm font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</span>
+                  } @else {
+                    <span class="mf-tenue text-sm">Arrastrá más acá o</span>
+                    <label class="mf-btn mf-btn-suave mf-btn-chico cursor-pointer">
+                      Agregar
+                      <input type="file" multiple class="sr-only" [attr.accept]="acepta" (change)="elegir($event)" />
+                    </label>
+                  }
+                </span>
+                <span class="fx-agregar-acciones">
+                  <button type="button" class="mf-btn mf-btn-suave" (click)="limpiar()" [disabled]="leyendo()">Sacar todos</button>
+                </span>
+              </div>
+            } @else if (leyendo()) {
+              <span class="inline-flex items-center gap-2 font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</span>
+              <span class="mf-tenue text-sm">Las fotos tardan unos segundos: se leen tres veces para comparar.</span>
+            } @else {
+              <span class="font-semibold">Arrastrá los archivos acá</span>
+              <span class="mf-tenue text-sm">Fotos, capturas, PDF, CSV o planillas</span>
+              <span class="mf-tenue text-sm">o</span>
+              <label class="mf-btn mf-btn-suave cursor-pointer">
+                Elegir archivos
+                <input type="file" multiple class="sr-only" [attr.accept]="acepta" (change)="elegir($event)" />
+              </label>
+            }
+          </div>
+          @if (error(); as err) { <app-alerta class="mt-3" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
+        </div>
+      </section>
+
+      <section class="mf-panel" aria-labelledby="t-resultado">
+        <div class="fx-cab-der">
+          <div class="min-w-0 flex-1">
+            <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Pasalos a Excel<app-ayuda texto="Lo rojo seguro está mal (por ejemplo un CUIT que no pasa el dígito verificador o importes que no suman el total). Lo amarillo conviene compararlo con el archivo." /></h2>
+            <p class="mf-sub m-0 mt-1">Revisá lo que leí y generá el Excel de cada archivo.</p>
+          </div>
+        </div>
+
+        <div class="fx-cuerpo">
+          @if (leyendo() && !actual()) {
+            <div class="fx-cargando" aria-live="polite">
+              <span class="inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-[var(--color-acento)]" aria-hidden="true"></span>
+              Leyendo los archivos…
+            </div>
+          } @else if (actual(); as l) {
+            <div class="fx-res-cab">
+              <span [class]="'op ' + claseTipo(l)">{{ nombreTipo(l) }}</span>
+              <strong class="min-w-0 flex-1 truncate" [title]="l.archivo">{{ l.archivo }}</strong>
+            </div>
+            @if (l.error) {
+              <app-alerta class="mt-4" nivel="error" [mensajes]="[l.error]" />
+            } @else {
+              <ol class="fx-pasos">
+                <li class="fx-paso">
+                  <span class="fx-num" aria-hidden="true">1</span>
+                  <div class="min-w-0">
+                    <h3>Revisá lo que leí</h3>
+                    <p class="mf-sub m-0 mb-2">
+                      Leído {{ l.metodo === 'ocr' ? 'con OCR (de la imagen)' : l.metodo === 'pdf' ? 'del texto del PDF' : 'de la planilla' }}
+                      @if (verificando()) { · <span class="ej-spinner" aria-hidden="true"></span> verificando… }
+                    </p>
+                    <div class="fx-estado">
+                      @if (errores(l)) { <span class="e-error">{{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }}</span> }
+                      @if (avisos(l)) { <span class="e-aviso">{{ avisos(l) }} para mirar</span> }
+                      @if (bien().length) { <span class="e-ok">{{ bien().length }} bien</span> }
+                    </div>
+                    <button type="button" class="fx-link mt-2" (click)="irARevision()">Ver y corregir abajo ↓</button>
+                  </div>
+                </li>
+                <li class="fx-paso">
+                  <span class="fx-num" aria-hidden="true">2</span>
+                  <div class="min-w-0">
+                    <h3>Generá el Excel</h3>
+                    <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()">
+                      @if (generando()) {
+                        <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
+                        Armando…
+                      } @else {
+                        ⬇ {{ errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
+                      }
+                    </button>
+                    @if (errores(l)) { <p class="m-0 mt-2 text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</p> }
+                  </div>
+                </li>
+              </ol>
+            }
+            <div class="fx-pie">
+              <span class="mf-tenue text-sm">{{ lecturas().length }} {{ lecturas().length === 1 ? 'archivo leído' : 'archivos leídos' }}</span>
+              <button type="button" class="fx-link ml-auto" (click)="quitar(indice())" [disabled]="leyendo()">Sacar este archivo</button>
+            </div>
+          } @else {
+            <div class="fx-vacio">
+              <strong>Acá aparece lo que leí</strong>
+              <span class="text-sm">Elegí los archivos en el paso 1: se leen solos.</span>
+            </div>
           }
         </div>
-      }
-    </section>
+      </section>
+    </div>
 
     @if (actual(); as l) {
-      <section class="mf-panel mt-4" aria-labelledby="ax-titulo">
-        @if (l.error) {
-          <app-alerta nivel="error" [mensajes]="[l.error]" />
-        } @else {
+      @if (!l.error) {
+        <section class="mf-panel" id="ax-revision" aria-labelledby="ax-titulo">
           <div class="ax-grilla" [class.sin-vista]="!vista()">
             @if (vista(); as v) {
               <div class="ax-vista" aria-label="El archivo original">
@@ -108,10 +244,7 @@ import {
                 Verificá lo que leí
                 <app-ayuda texto="Lo rojo seguro está mal (por ejemplo un CUIT que no pasa el dígito verificador o importes que no suman el total). Lo amarillo conviene compararlo con el archivo. Si las cuentas dan el valor correcto, aparece «Usar»." />
               </h2>
-              <p class="mf-sub mt-1">
-                {{ l.tipo === 'comprobante' ? 'Comprobante' : 'Tabla' }} · leído {{ l.metodo === 'ocr' ? 'con OCR (de la imagen)' : l.metodo === 'pdf' ? 'del texto del PDF' : 'de la planilla' }}
-                @if (verificando()) { · <span class="ej-spinner" aria-hidden="true"></span> verificando… }
-              </p>
+              <p class="mf-sub mt-1">{{ l.archivo }}</p>
               @if (l.avisos.length) { <app-alerta class="mb-2 block" nivel="aviso" [mensajes]="l.avisos" /> }
 
               <ul class="ax-ver" aria-live="polite">
@@ -195,17 +328,10 @@ import {
                   <div class="ax-texto mt-2">{{ l.texto }}</div>
                 </details>
               }
-
-              <div class="ax-pie">
-                @if (errores(l)) { <span class="text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</span> }
-                <button type="button" class="mf-btn" (click)="generar()" [disabled]="generando() || verificando()">
-                  {{ generando() ? 'Armando…' : errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
-                </button>
-              </div>
             </div>
           </div>
-        }
-      </section>
+        </section>
+      }
     }
   `,
 })
@@ -256,6 +382,51 @@ export class PasarAExcel implements OnDestroy {
 
   protected formatear(v: string | number): string {
     return typeof v === 'number' ? aTexto(v) : v;
+  }
+
+  /** La etiqueta de color de cada archivo (como Ventas / Compras en «Subir a Xubio»). */
+  protected nombreTipo(l: LecturaExcel): string {
+    return l.error ? 'No se leyó' : l.tipo === 'comprobante' ? 'Factura' : 'Tabla';
+  }
+
+  protected claseTipo(l: LecturaExcel): string {
+    return l.error ? 'op-error' : l.tipo === 'comprobante' ? 'op-factura' : 'op-tabla';
+  }
+
+  /** Debajo del nombre: cómo quedó la verificación. */
+  protected resumen(l: LecturaExcel): string {
+    if (l.error) return 'No se pudo leer';
+    const e = this.errores(l);
+    const a = this.avisos(l);
+    if (e) return `${e} ${e === 1 ? 'error' : 'errores'}${a ? ` · ${a} para mirar` : ''}`;
+    if (a) return `${a} para mirar`;
+    return 'Todo verificado';
+  }
+
+  protected irARevision(): void {
+    document.getElementById('ax-revision')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  protected quitar(i: number): void {
+    const l = this.lecturas()[i];
+    if (!l) return;
+    const v = this.vistas()[l.archivo];
+    if (v) {
+      URL.revokeObjectURL(v.url);
+      const { [l.archivo]: _, ...resto } = this.vistas();
+      this.vistas.set(resto);
+    }
+    this.lecturas.update((ls) => ls.filter((_, j) => j !== i));
+    const n = this.lecturas().length;
+    if (this.indice() >= n) this.indice.set(Math.max(0, n - 1));
+  }
+
+  protected limpiar(): void {
+    Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));
+    this.vistas.set({});
+    this.lecturas.set([]);
+    this.indice.set(0);
+    this.error.set(null);
   }
 
   // --- Subir ------------------------------------------------------------------------

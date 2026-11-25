@@ -1,5 +1,5 @@
 /**
- * «Pasar a Excel»: lo que no es pantalla (números, campos, verificaciones).
+ * «Conversor De Facturas»: lo que no es pantalla (números, campos, verificaciones).
  * Las cuentas de verdad (qué está mal y qué sugerir) las hace el backend:
  * backend/app/extraccion/a_excel.py → `verificar`.
  */

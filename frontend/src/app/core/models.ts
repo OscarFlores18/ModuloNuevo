@@ -382,7 +382,7 @@ export function mensajeDeError(e: unknown, porDefecto = 'Algo falló. Probá de 
   return porDefecto;
 }
 
-// --- Pasar a Excel (backend/app/extraccion/a_excel.py) ---------------------------
+// --- Conversor De Facturas (backend/app/extraccion/a_excel.py) ---------------------------
 
 export type NivelVerificacion = 'ok' | 'aviso' | 'error';
 

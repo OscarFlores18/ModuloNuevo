@@ -3244,25 +3244,30 @@ app-root > app-elegir-perfil {
   overflow-y: auto;
 }
 
-/* --- Subir a Xubio: los dos cuadros ocupan todo el alto libre ------------------ */
+/* --- Subir a Xubio y Conversor de facturas: los dos cuadros ocupan todo el alto libre */
 @media (min-width: 1024px) {
-  app-convertir > .fx-grilla {
+  app-convertir > .fx-grilla,
+  app-a-excel > .fx-grilla {
     flex: 1 0 auto;
   }
 
   /* Textos del área vacía un poco más grandes para acompañar el cuadro. */
-  app-convertir .zona:not(.con-archivos) {
+  app-convertir .zona:not(.con-archivos),
+  app-a-excel .zona:not(.con-archivos) {
     gap: 12px;
     font-size: 1.1rem;
   }
 
-  app-convertir .fx-vacio {
+  app-convertir .fx-vacio,
+  app-a-excel .fx-vacio {
     gap: 10px;
     font-size: 1.05rem;
   }
 
   app-convertir .fx-vacio strong,
-  app-convertir .fx-vacio .font-semibold {
+  app-convertir .fx-vacio .font-semibold,
+  app-a-excel .fx-vacio strong,
+  app-a-excel .fx-vacio .font-semibold {
     font-size: 1.2rem;
   }
 }

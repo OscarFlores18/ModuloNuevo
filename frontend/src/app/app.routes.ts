@@ -35,7 +35,7 @@ export const routes: Routes = [
   },
   {
     path: 'pasar-a-excel',
-    title: 'Pasar a Excel · Control de Facturas',
+    title: 'Conversor De Facturas · Control de Facturas',
     loadComponent: () => import('./features/a-excel/a-excel').then((m) => m.PasarAExcel),
   },
   // Directo a la pantalla de inicio: un redirect a '' no vuelve a evaluar la ruta '' y quedaba en blanco.
