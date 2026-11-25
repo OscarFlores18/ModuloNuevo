@@ -25,6 +25,7 @@ import {
   faltanteDesdeExcel,
   faltantesParaCargar,
   filasDelExcel,
+  destildarLiquidaciones,
   mostrarVentanaDeErrores,
   registroDeHallazgos,
 } from './ventana-errores';
@@ -360,6 +361,7 @@ export class EjecucionPantalla {
       this.toast.error('No se encontró el AUX de este control.', `${c.nombre} · ${a.operacion}: usá «Subir a Xubio» con el archivo.`);
       return;
     }
+    destildarLiquidaciones([a], e.id);
     const filas = this.faltantesDe(a);
     const partidas = filas.filter((f) => this.incluida(a, f));
     if (!partidas.length) {
@@ -728,6 +730,13 @@ export class EjecucionPantalla {
     effect(() => {
       const id = this.ej()?.id;
       untracked(() => this.hechas.set(id ? leerHechas(id) : new Set()));
+    });
+
+    // Las liquidaciones bancarias (ya están en Xubio en el extracto) arrancan destildadas.
+    effect(() => {
+      const e = this.ej();
+      const advertencias = e?.advertencias;
+      if (e && advertencias?.length) untracked(() => destildarLiquidaciones(advertencias, e.id));
     });
   }
 

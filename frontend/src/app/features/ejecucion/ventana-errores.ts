@@ -1,7 +1,7 @@
 import Swal from 'sweetalert2';
 import { formatearCuit } from '../../core/cuit.pipe';
 import { ResumenOperacion, Advertencia, CambioElegido, CampoCambio, CeldaVista, ComprobanteLetraDistinta, FilaConError, FilaFaltanteExcel } from '../../core/models';
-import { claveCambio, claveFila, elegirParaAplicar, estaIncluida, incluir, paraAplicar } from './seleccion';
+import { claveCambio, claveFila, destildarPorDefecto, elegirParaAplicar, estaIncluida, incluir, paraAplicar } from './seleccion';
 import { aCorregir, cantidadComprobantes, ordenDe } from './tareas';
 
 /**
@@ -237,7 +237,6 @@ function notasDe(errores: readonly Advertencia[], cliente: string, operacion: st
   for (const e of errores) {
     if (e.cliente !== cliente || e.operacion !== operacion) continue;
     if (e.tipo === faltante) {
-      if (lado === 'arca') continue;
       for (const f of e.comprobantes as FilaConError[]) {
         const nota = f.motivo && NOTA_MOTIVO[f.motivo];
         if (nota) anotar(f.fila, nota);
@@ -382,7 +381,32 @@ function claveDe(e: Advertencia, bloque: string, datos: FilaVista['datos']): str
 const NOTA_MOTIVO: Partial<Record<NonNullable<FilaConError['motivo']>, NonNullable<FilaVista['nota']>>> = {
   exterior: { texto: 'Del exterior', tono: 'neutro' },
   tique: { texto: 'Tique / extracto', tono: 'neutro' },
+  liquidacion: { texto: 'Liquidación bancaria (en el extracto)', tono: 'neutro' },
 };
+
+/** Por qué una liquidación bancaria no se sube (el aviso del bloque y al tildarla). */
+const POR_QUE_LIQUIDACION = 'ya está cargada en Xubio dentro del extracto del banco; si la subís, queda repetida';
+
+function esLiquidacion(g: Grupo): boolean {
+  return g.filas[0]?.nota?.texto === NOTA_MOTIVO.liquidacion?.texto;
+}
+
+/**
+ * Las liquidaciones bancarias de ARCA que en Xubio están dentro del extracto: van
+ * destildadas para no subirlas dos veces (una sola vez; después manda el tilde).
+ */
+export function destildarLiquidaciones(errores: readonly Advertencia[], ejecucionId: string | undefined): void {
+  for (const e of errores) {
+    if (e.tipo !== 'faltante_en_xubio' || !e.operacion) continue;
+    const claves = (e.comprobantes as FilaConError[])
+      .filter((f) => f.motivo === 'liquidacion' && 'fila' in f)
+      .map((f) => {
+        const d = normalizar(f.fila);
+        return claveFila(d['CUIT'], d['Comprobante']);
+      });
+    if (claves.length) destildarPorDefecto(ejecucionId, e.cliente, e.operacion, claves);
+  }
+}
 
 /**
  * Grilla de ancho fijo (sin scroll horizontal). Cada grupo es un `<tbody>`: los
@@ -478,7 +502,7 @@ function grilla(grupos: Grupo[], marcado?: Marcado): string {
         if (conSubir) {
           if (!g.subir) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
           const { op, fila, incluida } = g.subir;
-          return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-incluir data-op="${esc(op)}" data-fila="${esc(fila)}" aria-label="Subir a Xubio"${incluida ? ' checked' : ''}${bloqueo}></td>`;
+          return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-incluir data-op="${esc(op)}" data-fila="${esc(fila)}"${esLiquidacion(g) ? ' data-liquidacion' : ''} aria-label="Subir a Xubio"${incluida ? ' checked' : ''}${bloqueo}></td>`;
         }
         if (!g.clave) return `<td class="hecho" rowspan="${g.filas.length}"></td>`;
         return `<td class="hecho" rowspan="${g.filas.length}"><input type="checkbox" data-hecho="${esc(g.clave)}" aria-label="Cargado / resuelto"${hecha ? ' checked' : ''}${bloqueo}></td>`;
@@ -1280,17 +1304,27 @@ function bloqueSubir(
   }
   const tildadas = grupos.filter((g) => g.subir?.incluida).length;
   const meta = `<span class="ve-meta" data-cuenta>${tildadas} de ${grupos.length} para subir</span>${ops.length === 1 ? `<span class="ve-meta">${ops[0]}</span>` : ''}`;
+  // Liquidaciones bancarias: se avisa por qué no van (y por eso vienen destildadas).
+  const liquidaciones = grupos.filter(esLiquidacion);
+  const bancos = [...new Set(liquidaciones.map((g) => texto(g.filas[0].datos['Razón social']).trim()).filter(Boolean))];
+  const todasLiq = liquidaciones.length > 0 && liquidaciones.length === grupos.length;
+  const queHacer = todasLiq
+    ? `No hay que subir nada: ${liquidaciones.length === 1 ? 'es una liquidación bancaria' : `son ${liquidaciones.length} liquidaciones bancarias`} que ya ${liquidaciones.length === 1 ? 'está cargada' : 'están cargadas'} en Xubio dentro del extracto del banco.`
+    : 'Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).';
+  const avisoLiq = liquidaciones.length
+    ? `<div class="ve-aviso-liq" role="note"><strong>⚠ No subas a Xubio ${liquidaciones.length === 1 ? 'la liquidación bancaria' : `las ${liquidaciones.length} liquidaciones bancarias`}${bancos.length ? ` (${esc(bancos.join(', '))})` : ''}.</strong> ${liquidaciones.length === 1 ? 'Ya está cargada' : 'Ya están cargadas'} en Xubio dentro del extracto del banco: el control encontró ese extracto con la misma CUIT. Si ${liquidaciones.length === 1 ? 'la subís, queda repetida' : 'las subís, quedan repetidas'}. Por eso ${liquidaciones.length === 1 ? 'viene destildada' : 'vienen destildadas'}.</div>`
+    : '';
   return `
     <details class="ve-error ve-subir ve-bloque ve-prioridad" data-bloque="subir" open>
       <summary tabindex="-1">
         <span class="ve-insignias"><span class="ve-insignia">Subir a Xubio</span></span>
         <span class="ve-cab">
           <span class="ve-titulo">Partidas de ARCA no encontradas en el ${esc(libroDe(ops))}${cantidadTexto(n)}</span>
-          <span class="ve-que-hacer">Cargá estos comprobantes en Xubio. Destildá los que no van (una factura y su NC del mismo período, gastos no computables…).</span>
+          <span class="ve-que-hacer">${queHacer}</span>
         </span>
         <span class="ve-derecha ve-derecha-subir"><span class="ve-metas">${meta}</span>${botones.length ? `<span class="ve-acciones ve-acciones-subir">${botones.join('')}</span>` : ''}</span>
       </summary>
-      <div class="ve-cuerpo">${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
+      <div class="ve-cuerpo">${avisoLiq}${grilla(grupos, marcado)}${notaMas(grupos.length, n, hoja)}</div>
     </details>`;
 }
 
@@ -1624,6 +1658,7 @@ const ESTILOS = `
     .ve-vacio { margin: 0; padding: 12px 14px; border-radius: 10px; background: #fff; color: #475569; }
     .ve-resumen-info { margin: 0 0 10px; color: #334155; font-weight: 600; }
 
+    .ve-aviso-liq { margin: 0 0 12px; padding: 10px 14px; border-radius: 8px; border: 1px solid #fcd34d; background: #fffbeb; color: #78350f; font-size: 14px; line-height: 1.5; }
     .ve-detalle { margin: 0 0 12px; color: #475569; font-size: 14.5px; line-height: 1.55; }
     .ve-mas { margin: 8px 0 0; font-size: 13px; color: #64748b; }
 
@@ -1880,6 +1915,7 @@ export function mostrarVentanaDeErrores(
   mailsArmados.clear();
   adjuntos.clear();
   const hechas = leerHechas(ejecucionId);
+  destildarLiquidaciones(errores, ejecucionId);
   const graves = contarErrores(errores).grave;
   const ordenados = ordenarHallazgos(errores);
   const porCliente = new Map<string, Advertencia[]>();
@@ -2129,6 +2165,9 @@ export function mostrarVentanaDeErrores(
           if (!canEdit) return;
           tildar(caja);
           sincronizar(grupoDe(caja));
+          if (caja.checked && caja.hasAttribute('data-liquidacion')) {
+            avisoMail(`Ojo: es una liquidación bancaria, ${POR_QUE_LIQUIDACION}.`, 'error');
+          }
         });
       }
       for (const todas of popup.querySelectorAll<HTMLInputElement>('input[data-incluir-todas]')) {
@@ -2139,6 +2178,10 @@ export function mostrarVentanaDeErrores(
             tildar(caja);
           }
           sincronizar(grupoDe(todas));
+          const liq = todas.closest('table')?.querySelectorAll('input[data-liquidacion]').length ?? 0;
+          if (todas.checked && liq) {
+            avisoMail(`Ojo: tildaste ${liq === 1 ? 'una liquidación bancaria' : `${liq} liquidaciones bancarias`}: ${POR_QUE_LIQUIDACION}.`, 'error');
+          }
         });
       }
       // «Aplicar cambios»: tildar solo elige; el cambio lo hace el servidor al tocar el botón.
