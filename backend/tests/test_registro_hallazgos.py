@@ -60,6 +60,9 @@ def test_como_en_la_ventana_y_sin_estilos(entorno):
     assert color(ws.cell(cabecera + 1, 1)) == "F1F5F9"
     assert color(ws.cell(cabecera + 2, 7)) == "FEF3C7"  # diferencia
     assert color(ws.cell(cabecera + 2, 8)) == "DCFCE7"  # en Xubio con el mismo total
+    # Títulos en negrita: «Hallazgo N», insignia y título, «Qué hacer» y el encabezado de la tabla.
+    assert ws.cell(fila_numero + 1, 1).font.bold and ws.cell(fila_numero + 2, 2).font.bold
+    assert ws.cell(cabecera + 1, 1).font.bold and not ws.cell(cabecera + 2, 1).font.bold
 
 
 def test_sin_bloques_es_422(entorno):

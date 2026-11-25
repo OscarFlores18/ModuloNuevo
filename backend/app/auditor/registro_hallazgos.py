@@ -24,17 +24,24 @@ INSIGNIA = {"a revisar": AMARILLO, "error": ROJO, "grave": ROJO, "info": CELESTE
 
 def excel_hallazgos(bloques: list[dict], periodo: str = "") -> bytes:
     from openpyxl import Workbook
-    from openpyxl.styles import PatternFill
+    from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     def pintar(fila: int, color: str, desde: int = 1, hasta: int = 1) -> None:
         for col in range(desde, hasta + 1):
             ws.cell(fila, col).fill = PatternFill("solid", fgColor=color)
 
+    def negrita(fila: int, hasta: int | None = None, tamano: int | None = None) -> None:
+        for col in range(1, (hasta or ws.max_column) + 1):
+            c = ws.cell(fila, col)
+            if c.value not in (None, ""):
+                c.font = Font(bold=True, size=tamano) if tamano else Font(bold=True)
+
     wb = Workbook()
     ws = wb.active
     ws.title = "Hallazgos"
     ws.append([f"Hallazgos del control{f' · Período {periodo}' if periodo else ''}"])
+    negrita(1, 1, 14)
     ws.append([f"Descargado el {datetime.now():%d/%m/%Y %H:%M}"])
     anchos: dict[int, int] = {}
 
@@ -53,6 +60,7 @@ def excel_hallazgos(bloques: list[dict], periodo: str = "") -> bytes:
             ws.append([])
             ws.append([])
             ws.append([cliente_actual])
+            negrita(ws.max_row, 1, 13)
         # Separados: dos renglones vacíos y «Hallazgo N» arriba de cada uno.
         ws.append([])
         ws.append([])
@@ -60,21 +68,25 @@ def excel_hallazgos(bloques: list[dict], periodo: str = "") -> bytes:
         ancho = max(len(columnas), 3)
         ws.append([f"Hallazgo {numero}"])
         pintar(ws.max_row, AZUL, 1, ancho)
+        negrita(ws.max_row, 1)
         cabeza = [b.get("insignia") or "", b.get("titulo") or ""]
         if b.get("operacion"):
             cabeza.append(b["operacion"])
         ws.append(cabeza)
+        negrita(ws.max_row, 2)  # la insignia y el título
         color = INSIGNIA.get(str(b.get("insignia") or "").lower())
         if color:
             pintar(ws.max_row, color)
         if b.get("que_hacer"):
             ws.append(["Qué hacer", b["que_hacer"]])
             pintar(ws.max_row, AMARILLO, 1, ancho)
+            negrita(ws.max_row, 1)
         if b.get("detalle"):
             ws.append(["", b["detalle"]])
         if columnas:
             ws.append(columnas)
             pintar(ws.max_row, GRIS, 1, len(columnas))
+            negrita(ws.max_row, len(columnas))
             medir(columnas)
             i_dif = columnas.index("Diferencia") + 1 if "Diferencia" in columnas else None
             i_xubio = columnas.index("En Xubio") + 1 if "En Xubio" in columnas else None

@@ -217,8 +217,8 @@ def test_columnas_de_arca_que_no_suman_el_total():
     # Las columnas tal cual la planilla de ARCA, sin una «suma» armada aparte.
     assert "Suma columnas" not in fila
     assert fila["Neto Gravado Total"] == 74406.81 and fila["Total IVA"] == 15625.43
-    # Las que están vacías en todos (no gravado, exento, otros tributos) no van.
-    assert "Neto No Gravado" not in fila and "Op. Exentas" not in fila and "Otros Tributos" not in fila
+    # El no gravado, el exento y los otros tributos van siempre, aunque estén vacíos.
+    assert "Neto No Gravado" in fila and "Op. Exentas" in fila and "Otros Tributos" in fila
 
     # Con las columnas por alícuota de «Mis Comprobantes»: el neto y el IVA de
     # cada una que se use («Neto gravado 21%», «IVA 21%»), no las totales.
@@ -233,7 +233,7 @@ def test_columnas_de_arca_que_no_suman_el_total():
     assert "Neto gravado 21%" in columnas and "IVA 21%" in columnas
     assert "Neto gravado 10.5%" not in columnas  # no la usa ninguno
     assert "Neto Gravado Total" not in columnas and "Total IVA" not in columnas
-    assert "Neto No Gravado" not in columnas and "Otros Tributos" not in columnas
+    assert columnas.index("IVA 21%") < columnas.index("Neto No Gravado") < columnas.index("Otros Tributos")
 
     # Si alguno trae otros tributos, la columna aparece (después de las alícuotas).
     por_alicuota.loc[0, "Otros Tributos"] = 500.0
@@ -241,7 +241,7 @@ def test_columnas_de_arca_que_no_suman_el_total():
         "Compras", por_alicuota, xubio, vacio, vacio, [], "Nro. Doc. Emisor", "Denominación Emisor", "Fecha", "Imp. Total",
     )}["total_no_cierra"]
     columnas = [c["columna"] for c in e3["comprobantes"][0]["fila"]]
-    assert columnas.index("IVA 21%") < columnas.index("Otros Tributos") and "Op. Exentas" not in columnas
+    assert columnas.index("IVA 21%") < columnas.index("Otros Tributos") and "Op. Exentas" in columnas
     assert fila["Diferencia"] == 17979.75
     assert fila["Total Xubio"] == 90032.24  # en Xubio quedó sin la diferencia
 
