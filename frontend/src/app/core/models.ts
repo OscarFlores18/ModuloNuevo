@@ -407,6 +407,11 @@ export interface Verificacion {
   mensaje: string;
   /** El valor que dan las cuentas (se ofrece «Usar»). */
   sugerencia: string | number | null;
+  /** Corto, para la tarjeta; el mensaje queda en «¿Por qué?». */
+  titulo?: string;
+  datos?: string[];
+  /** Lo que dio cada lectura, para elegir con un clic. */
+  opciones?: string[];
 }
 
 /** Lo leído de un archivo: un comprobante (encabezado, ítems, totales) o una tabla (hojas). */

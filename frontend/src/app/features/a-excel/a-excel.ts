@@ -8,6 +8,7 @@ import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
 import { Extras, Factura } from './factura';
 import { VistaArchivo } from './vista-archivo';
+import { Verificaciones } from './verificaciones';
 import { ToastService } from '../../core/ui/toast';
 import {
   ACEPTA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
@@ -29,7 +30,7 @@ import {
  */
 @Component({
   selector: 'app-a-excel',
-  imports: [Encabezado, Alerta, Ayuda, Factura, VistaArchivo],
+  imports: [Encabezado, Alerta, Ayuda, Factura, VistaArchivo, Verificaciones],
   styles: `
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
@@ -66,12 +67,6 @@ import {
     .ax-grilla { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
     .ax-grilla.sin-vista { grid-template-columns: minmax(0, 1fr); }
     @media (max-width: 900px) { .ax-grilla { grid-template-columns: minmax(0, 1fr); } }
-    .ax-ver { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-    .ax-ver li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; font-size: .84rem; line-height: 1.35; }
-    .ax-ver li.error { background: #fef2f2; color: #991b1b; }
-    .ax-ver li.aviso { background: #fffbeb; color: #92400e; }
-    .ax-ver li.ok { background: #f0fdf4; color: #166534; }
-    .ax-ver li p { margin: 0; flex: 1; }
     .ax-sub { margin: 16px 0 6px; font-size: .8rem; font-weight: 800; color: var(--color-tenue); text-transform: uppercase; letter-spacing: .03em; }
     .ax-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 12px; }
     .ax-campos label { display: flex; flex-direction: column; gap: 2px; font-size: .74rem; font-weight: 700; color: #64748b; }
@@ -342,19 +337,7 @@ import {
               <p class="mf-sub mt-1">{{ l.archivo }}</p>
               @if (l.avisos.length) { <app-alerta class="mb-2 block" nivel="aviso" [mensajes]="l.avisos" /> }
 
-              <ul class="ax-ver" aria-live="polite">
-                @for (v of aMirar(); track $index) {
-                  <li [class]="v.nivel">
-                    <p>{{ v.mensaje }}</p>
-                    @if (v.sugerencia !== null && v.sugerencia !== undefined) {
-                      <button type="button" class="mf-btn mf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
-                    }
-                  </li>
-                }
-                @if (bien().length) {
-                  <li class="ok"><p>{{ bien().length }} {{ bien().length === 1 ? 'cosa verificada' : 'cosas verificadas' }} bien: {{ resumenBien() }}</p></li>
-                }
-              </ul>
+              <app-verificaciones [lista]="verificaciones()" (usar)="usar($event)" (elegir)="elegirLectura($event[0], $event[1])" />
 
               @if (l.tipo === 'comprobante') {
                 <app-factura
@@ -542,10 +525,6 @@ export class PasarAExcel implements OnDestroy {
     Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));
   }
 
-  protected resumenBien(): string {
-    return this.bien().map((v) => v.mensaje.replace(/\.$/, '')).join(' · ');
-  }
-
   protected nivel(campo: string): string {
     return nivelDe(this.actual()?.verificaciones ?? [], campo) ?? '';
   }
@@ -684,6 +663,12 @@ export class PasarAExcel implements OnDestroy {
   protected cambiarEncabezado(campo: string, valor: string): void {
     const l = this.actual();
     if (l) this.reemplazar(sinDuda({ ...l, encabezado: { ...l.encabezado, [campo]: valor.trim() } }, campo));
+  }
+
+  /** Entre lo que dieron las lecturas, el valor que eligió el usuario. */
+  protected elegirLectura(campo: string, valor: string): void {
+    if (CAMPOS_TOTALES.some((c) => c.id === campo)) this.cambiarTotal(campo, valor);
+    else this.cambiarEncabezado(campo, valor);
   }
 
   protected cambiarTotal(campo: string, valor: string): void {

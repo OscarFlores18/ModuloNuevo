@@ -31,6 +31,19 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     .fa-sesion b { color: #0f172a; }
     .fa-op { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 800; background: #e0f2fe; color: #075985; }
     .fa-op.venta { background: #dcfce7; color: #166534; }
+    .fa-flujo { display: grid; grid-template-columns: auto minmax(0, 1fr) 70px minmax(0, 1fr); align-items: center; gap: 10px; margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; background: #f0f9ff; border: 1px solid #bae6fd; }
+    .fa-flujo.venta { background: #f0fdf4; border-color: #bbf7d0; }
+    .fa-flujo .ico { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; font-size: 1.3rem; background: #0284c7; color: #fff; }
+    .fa-flujo.venta .ico { background: #16a34a; }
+    .fa-flujo .tipo { display: block; font-size: .7rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #0369a1; }
+    .fa-flujo.venta .tipo { color: #15803d; }
+    .fa-parte { min-width: 0; padding: 6px 10px; border-radius: 8px; background: #fff; border: 1px solid #e2e8f0; }
+    .fa-parte small { display: block; font-size: .68rem; color: #64748b; text-transform: uppercase; letter-spacing: .04em; }
+    .fa-parte b { display: block; font-size: .85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fa-parte.tuya { border-color: #7dd3fc; }
+    .fa-flecha { text-align: center; font-size: .68rem; color: #64748b; line-height: 1.1; }
+    .fa-flecha span { display: block; font-size: 1.4rem; color: #94a3b8; }
+    @media (max-width: 640px) { .fa-flujo { grid-template-columns: auto minmax(0, 1fr); } .fa-flecha { display: none; } }
     .fa-lector { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 800; background: #f1f5f9; color: #475569; }
     .fa-lector.ia { background: #f3e8ff; color: #6b21a8; }
 
@@ -101,12 +114,29 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
         <button type="button" [attr.aria-pressed]="modo() === 'arca'" (click)="modo.set('arca')">Como en ARCA</button>
       </div>
       <span class="fa-lector" [class.ia]="l.metodo === 'ia'" [title]="l.metodo === 'ia' ? 'Leída con Gemini: compará con la imagen igual' : ''">{{ lector() }}</span>
-      <span class="fa-op" [class.venta]="operacion() === 'Ventas'">{{ operacion() === 'Ventas' ? 'Factura de venta' : 'Factura de compra' }}</span>
+      <span class="fa-op" [class.venta]="operacion() === 'Ventas'">{{ operacion() === 'Ventas' ? '↗ Venta' : '↘ Compra' }}</span>
       <span class="fa-sesion">
         @if (sesion()) { Estudio en Xubio: <b>{{ sesion() }}</b> } @else { Sin sesión de Xubio guardada }
         @if (f) { · Empresa: <b>{{ f.empresa }}</b> }
       </span>
     </div>
+
+    @if (f) {
+      @let venta = f.operacion === 'Ventas';
+      <div class="fa-flujo" [class.venta]="venta" role="img"
+        [attr.aria-label]="venta ? f.empresa + ' le vende a ' + (f.contraparte.nombre || 'un cliente') : f.empresa + ' le compra a ' + (f.contraparte.nombre || 'un proveedor')">
+        <span class="ico" aria-hidden="true">{{ venta ? '↗' : '↘' }}</span>
+        <div class="fa-parte" [class.tuya]="venta">
+          <small>{{ venta ? 'Vende (tu cliente)' : 'Proveedor' }}</small>
+          <b>{{ venta ? f.empresa : (f.contraparte.nombre || 'Sin nombre') }}</b>
+        </div>
+        <div class="fa-flecha"><span class="tipo">{{ venta ? 'Venta' : 'Compra' }}</span><span>⟶</span>factura</div>
+        <div class="fa-parte" [class.tuya]="!venta">
+          <small>{{ venta ? 'Cliente' : 'Compra (tu cliente)' }}</small>
+          <b>{{ venta ? (f.contraparte.nombre || 'Sin nombre') : f.empresa }}</b>
+        </div>
+      </div>
+    }
 
     @if (modo() === 'xubio') {
       <div class="xb">
