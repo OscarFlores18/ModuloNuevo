@@ -113,7 +113,10 @@ def test_impuestos_internos_y_percepcion_iibb():
     lectura = Lectura(tipo="comprobante", encabezado={"fecha": "01/10/2026"}, totales=t, items=[
         Item(descripcion="Gaseosa", cantidad=1, precio=1000, alicuota=21, importe=1000, impuestos_internos=50)])
     assert any(v.campo == "total" and v.nivel == "ok" for v in verificar(lectura))
-    wb = load_workbook(io.BytesIO(excel_importacion(lectura, "Compras")))
+    # Compras: como filas del modelo de Xubio. Ventas: en la hoja aparte.
+    filas = list(load_workbook(io.BytesIO(excel_importacion(lectura, "Compras")))["Hoja1"].iter_rows(values_only=True))
+    assert [(f[10], f[15]) for f in filas[3:]] == [("Impuestos Internos", 50), ("Percepción IIBB Buenos Aires", 30)]
+    wb = load_workbook(io.BytesIO(excel_importacion(lectura, "Ventas")))
     filas = list(wb["Impuestos y percepciones"].iter_rows(values_only=True))
     assert filas[1:] == [("Impuestos internos", 1, "Gaseosa", 50), ("Percepción IIBB Bs. As.", None, None, 30)]
 
@@ -189,25 +192,30 @@ def test_refrigerio_agrupa_la_factura_de_referencia():
 
     from openpyxl import load_workbook
 
-    from backend.app.extraccion.a_excel import Extras, excel_importacion, verificar
+    from backend.app.extraccion.a_excel import COLUMNAS_COMPRAS, Extras, excel_importacion, verificar
 
     l = _factura_referencia()
     assert round(sum(i.importe for i in l.items), 2) == 83974.75
     wb = load_workbook(io.BytesIO(excel_importacion(l, "Compras", Extras(agrupar="Refrigerio"))))
-    filas = list(wb["Sheet0"].iter_rows(values_only=True))
-    assert filas[0][1] == "PROVEEDOR" and filas[0][12] == "PRODUCTOOBSERVACION"
-    assert filas[1][1] == "FOC FUELS MARKETING SA" and filas[1][3] == "A-00103-00000524" and filas[1][2] == 1
-    # Una sola fila de detalle (todo al 21 %): Refrigerio, cantidad 1, el neto y la alícuota.
-    assert len(filas) == 3
-    prod, _, obs, cant, precio, _, importe, iva = filas[2][10:18]
-    assert (prod, cant, precio, importe, iva) == ("Refrigerio", 1, 83974.75, 83974.75, 21)
-    for d in ("1x AGUA MINERAL SMART WATER 591ML", "2x DOBLE OKLAHOMA FRIED ONION", "1x COLESLAW DE REMOLACHA", "1x ENTRAÑA"):
-        assert d in obs
-    assert obs.count("x ") == 8
-    # Impuestos internos y percepción, sin tocar y sin contarlos dos veces.
-    imp = list(wb["Impuestos y percepciones"].iter_rows(values_only=True))[1:]
-    assert [(c, v) for c, _, _, v in imp] == [("Impuestos internos", 90.54), ("Percepción IIBB Bs. As.", 6717.98)]
-    # El total cierra y el IVA que calcula Xubio difiere en un centavo: se avisa.
+    assert wb.sheetnames == ["Hoja1"]
+    filas = [dict(zip(COLUMNAS_COMPRAS, f)) for f in wb["Hoja1"].iter_rows(values_only=True)]
+    # Las columnas, tal cual el modelo de compras de Xubio.
+    assert list(filas[0]) == list(filas[0].values()) == COLUMNAS_COMPRAS
+    cab = filas[1]
+    assert (cab["PROVEEDOR"], cab["TIPO"], cab["NUMERO"], cab["MONEDA"]) == ("FOC FUELS MARKETING SA", 1, "A-00103-00000524", "pesos argentinos")
+    assert cab["FECHA"].strftime("%d/%m/%Y") == cab["FECHAFISCAL"].strftime("%d/%m/%Y") == "25/10/2026"
+    assert all(f["NUMERODECONTROL"] == 1 for f in filas[1:])
+    # Una sola fila de detalle (todo al 21 %) y una por impuesto, sin tocar los importes.
+    assert len(filas) == 5
+    d = filas[2]
+    assert (d["PRODUCTOSERVICIOPERCEPCION"], d["CANTIDAD"], d["PRECIO"], d["IMPORTE"], d["IVA"]) == ("Refrigerio", 1, 83974.75, 83974.75, 21)
+    for x in ("1x AGUA MINERAL SMART WATER 591ML", "2x DOBLE OKLAHOMA FRIED ONION", "1x COLESLAW DE REMOLACHA", "1x ENTRAÑA"):
+        assert x in d["PRODUCTOOBSERVACION"]
+    assert d["PRODUCTOOBSERVACION"].count("x ") == 8
+    assert [(f["PRODUCTOSERVICIOPERCEPCION"], f["CANTIDAD"], f["IMPORTE"]) for f in filas[3:]] == [
+        ("Impuestos Internos", 1, 90.54), ("Percepción IIBB Buenos Aires", 1, 6717.98)]
+    # Neto + IVA + impuestos = total; el IVA que calcula Xubio difiere en un centavo: se avisa.
+    assert round(83974.75 + 17634.71 + 90.54 + 6717.98, 2) == l.totales["total"]
     v = verificar(l)
     assert not [x for x in v if x.nivel == "error"], [x.titulo for x in v if x.nivel == "error"]
     red = [x for x in v if x.titulo == "Redondeo de IVA"]
@@ -215,9 +223,10 @@ def test_refrigerio_agrupa_la_factura_de_referencia():
 
 
 def test_sin_agrupar_sigue_una_fila_por_item():
-    from backend.app.extraccion.a_excel import filas_importacion
+    from backend.app.extraccion.a_excel import filas_compras
 
-    assert len(filas_importacion(_factura_referencia(), "Compras")) == 9
+    # Cabecera + 8 ítems + impuestos internos + percepción.
+    assert len(filas_compras(_factura_referencia())) == 11
 
 
 def test_emisor_con_simbolo_se_autocorrige():

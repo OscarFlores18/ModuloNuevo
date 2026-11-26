@@ -1291,12 +1291,62 @@ class Extras(BaseModel):
 
 
 # El modelo de Xubio «Importar comprobantes» (modelo-importacion-ventas): una fila con
-# la cabecera y una por ítem, unidas por NUMERODECONTROL. En compras va el proveedor.
+# la cabecera y una por ítem, unidas por NUMERODECONTROL.
 COLUMNAS_IMPORTACION = [
     "NUMERODECONTROL", "CLIENTE", "TIPO", "NUMERO", "FECHA", "VENCIMIENTODELCOBRO",
     "COMPROBANTEASOCIADO", "MONEDA", "COTIZACION", "OBSERVACIONES", "PRODUCTOSERVICIO",
     "CENTRODECOSTO", "PRODUCTOOBSERVACION", "CANTIDAD", "PRECIO", "DESCUENTO", "IMPORTE", "IVA",
 ]
+
+
+# El modelo de Xubio para compras (ej-importacion-compras.xls, hoja «Hoja1»): sin
+# descuento ni comprobante asociado, con fecha fiscal y exento/no gravado; los impuestos
+# internos y las percepciones van como filas más, con su nombre en PRODUCTOSERVICIOPERCEPCION.
+COLUMNAS_COMPRAS = [
+    "NUMERODECONTROL", "PROVEEDOR", "TIPO", "NUMERO", "FECHA", "VENCIMIENTODELPAGO", "MONEDA",
+    "COTIZACION", "FECHAFISCAL", "OBSERVACIONES", "PRODUCTOSERVICIOPERCEPCION", "CENTRODECOSTO",
+    "PRODUCTOOBSERVACION", "CANTIDAD", "PRECIO", "IMPORTE", "IVA", "EXENOGRAV",
+]
+# Nombre de cada impuesto en Xubio. «Impuestos Internos» es el del modelo; los otros
+# tienen que coincidir con los que tiene el estudio en Xubio.
+TRIBUTOS_COMPRAS = (
+    ("impuestos_internos", "Impuestos Internos"),
+    ("percepcion_iibb", "Percepción IIBB Buenos Aires"),
+    ("otros_tributos", "Otros Tributos"),
+)
+
+
+def filas_compras(lectura: Lectura, extras: Extras | None = None) -> list[list]:
+    """Cabecera, detalle (o el detalle agrupado) y una fila por cada impuesto o percepción."""
+    extras = extras or Extras()
+    e, t = lectura.encabezado, lectura.totales
+    fecha = _fecha_xubio(e.get("fecha", ""))
+    vence = _fecha_xubio(extras.vencimiento) if extras.vencimiento else fecha
+    filas = [[1, e.get("emisor", ""), _tipo_xubio(e.get("tipo", "")), _numero_xubio(lectura), fecha, vence,
+              "pesos argentinos", "", fecha, Path(lectura.archivo).stem[:200]] + [None] * 8]
+    detalle = []  # (producto, centro, observación, cantidad, precio, importe, alícuota)
+    if extras.agrupar.strip() and lectura.items:
+        centro = next((c for c in extras.centros if c), None)
+        detalle = [(extras.agrupar.strip(), centro, obs, 1, suma, suma, a) for a, suma, obs in agrupar_items(lectura.items)]
+    elif lectura.items:
+        for n, it in enumerate(lectura.items):
+            def de(lista, defecto=None):
+                return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
+            detalle.append((de(extras.productos, it.producto or it.codigo or it.descripcion[:60]), de(extras.centros),
+                            it.descripcion or None, it.cantidad, it.precio, it.importe, it.alicuota))
+    elif t.get("neto_gravado"):
+        neto = t["neto_gravado"]
+        detalle = [(extras.agrupar.strip() or "Según factura", None, None, 1, neto, neto, _alicuota_de(neto, t.get("iva") or 0.0))]
+    # Lo exento y no gravado va en la primera fila del detalle.
+    exento = round((t.get("no_gravado") or 0) + (t.get("exento") or 0), 2) or None
+    for n, (prod, centro, obs, cant, precio, importe, alicuota) in enumerate(detalle):
+        filas.append([1] + [None] * 9 + [prod, centro, obs, cant, precio, importe, alicuota, exento if n == 0 else None])
+    internos_items = round(sum(i.impuestos_internos or 0 for i in lectura.items), 2)
+    for campo, nombre in TRIBUTOS_COMPRAS:
+        valor = t.get(campo) or (internos_items if campo == "impuestos_internos" else None)
+        if valor:
+            filas.append([1] + [None] * 9 + [nombre, None, None, 1, None, valor, None, None])
+    return filas
 
 
 def _tipo_xubio(tipo: str) -> int | str:
@@ -1402,22 +1452,23 @@ def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Sheet0"
-    encabezado = list(COLUMNAS_IMPORTACION)
-    if operacion == "Compras":
-        encabezado[1], encabezado[5] = "PROVEEDOR", "VENCIMIENTODELPAGO"
-    ws.append(encabezado)
-    for fila in filas_importacion(lectura, operacion, extras):
+    compras = operacion == "Compras"
+    ws.title = "Hoja1" if compras else "Sheet0"
+    encabezado = COLUMNAS_COMPRAS if compras else COLUMNAS_IMPORTACION
+    ws.append(list(encabezado))
+    for fila in filas_compras(lectura, extras) if compras else filas_importacion(lectura, operacion, extras):
         ws.append(fila)
-    for letra in "EF":
+    for letra in "EFI" if compras else "EF":
         for celda in ws[letra][1:]:
             celda.number_format = "dd/mm/yyyy"
-    for letra in "OPQ":
+    for letra in "OPR" if compras else "OPQ":
         for celda in ws[letra][1:]:
             celda.number_format = "#,##0.00"
     for i, c in enumerate(encabezado):
         ws.column_dimensions[chr(65 + i)].width = max(12, len(c) + 2)
-    _hoja_impuestos(wb, lectura)
+    # En compras los impuestos ya van en la hoja; en ventas el modelo no los trae.
+    if not compras:
+        _hoja_impuestos(wb, lectura)
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
