@@ -153,3 +153,13 @@ def test_corrige_el_importe_de_un_item_mal_leido():
     assert (items[1].importe, items[1].importe_leido) == (2937.79, 2937.73)
     # Si ya suma, no se toca nada.
     assert corregir_importes_items(items, {"neto_gravado": 83974.75}) == 0
+
+
+def test_importe_corregido_es_una_pregunta_obligatoria():
+    from backend.app.extraccion.a_excel import Item, Lectura, verificar
+
+    items = [Item(cantidad=1, precio=3600, alicuota=21, importe=2937.79),
+             Item(cantidad=1, precio=3600, alicuota=21, importe=2937.79, importe_leido=2937.73)]
+    v = [x for x in verificar(Lectura(tipo="comprobante", items=items, totales={"neto_gravado": 5875.58})) if x.obligatoria]
+    assert len(v) == 1 and v[0].campo == "item:1:importe" and v[0].nivel == "error"
+    assert v[0].opciones == ["2.937,73", "2.937,79"] and v[0].titulo == "Importe del ítem 2: ¿cuál es?"

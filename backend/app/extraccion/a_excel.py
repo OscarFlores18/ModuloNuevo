@@ -104,6 +104,10 @@ class Verificacion(BaseModel):
     titulo: str = ""
     datos: list[str] = Field(default_factory=list)
     opciones: list[str] = Field(default_factory=list)
+    # Cómo se muestra cada opción («Leído en la foto», «Recalculado»).
+    etiquetas: list[str] = Field(default_factory=list)
+    # Hay que elegir una opción (o corregirlo a mano) antes de generar el Excel.
+    obligatoria: bool = False
 
 
 class Lectura(BaseModel):
@@ -1055,11 +1059,12 @@ def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Veri
     for n, x in enumerate(items):
         if x.importe_leido is not None and x.importe is not None and x.importe_leido != x.importe:
             aviso.append(Verificacion(
-                campo="items", nivel="aviso",
-                mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)} y lo corregí a {_fmt(x.importe)}: "
-                         "con ese valor el detalle suma el neto (en naranja en el detalle). Compará con la imagen."),
-                titulo=f"Corregí el importe del ítem {n + 1}",
-                datos=[f"Leído {_fmt(x.importe_leido)}", f"Ahora {_fmt(x.importe)}"],
+                campo=f"item:{n}:importe", nivel="error", obligatoria=True,
+                mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)}, pero con {_fmt(x.importe)} el detalle "
+                         "suma el neto. Mirá la imagen y elegí cuál es (o escribilo a mano en el detalle)."),
+                titulo=f"Importe del ítem {n + 1}: ¿cuál es?",
+                opciones=[_fmt(x.importe_leido), _fmt(x.importe)],
+                etiquetas=["Leído en la foto", "Recalculado (suma el neto)"],
             ))
     return aviso + _verificar_items_sin_correccion(items, t)
 

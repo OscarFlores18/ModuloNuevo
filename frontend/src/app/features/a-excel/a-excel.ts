@@ -295,7 +295,9 @@ import {
                         ⬇ {{ errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
                       }
                     </button>
-                    @if (errores(l)) { <p class="m-0 mt-2 text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</p> }
+                    @if (pendientes(l).length) {
+                      <p class="m-0 mt-2 text-sm font-semibold text-orange-700">Antes, elegí {{ pendientes(l).length === 1 ? 'una opción' : pendientes(l).length + ' opciones' }} en «Verificá lo que leí» (o corregilo a mano).</p>
+                    } @else if (errores(l)) { <p class="m-0 mt-2 text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</p> }
                   </div>
                 </li>
               </ol>
@@ -659,6 +661,19 @@ export class PasarAExcel implements OnDestroy {
 
   /** Entre lo que dieron las lecturas, el valor que eligió el usuario. */
   protected elegirLectura(campo: string, valor: string): void {
+    // «item:1:importe»: el importe del ítem, leído o recalculado; queda elegido.
+    const item = campo.match(/^item:(\d+):importe$/);
+    if (item) {
+      const l = this.actual();
+      const i = Number(item[1]);
+      if (l)
+        this.reemplazar({
+          ...l,
+          items: l.items.map((x, j) => (j === i ? { ...x, importe: aNumero(valor), importe_leido: null } : x)),
+          verificaciones: l.verificaciones.filter((v) => v.campo !== campo),
+        });
+      return;
+    }
     if (CAMPOS_TOTALES.some((c) => c.id === campo)) this.cambiarTotal(campo, valor);
     else this.cambiarEncabezado(campo, valor);
   }
@@ -689,9 +704,18 @@ export class PasarAExcel implements OnDestroy {
 
   // --- Generar ------------------------------------------------------------------------
 
+  /** Preguntas que hay que contestar antes de generar (p. ej. el importe leído o el recalculado). */
+  protected readonly pendientes = (l: LecturaExcel) => l.verificaciones.filter((v) => v.obligatoria && v.nivel !== 'ok');
+
   protected async generar(extras?: Extras): Promise<void> {
     const l = this.actual();
     if (!l) return;
+    const faltan = this.pendientes(l);
+    if (faltan.length) {
+      this.toast.error('Primero elegí', faltan.map((v) => v.titulo || v.mensaje).join(' · '));
+      this.irARevision();
+      return;
+    }
     this.generando.set(true);
     try {
       const est = this.estudio();

@@ -420,6 +420,10 @@ export interface Verificacion {
   datos?: string[];
   /** Lo que dio cada lectura, para elegir con un clic. */
   opciones?: string[];
+  /** Cómo se muestra cada opción. */
+  etiquetas?: string[];
+  /** Hay que elegir una opción (o corregirlo a mano) antes de generar el Excel. */
+  obligatoria?: boolean;
 }
 
 /** Lo leído de un archivo: un comprobante (encabezado, ítems, totales) o una tabla (hojas). */

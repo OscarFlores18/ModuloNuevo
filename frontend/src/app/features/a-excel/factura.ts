@@ -38,6 +38,9 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     @media (max-width: 760px) { .xb-cab { grid-template-columns: max-content minmax(0, 1fr); } }
     .xb label, .xb .xb-l { font-size: .95rem; white-space: nowrap; }
     .xb-q { display: inline-grid; place-items: center; width: 13px; height: 13px; margin-left: 4px; border-radius: 50%; background: #bbb; color: #fff; font-size: 9px; font-weight: 700; vertical-align: 1px; }
+    .xb-menu { position: fixed; z-index: 50; display: flex; flex-wrap: wrap; gap: 6px; max-width: 340px; padding: 8px; border: 1px solid #b6d7ea; border-radius: 10px; background: #fff; box-shadow: 0 8px 24px rgba(15, 23, 42, .16); }
+    .xb-menu button { padding: 4px 10px; border: 1px solid #b6d7ea; border-radius: 999px; background: #f2f9fd; color: #00618a; font: inherit; font-size: .8rem; cursor: pointer; }
+    .xb-menu button:hover, .xb-menu button.activo { background: #00618a; border-color: #00618a; color: #fff; }
     .xb-in.xb-auto { background: #fff7ed; border-color: #fb923c; color: #9a3412; }
     .xb-auto-aviso { margin: 0 0 6px; padding: 4px 10px; border-left: 3px solid #fb923c; background: #fff7ed; color: #9a3412; font-size: .8rem; }
     .xb-in { width: 100%; min-width: 0; height: 26px; padding: 2px 6px; border: 1px solid #a9a9a9; border-radius: 0; font: inherit; font-size: .88rem; color: #333; background: #fff; }
@@ -60,9 +63,6 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     .xb-x { border: 0; background: none; color: #aaa; cursor: pointer; font-size: 1rem; }
     .xb-x:hover { color: #c00; }
     .xb-boton { margin: 16px 0 0; padding: 6px 18px; border: 1px solid #c5c5c5; border-radius: 2px; background: linear-gradient(#fafafa, #e6e6e6); color: #00618a; font: inherit; font-weight: 600; cursor: pointer; }
-    .xb-prod { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 14px; font-size: .82rem; color: #555; }
-    .xb-prod button { padding: 3px 10px; border: 1px solid #b6d7ea; border-radius: 999px; background: #f2f9fd; color: #00618a; font: inherit; font-size: .8rem; cursor: pointer; }
-    .xb-prod button:hover { background: #e1f1fa; }
     .xb-perc { margin: 22px 0 0; }
     .xb-perc .xb-cab { margin-top: 10px; }
     .xb-tot { display: flex; flex-wrap: wrap; gap: 6px 40px; margin-top: 26px; padding: 16px 0; border-top: 1px solid #e5e5e5; color: #00618a; font-size: 1rem; }
@@ -143,12 +143,6 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
           </div>
         </details>
 
-        @if (productos().length) {
-          <div class="xb-prod" aria-label="Productos sugeridos">
-            <span>Productos:</span>
-            @for (p of productos(); track p) { <button type="button" (click)="usarProducto(p)">+ {{ p }}</button> }
-          </div>
-        }
 
         <div class="xb-items">
           @if (autoAviso(); as a) { <p class="xb-auto-aviso" role="status">✎ En naranja: {{ a }}. Revisalo antes de guardar.</p> }
@@ -165,7 +159,8 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
                 <tr>
                   <td><button type="button" class="xb-x" (click)="sacar.emit(i)" [attr.aria-label]="'Sacar el ítem ' + (i + 1)">✕</button></td>
                   <td style="width: 150px">
-                    <input class="xb-in" [class.xb-auto]="autoProducto(i)" [value]="productoDe(i)" [attr.list]="id + '-prods'" placeholder="Elegí o escribí"
+                    <input class="xb-in" [class.xb-auto]="autoProducto(i)" [value]="productoDe(i)" placeholder="Elegí o escribí" autocomplete="off"
+                      (focus)="abrirMenu(i, $event)" (blur)="cerrarMenu()"
                       [title]="autoProducto(i) ? 'Autocompletado según la descripción: revisalo' : ''"
                       (change)="ponerProducto(i, val($event))" aria-label="Producto o servicio" />
                   </td>
@@ -191,7 +186,13 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
               }
             </tbody>
           </table>
-          <datalist [id]="id + '-prods'">@for (p of productos(); track p) { <option [value]="p"></option> }</datalist>
+          @if (menu(); as m) {
+            <div class="xb-menu" role="listbox" aria-label="Productos" [style.top.px]="m.top" [style.left.px]="m.left">
+              @for (p of productos(); track p) {
+                <button type="button" role="option" [class.activo]="productoDe(m.i) === p" (mousedown)="$event.preventDefault()" (click)="elegirDelMenu(m.i, p)">+ {{ p }}</button>
+              }
+            </div>
+          }
         </div>
         <button type="button" class="xb-boton" (click)="agregar.emit()">Agregar Item</button>
 
@@ -393,6 +394,26 @@ export class Factura {
     return productoRecordado(this.estudio()?.empresa ?? '', x.descripcion) || x.producto || '';
   }
 
+  /** El menú de productos abierto debajo de un ítem (fijo, para que no lo corte el scroll de la tabla). */
+  protected readonly menu = signal<{ i: number; top: number; left: number } | null>(null);
+  private cierre: ReturnType<typeof setTimeout> | null = null;
+
+  protected abrirMenu(i: number, ev: FocusEvent): void {
+    if (this.cierre) clearTimeout(this.cierre);
+    const r = (ev.target as HTMLElement).getBoundingClientRect();
+    this.menu.set({ i, top: r.bottom + 4, left: Math.min(r.left, window.innerWidth - 350) });
+  }
+
+  protected cerrarMenu(): void {
+    this.cierre = setTimeout(() => this.menu.set(null), 150);
+  }
+
+  protected elegirDelMenu(i: number, producto: string): void {
+    this.ponerProducto(i, producto);
+    this.menu.set(null);
+    (document.activeElement as HTMLElement | null)?.blur();
+  }
+
   /** El producto que se ve: el elegido o, si no, el sugerido (autocompletado, en naranja). */
   protected productoDe(i: number): string {
     return this.extras().productos[i] || this.sugerido(i);
@@ -424,13 +445,6 @@ export class Factura {
   /** Lo que va al Excel: con los productos autocompletados incluidos. */
   protected paraGuardar(): Extras {
     return { ...this.extras(), productos: this.lectura().items.map((_, i) => this.productoDe(i)) };
-  }
-
-  /** Un botón de producto agrega un ítem con ese producto (no pisa lo que ya tiene un ítem). */
-  protected usarProducto(nombre: string): void {
-    const nuevo = this.lectura().items.length;
-    this.agregar.emit();
-    this.ponerProducto(nuevo, nombre, false);
   }
 
   private cambiar(f: (e: Extras) => Extras): void {
