@@ -76,7 +76,7 @@ describe('avisos cortos con un backend anterior', () => {
 
   it('las lecturas distintas quedan para elegir', () => {
     const a = v('Emisor: cada lectura dio algo distinto (FOC FUELS MARKETING $ / FOC FUELS MARKETING SA). Compará con la imagen.');
-    expect([a.titulo, a.opciones]).toEqual(['Emisor: ¿cuál es?', ['FOC FUELS MARKETING $', 'FOC FUELS MARKETING SA']]);
+    expect([a.titulo, a.opciones]).toEqual(['Emisor mal leído', ['FOC FUELS MARKETING $', 'FOC FUELS MARKETING SA']]);
   });
 
   it('lo verificado queda en pocas palabras', () => {

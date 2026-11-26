@@ -155,11 +155,38 @@ def test_corrige_el_importe_de_un_item_mal_leido():
     assert corregir_importes_items(items, {"neto_gravado": 83974.75}) == 0
 
 
-def test_importe_corregido_es_una_pregunta_obligatoria():
+def test_importe_corregido_solo_avisa():
     from backend.app.extraccion.a_excel import Item, Lectura, verificar
 
     items = [Item(cantidad=1, precio=3600, alicuota=21, importe=2937.79),
              Item(cantidad=1, precio=3600, alicuota=21, importe=2937.79, importe_leido=2937.73)]
-    v = [x for x in verificar(Lectura(tipo="comprobante", items=items, totales={"neto_gravado": 5875.58})) if x.obligatoria]
-    assert len(v) == 1 and v[0].campo == "item:1:importe" and v[0].nivel == "error"
-    assert v[0].opciones == ["2.937,73", "2.937,79"] and v[0].titulo == "Importe del ítem 2: ¿cuál es?"
+    v = [x for x in verificar(Lectura(tipo="comprobante", items=items, totales={"neto_gravado": 5875.58}))
+         if x.titulo.startswith("Autocorregí el importe")]
+    assert len(v) == 1 and v[0].nivel == "aviso" and not v[0].opciones
+    assert v[0].datos == ["Leído 2.937,73", "Ahora 2.937,79"]
+
+
+def test_emisor_con_simbolo_se_autocorrige():
+    from backend.app.extraccion.a_excel import Lectura, limpiar_nombres, verificar
+
+    l = Lectura(tipo="comprobante", encabezado={"emisor": "FOC FUELS MARKETING $"},
+                dudas={"emisor": ["FOC FUELS MARKETING $", "FOC FUELS MARKETING SA"]})
+    limpiar_nombres(l)
+    assert l.encabezado["emisor"] == "FOC FUELS MARKETING SA" and "emisor" not in l.dudas
+    assert l.corregidos == {"emisor": "FOC FUELS MARKETING $"}
+    v = [x for x in verificar(l) if x.campo == "emisor"]
+    assert len(v) == 1 and v[0].nivel == "aviso" and v[0].titulo == "Autocorregí el emisor"
+    # Nombres de verdad distintos: se sigue preguntando.
+    l = Lectura(tipo="comprobante", encabezado={"emisor": "ACME SA"}, dudas={"emisor": ["ACME SA", "PEREZ JUAN"]})
+    limpiar_nombres(l)
+    assert "emisor" in l.dudas
+
+
+def test_duda_de_neto_se_elige_con_usar():
+    from backend.app.extraccion.a_excel import Lectura, verificar
+
+    l = Lectura(tipo="comprobante", totales={"neto_gravado": 3974.75, "iva": 17634.70, "total": 101609.45},
+                dudas={"neto_gravado": ["3.974,75", "83.974,75", "89.974,75"]})
+    v = [x for x in verificar(l) if x.campo == "neto_gravado" and x.opciones]
+    assert len(v) == 1 and v[0].nivel == "error" and v[0].titulo == "Neto gravado mal leído"
+    assert v[0].opciones[0] == "83.974,75"

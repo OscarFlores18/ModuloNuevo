@@ -1,4 +1,5 @@
 import { Component, computed, effect, input, output, signal } from '@angular/core';
+import { conDemora, guardar, recuperar } from './guardado';
 import { ItemLeido, LecturaExcel } from '../../core/models';
 import { FacturaDelEstudio, aTexto, cuitConGuiones, productoRecordado, productosSugeridos, recordarProducto, recordarProductoDeItem } from './logica';
 
@@ -344,6 +345,17 @@ export class Factura {
     effect(() => {
       this.lectura().archivo;
       this.modo.set('xubio');
+    });
+    // Lo elegido para cada archivo sobrevive a recargar la página.
+    let listo = false;
+    void recuperar<Record<string, Extras>>('extras').then((e) => {
+      if (e) this.porArchivo.update((m) => ({ ...e, ...m }));
+      listo = true;
+    });
+    const guardarExtras = conDemora(() => void guardar('extras', this.porArchivo()));
+    effect(() => {
+      this.porArchivo();
+      if (listo) guardarExtras();
     });
   }
 

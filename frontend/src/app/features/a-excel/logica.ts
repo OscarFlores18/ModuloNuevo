@@ -67,10 +67,13 @@ export function contar(lectura: LecturaExcel, nivel: NivelVerificacion): number 
 
 /** Sin la duda de un campo: una vez que la persona lo corrigió, ya está mirado. */
 export function sinDuda(lectura: LecturaExcel, campo: string): LecturaExcel {
-  if (!(campo in lectura.dudas)) return lectura;
+  // Lo que el usuario puso a mano deja de figurar como duda o como autocorregido.
+  if (!(campo in lectura.dudas) && !(campo in (lectura.corregidos ?? {}))) return lectura;
   const dudas = { ...lectura.dudas };
+  const corregidos = { ...lectura.corregidos };
   delete dudas[campo];
-  return { ...lectura, dudas };
+  delete corregidos[campo];
+  return { ...lectura, dudas, corregidos };
 }
 
 /** Aplica la sugerencia de una verificación al campo que corresponde. */

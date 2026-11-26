@@ -1,4 +1,4 @@
-import { Component, HostListener, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, OnDestroy, computed, effect, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { descargarBlob } from '../../core/descargar';
 import { ItemLeido, LecturaExcel, Verificacion, mensajeDeError } from '../../core/models';
@@ -8,6 +8,7 @@ import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
 import { Extras, Factura } from './factura';
 import { VistaArchivo } from './vista-archivo';
+import { borrar, borrarTodo, conDemora, guardar, recuperar } from './guardado';
 import { Verificaciones } from './verificaciones';
 import { ToastService } from '../../core/ui/toast';
 import {
@@ -295,9 +296,7 @@ import {
                         ⬇ {{ errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
                       }
                     </button>
-                    @if (pendientes(l).length) {
-                      <p class="m-0 mt-2 text-sm font-semibold text-orange-700">Antes, elegí {{ pendientes(l).length === 1 ? 'una opción' : pendientes(l).length + ' opciones' }} en «Verificá lo que leí» (o corregilo a mano).</p>
-                    } @else if (errores(l)) { <p class="m-0 mt-2 text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</p> }
+                    @if (errores(l)) { <p class="m-0 mt-2 text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</p> }
                   </div>
                 </li>
               </ol>
@@ -479,6 +478,42 @@ export class PasarAExcel implements OnDestroy {
       (cs) => this.empresas.set(cs.map((c) => ({ nombre: c.nombre, cuits: [c.arca.cuit_representado, c.arca.cuit_login].filter(Boolean) }))),
       () => this.empresas.set([]),
     );
+    void this.restaurar();
+    // Cada cambio queda guardado en el navegador: recargar la página no borra nada.
+    const guardarEstado = conDemora(() =>
+      void guardar('estado', { lecturas: this.lecturas(), indice: this.indice(), elegido: this.elegido(), xubio: this.xubioElegido() }),
+    );
+    effect(() => {
+      this.lecturas(); this.indice(); this.elegido(); this.xubioElegido();
+      if (this.restaurado()) guardarEstado();
+    });
+  }
+
+  /** Hasta recuperar lo guardado no se guarda nada (si no, se pisaría con la página vacía). */
+  private readonly restaurado = signal(false);
+
+  private async restaurar(): Promise<void> {
+    type Estado = { lecturas: LecturaExcel[]; indice: number; elegido: Record<string, { empresa: string; operacion: Operacion | null }>; xubio: Record<string, string> };
+    const e = await recuperar<Estado>('estado');
+    if (e?.lecturas?.length && !this.lecturas().length) {
+      const vistas: Record<string, { url: string; seguro: SafeResourceUrl; tipo: 'imagen' | 'pdf' }> = {};
+      for (const l of e.lecturas) {
+        const a = await recuperar<{ blob: Blob; tipo: 'imagen' | 'pdf' }>('archivo:' + l.archivo);
+        if (a?.blob) vistas[l.archivo] = this.vistaDe(a.blob, a.tipo);
+      }
+      this.vistas.set(vistas);
+      this.lecturas.set(e.lecturas);
+      this.indice.set(Math.min(e.indice ?? 0, e.lecturas.length - 1));
+      this.elegido.set(e.elegido ?? {});
+      this.xubioElegido.set(e.xubio ?? {});
+    }
+    this.restaurado.set(true);
+  }
+
+  private vistaDe(blob: Blob, tipo: 'imagen' | 'pdf') {
+    const url = URL.createObjectURL(blob);
+    // El PDF va en un iframe: Angular pide marcar la URL (es un blob: de esta misma página).
+    return { url, seguro: this.sanitizer.bypassSecurityTrustResourceUrl(url), tipo };
   }
 
   protected elegirEmpresa(nombre: string): void {
@@ -563,6 +598,7 @@ export class PasarAExcel implements OnDestroy {
       const { [l.archivo]: _, ...resto } = this.vistas();
       this.vistas.set(resto);
     }
+    void borrar('archivo:' + l.archivo);
     this.lecturas.update((ls) => ls.filter((_, j) => j !== i));
     const n = this.lecturas().length;
     if (this.indice() >= n) this.indice.set(Math.max(0, n - 1));
@@ -571,6 +607,7 @@ export class PasarAExcel implements OnDestroy {
   protected limpiar(): void {
     Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));
     this.vistas.set({});
+    void borrarTodo();
     this.lecturas.set([]);
     this.indice.set(0);
     this.error.set(null);
@@ -605,9 +642,8 @@ export class PasarAExcel implements OnDestroy {
         const tipo = /\.pdf$/i.test(a.name) ? 'pdf' : /\.(jpe?g|png|webp|bmp)$/i.test(a.name) ? 'imagen' : null;
         if (!tipo) continue;
         if (vistas[a.name]) URL.revokeObjectURL(vistas[a.name].url);
-        const url = URL.createObjectURL(a);
-        // El PDF va en un iframe: Angular pide marcar la URL (es un blob: de esta misma página).
-        vistas[a.name] = { url, seguro: this.sanitizer.bypassSecurityTrustResourceUrl(url), tipo };
+        vistas[a.name] = this.vistaDe(a, tipo);
+        void guardar('archivo:' + a.name, { blob: a, tipo });
       }
       this.vistas.set(vistas);
       // Los nuevos reemplazan a los del mismo nombre; el primero nuevo queda a la vista.
@@ -661,19 +697,6 @@ export class PasarAExcel implements OnDestroy {
 
   /** Entre lo que dieron las lecturas, el valor que eligió el usuario. */
   protected elegirLectura(campo: string, valor: string): void {
-    // «item:1:importe»: el importe del ítem, leído o recalculado; queda elegido.
-    const item = campo.match(/^item:(\d+):importe$/);
-    if (item) {
-      const l = this.actual();
-      const i = Number(item[1]);
-      if (l)
-        this.reemplazar({
-          ...l,
-          items: l.items.map((x, j) => (j === i ? { ...x, importe: aNumero(valor), importe_leido: null } : x)),
-          verificaciones: l.verificaciones.filter((v) => v.campo !== campo),
-        });
-      return;
-    }
     if (CAMPOS_TOTALES.some((c) => c.id === campo)) this.cambiarTotal(campo, valor);
     else this.cambiarEncabezado(campo, valor);
   }
@@ -704,18 +727,9 @@ export class PasarAExcel implements OnDestroy {
 
   // --- Generar ------------------------------------------------------------------------
 
-  /** Preguntas que hay que contestar antes de generar (p. ej. el importe leído o el recalculado). */
-  protected readonly pendientes = (l: LecturaExcel) => l.verificaciones.filter((v) => v.obligatoria && v.nivel !== 'ok');
-
   protected async generar(extras?: Extras): Promise<void> {
     const l = this.actual();
     if (!l) return;
-    const faltan = this.pendientes(l);
-    if (faltan.length) {
-      this.toast.error('Primero elegí', faltan.map((v) => v.titulo || v.mensaje).join(' · '));
-      this.irARevision();
-      return;
-    }
     this.generando.set(true);
     try {
       const est = this.estudio();

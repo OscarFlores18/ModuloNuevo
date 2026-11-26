@@ -11,37 +11,36 @@ import { Verificacion } from '../../core/models';
     li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 5px 8px; border-radius: 8px; border-left: 3px solid; font-size: .8rem; }
     li.error { background: #fef2f2; border-color: #dc2626; }
     li.aviso { background: #fffbeb; border-color: #f59e0b; }
-    li.obligatoria { background: #fff7ed; border-color: #ea580c; box-shadow: inset 0 0 0 1px #fdba74; }
-    .falta { padding: 1px 8px; border-radius: 999px; background: #ea580c; color: #fff; font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; }
-    button.chip small { font-weight: 500; color: #64748b; margin-right: 4px; }
     .ic { font-weight: 800; } .error .ic { color: #dc2626; } .aviso .ic { color: #d97706; }
     .tit { font-weight: 700; color: #1e293b; }
     .chip { padding: 1px 7px; border-radius: 999px; background: #fff; border: 1px solid #e2e8f0; font-size: .74rem; font-variant-numeric: tabular-nums; color: #334155; }
     .chip.dif { border-color: #fca5a5; color: #b91c1c; font-weight: 700; }
-    button.chip { cursor: pointer; border-color: #93c5fd; color: #1d4ed8; font-weight: 600; }
-    button.chip:hover { background: #eff6ff; }
     .por { cursor: help; color: #94a3b8; font-size: .8rem; }
-    .usar { margin-left: auto; padding: 2px 9px; border-radius: 6px; border: 0; background: #2563eb; color: #fff; font-size: .74rem; font-weight: 700; cursor: pointer; }
+    .acc { margin-left: auto; display: flex; flex-wrap: wrap; gap: 4px; }
+    .usar { padding: 2px 9px; border-radius: 6px; border: 0; background: #2563eb; color: #fff; font-size: .74rem; font-weight: 700; cursor: pointer; }
+    .usar.otra { background: #fff; color: #1d4ed8; box-shadow: inset 0 0 0 1px #93c5fd; }
+    .usar:hover { filter: brightness(1.08); }
     .bien { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
     .bien span { padding: 1px 8px; border-radius: 999px; background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; font-size: .72rem; font-weight: 600; }
   `,
   template: `
     <ul aria-live="polite">
       @for (v of aMirar(); track $index) {
-        <li [class]="v.nivel" [class.obligatoria]="v.obligatoria">
+        <li [class]="v.nivel">
           <span class="ic" aria-hidden="true">{{ v.nivel === 'error' ? '✕' : '!' }}</span>
           <span class="tit">{{ v.titulo || v.mensaje }}</span>
-          @if (v.obligatoria) { <span class="falta">Elegí una</span> }
           @for (d of v.datos ?? []; track $index) { <span class="chip" [class.dif]="d.startsWith('Dif')">{{ d }}</span> }
-          @for (o of v.opciones ?? []; track $index) {
-            <button type="button" class="chip" (click)="elegir.emit([v.campo, o])" [title]="'Usar «' + o + '»'">
-              @if (v.etiquetas?.[$index]; as e) { <small>{{ e }}</small> }{{ o }}
-            </button>
-          }
           @if (v.titulo) { <span class="por" [title]="v.mensaje" role="note" [attr.aria-label]="v.mensaje">ⓘ</span> }
-          @if (v.sugerencia !== null && v.sugerencia !== undefined) {
-            <button type="button" class="usar" (click)="usar.emit(v)">Usar {{ formatear(v.sugerencia) }}</button>
-          }
+          <span class="acc">
+            @if (v.opciones?.length) {
+              <!-- Lo que dio cada lectura: la primera es la recomendada. -->
+              @for (o of v.opciones; track $index) {
+                <button type="button" class="usar" [class.otra]="!$first" (click)="elegir.emit([v.campo, o])">Usar {{ o }}</button>
+              }
+            } @else if (v.sugerencia !== null && v.sugerencia !== undefined) {
+              <button type="button" class="usar" (click)="usar.emit(v)">Usar {{ formatear(v.sugerencia) }}</button>
+            }
+          </span>
         </li>
       }
     </ul>
@@ -77,7 +76,7 @@ export function corta(v: Verificacion): Verificacion {
   if ((x = m.match(/^Los ítems (\d+) y (\d+) tienen la misma cantidad y precio pero distinto importe \(([\d.,-]+) y ([\d.,-]+)\)/)))
     return { ...v, titulo: `Ítems ${x[1]} y ${x[2]}: mismo precio, otro importe`, datos: [`#${x[1]} ${x[3]}`, `#${x[2]} ${x[4]}`] };
   if ((x = m.match(/^(.+?): cada lectura dio algo distinto \((.+)\)\./)))
-    return { ...v, titulo: `${x[1]}: ¿cuál es?`, opciones: x[2].split(' / ') };
+    return { ...v, nivel: 'error', titulo: `${x[1]} mal leído`, opciones: x[2].split(' / ') };
   if ((x = m.match(/^(.+?): el dígito verificador da bien/))) return { ...v, titulo: x[1] };
   if (/^Neto \+ IVA .*= total/.test(m)) return { ...v, titulo: 'El total cierra' };
   if ((x = m.match(/^El IVA es el ([\d.,]+)% /))) return { ...v, titulo: `IVA ${x[1]}%` };

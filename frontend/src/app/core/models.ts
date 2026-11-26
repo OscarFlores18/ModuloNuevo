@@ -420,10 +420,6 @@ export interface Verificacion {
   datos?: string[];
   /** Lo que dio cada lectura, para elegir con un clic. */
   opciones?: string[];
-  /** Cómo se muestra cada opción. */
-  etiquetas?: string[];
-  /** Hay que elegir una opción (o corregirlo a mano) antes de generar el Excel. */
-  obligatoria?: boolean;
 }
 
 /** Lo leído de un archivo: un comprobante (encabezado, ítems, totales) o una tabla (hojas). */
@@ -439,6 +435,8 @@ export interface LecturaExcel {
   texto: string;
   /** Lo que cada pasada de OCR leyó distinto. */
   dudas: Record<string, string[]>;
+  /** Lo que se autocorrigió del encabezado: campo -> lo que se había leído. */
+  corregidos?: Record<string, string>;
   avisos: string[];
   verificaciones: Verificacion[];
   /** Solo si el archivo no se pudo leer. */

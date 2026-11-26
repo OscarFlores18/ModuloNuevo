@@ -104,10 +104,6 @@ class Verificacion(BaseModel):
     titulo: str = ""
     datos: list[str] = Field(default_factory=list)
     opciones: list[str] = Field(default_factory=list)
-    # Cómo se muestra cada opción («Leído en la foto», «Recalculado»).
-    etiquetas: list[str] = Field(default_factory=list)
-    # Hay que elegir una opción (o corregirlo a mano) antes de generar el Excel.
-    obligatoria: bool = False
 
 
 class Lectura(BaseModel):
@@ -125,6 +121,8 @@ class Lectura(BaseModel):
     texto: str = Field(default="", max_length=400_000)
     # Lo que cada pasada de OCR leyó distinto: campo -> valores leídos.
     dudas: dict[str, list[str]] = Field(default_factory=dict)
+    # Lo que se autocorrigió del encabezado: campo -> lo que se había leído.
+    corregidos: dict[str, str] = Field(default_factory=dict)
     avisos: list[str] = Field(default_factory=list)
     verificaciones: list[Verificacion] = Field(default_factory=list)
 
@@ -837,6 +835,36 @@ def _leer_planilla(nombre: str, contenido: bytes) -> Lectura:
     return lectura
 
 
+_BASURA_NOMBRE = re.compile(r"[$#@*|~^_=+<>{}\[\]\\/%!?¡¿;:]")
+_SOCIEDAD = re.compile(r"\b(S\.?\s?A\.?(\s?U\.?)?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?\s?S\.?|S\.?\s?C\.?\s?A\.?|S\.?\s?H\.?)\s*$", re.I)
+
+
+def _esqueleto(nombre: str) -> str:
+    """Las letras del nombre sin sociedad ni basura («FOC FUELS MARKETING»)."""
+    sin = _SOCIEDAD.sub("", _BASURA_NOMBRE.sub(" ", nombre))
+    return re.sub(r"[^A-Z0-9]", "", sin.upper())
+
+
+def limpiar_nombres(lectura: Lectura) -> None:
+    """Emisor y receptor que cada pasada leyó distinto solo por caracteres sueltos
+    («FOC FUELS MARKETING $» / «… SA»): se queda con el más limpio (sin símbolos y con
+    la sociedad), saca la duda y guarda lo leído en «corregidos»."""
+    for campo in ("emisor", "receptor"):
+        valores = lectura.dudas.get(campo)
+        if not valores or len(valores) < 2:
+            continue
+        base = _esqueleto(valores[0])
+        if not base or any(difflib.SequenceMatcher(None, base, _esqueleto(v)).ratio() < 0.85 for v in valores[1:]):
+            continue
+        limpio = min(valores, key=lambda v: (len(_BASURA_NOMBRE.findall(v)), not _SOCIEDAD.search(v), -len(v)))
+        leido = lectura.encabezado.get(campo, "")
+        if leido == limpio:
+            leido = next(v for v in valores if v != limpio)
+        lectura.encabezado[campo] = limpio
+        lectura.corregidos[campo] = leido
+        del lectura.dudas[campo]
+
+
 def leer(nombre: str, contenido: bytes) -> Lectura:
     nombre = Path(nombre).name
     sufijo = Path(nombre).suffix.lower()
@@ -851,6 +879,7 @@ def leer(nombre: str, contenido: bytes) -> Lectura:
     if lectura.tipo == "comprobante":
         corregir_descripciones(lectura.items)
         corregir_importes_items(lectura.items, lectura.totales)
+        limpiar_nombres(lectura)
         sugerir_productos(lectura.items)
     lectura.verificaciones = verificar(lectura)
     return lectura
@@ -1059,12 +1088,11 @@ def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Veri
     for n, x in enumerate(items):
         if x.importe_leido is not None and x.importe is not None and x.importe_leido != x.importe:
             aviso.append(Verificacion(
-                campo=f"item:{n}:importe", nivel="error", obligatoria=True,
-                mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)}, pero con {_fmt(x.importe)} el detalle "
-                         "suma el neto. Mirá la imagen y elegí cuál es (o escribilo a mano en el detalle)."),
-                titulo=f"Importe del ítem {n + 1}: ¿cuál es?",
-                opciones=[_fmt(x.importe_leido), _fmt(x.importe)],
-                etiquetas=["Leído en la foto", "Recalculado (suma el neto)"],
+                campo="items", nivel="aviso",
+                mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)} y lo corregí a {_fmt(x.importe)}: "
+                         "con ese valor el detalle suma el neto (en naranja en el detalle). Si no es así, cambialo a mano."),
+                titulo=f"Autocorregí el importe del ítem {n + 1}",
+                datos=[f"Leído {_fmt(x.importe_leido)}", f"Ahora {_fmt(x.importe)}"],
             ))
     return aviso + _verificar_items_sin_correccion(items, t)
 
@@ -1171,18 +1199,43 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
         v.append(x)
     v += _verificar_totales(t, round(sum(x.importe or 0 for x in lectura.items), 2) if lectura.items else None)
     v += _verificar_items(lectura.items, t)
+    for campo, leido in lectura.corregidos.items():
+        ahora = e.get(campo, "")
+        if leido and ahora and leido != ahora:
+            etiqueta = ETIQUETAS_ENCABEZADO.get(campo, campo)
+            v.append(Verificacion(campo=campo, nivel="aviso", titulo=f"Autocorregí el {etiqueta.lower()}",
+                                  mensaje=f"{etiqueta}: se leyó «{leido}» y lo dejé como «{ahora}». Si no es así, cambialo a mano.",
+                                  datos=[f"Leído {leido}", f"Ahora {ahora}"]))
     # Lo que cada pasada leyó distinto y sigue sin verificarse por otro lado.
     con_error = {x.campo for x in v if x.nivel != "ok"}
     verificados = {x.campo for x in v if x.nivel == "ok"}
     for campo, valores in lectura.dudas.items():
-        if campo in con_error or (campo in verificados and campo.endswith("_cuit")) or (campo in TOTALES and _cierra(t)):
-            continue
         etiqueta = ETIQUETAS_ENCABEZADO.get(campo) or ETIQUETAS_TOTALES.get(campo, campo)
-        v.append(Verificacion(campo=campo, nivel="aviso", mensaje=f"{etiqueta}: cada lectura dio algo distinto ({' / '.join(valores[:3])}). Compará con la imagen.",
-                             titulo=f"{etiqueta}: ¿cuál es?", opciones=valores[:3]))
+        if campo in con_error:
+            # Ya marcado como error: las lecturas distintas pasan a ser los «Usar X».
+            for x in v:
+                if x.campo == campo and x.nivel == "error" and not x.opciones:
+                    x.titulo, x.opciones = f"{etiqueta} mal leído", _ordenar_opciones(lectura, campo, valores)[:3]
+                    break
+            continue
+        if (campo in verificados and campo.endswith("_cuit")) or (campo in TOTALES and _cierra(t)):
+            continue
+        v.append(Verificacion(campo=campo, nivel="error", mensaje=f"{etiqueta}: cada lectura dio algo distinto ({' / '.join(valores[:3])}). Elegí el que figura en la imagen.",
+                             titulo=f"{etiqueta} mal leído", opciones=_ordenar_opciones(lectura, campo, valores)[:3]))
     # Primero lo que hay que arreglar.
     orden = {"error": 0, "aviso": 1, "ok": 2}
     return sorted(v, key=lambda x: orden[x.nivel])
+
+
+def _ordenar_opciones(lectura: Lectura, campo: str, valores: list[str]) -> list[str]:
+    """Primero la recomendada: el importe con el que cierra el total o, si no, el que quedó."""
+    def puntaje(v: str) -> tuple:
+        if campo in TOTALES:
+            n = _numero(v)
+            cierra = n is not None and _cierra({**lectura.totales, campo: n})
+            return (not cierra, n != lectura.totales.get(campo))
+        return (False, v != lectura.encabezado.get(campo))
+    return sorted(valores, key=puntaje)
 
 
 # --- Excel ---------------------------------------------------------------------------
