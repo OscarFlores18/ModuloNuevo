@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, HostListener, computed, effect, inject, input, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, ElementRef, afterNextRender, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { DomSanitizer } from '@angular/platform-browser';
 
 /** El archivo original (foto o PDF) al lado de lo leído, con zoom y pantalla completa. */
@@ -7,26 +7,27 @@ import { DomSanitizer } from '@angular/platform-browser';
   changeDetection: ChangeDetectionStrategy.OnPush,
   styles: `
     :host { display: block; position: sticky; top: 12px; }
-    .va { border: 1px solid var(--color-borde); border-radius: 10px; background: #f1f5f9; overflow: hidden; display: flex; flex-direction: column; }
-    .va.grande { position: fixed; inset: 16px; z-index: 60; box-shadow: 0 20px 60px rgba(15, 23, 42, .45); }
-    .va-fondo { position: fixed; inset: 0; z-index: 59; background: rgba(15, 23, 42, .55); }
+    /* Un <dialog>: abierto en el lugar; en pantalla completa, modal (por encima del encabezado y de todo). */
+    .va { position: static; margin: 0; padding: 0; width: 100%; max-width: none; max-height: none; color: inherit; border: 1px solid var(--color-borde); border-radius: 10px; background: #f1f5f9; overflow: hidden; }
+    .va[open] { display: flex; flex-direction: column; }
+    .va:modal { position: fixed; inset: 16px; width: auto; height: auto; box-shadow: 0 20px 60px rgba(15, 23, 42, .45); }
+    .va::backdrop { background: rgba(15, 23, 42, .6); }
     .va-barra { display: flex; align-items: center; gap: 4px; padding: 6px 8px; background: #fff; border-bottom: 1px solid var(--color-borde); font-size: .8rem; }
     .va-barra button { min-width: 30px; height: 28px; padding: 0 8px; border: 1px solid var(--color-borde); border-radius: 6px; background: #fff; cursor: pointer; font-weight: 600; }
     .va-barra button:hover { background: #f1f5f9; }
     .va-barra .pct { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; color: #475569; }
     .va-barra .sep { flex: 1; }
     .va-lienzo { overflow: auto; max-height: calc(100vh - 180px); cursor: zoom-in; }
-    .va.grande .va-lienzo { max-height: none; flex: 1; }
+    .va:modal .va-lienzo { max-height: none; flex: 1; }
     .va-lienzo.arrastrando { cursor: grabbing; }
     .va-lienzo img { display: block; height: auto; max-width: none; user-select: none; }
     .va-lienzo img.entera { width: auto !important; max-width: 100%; max-height: calc(100vh - 190px); margin: 0 auto; }
-    .va.grande .va-lienzo img.entera { max-height: calc(100vh - 90px); }
+    .va:modal .va-lienzo img.entera { max-height: calc(100vh - 90px); }
     iframe { display: block; width: 100%; height: calc(100vh - 200px); border: 0; }
-    .va.grande iframe { height: 100%; }
+    .va:modal iframe { flex: 1; height: auto; }
   `,
   template: `
-    @if (grande()) { <div class="va-fondo" (click)="grande.set(false)" aria-hidden="true"></div> }
-    <div class="va" [class.grande]="grande()" role="region" [attr.aria-label]="'El archivo original: ' + nombre()">
+    <dialog #dlg class="va" [attr.aria-label]="'El archivo original: ' + nombre()" (close)="alCerrar()" (click)="fuera($event)">
       <div class="va-barra">
         <button type="button" (click)="cambiar(-25)" [disabled]="zoom() <= 25" aria-label="Alejar">−</button>
         <span class="pct" aria-live="polite">{{ zoom() }}%</span>
@@ -52,7 +53,7 @@ import { DomSanitizer } from '@angular/platform-browser';
       } @else {
         <iframe [src]="pdf()" [title]="nombre()"></iframe>
       }
-    </div>
+    </dialog>
   `,
 })
 export class VistaArchivo {
@@ -69,6 +70,11 @@ export class VistaArchivo {
   protected readonly pdf = computed(() => this.sanitizer.bypassSecurityTrustResourceUrl(`${this.url()}#zoom=${this.zoom() === 100 ? 'page-width' : this.zoom()}`));
 
   constructor() {
+    afterNextRender(() => this.abrir(this.grande()));
+    effect(() => {
+      const grande = this.grande();
+      if (this.dlg().nativeElement.isConnected) this.abrir(grande);
+    });
     // Archivo nuevo: vuelve al ancho del panel.
     effect(() => {
       this.url();
@@ -76,9 +82,28 @@ export class VistaArchivo {
     });
   }
 
-  @HostListener('document:keydown.escape')
-  protected cerrar(): void {
+  private readonly dlg = viewChild.required<ElementRef<HTMLDialogElement>>('dlg');
+
+  /** Abre el diálogo en el lugar o como modal (hay que cerrarlo para cambiar de modo). */
+  private abrir(modal: boolean): void {
+    const d = this.dlg().nativeElement;
+    if (d.open && d.matches(':modal') === modal) return;
+    if (d.open) d.close();
+    if (modal) d.showModal();
+    else d.show();
+  }
+
+  /** Esc o «Cerrar» en pantalla completa: vuelve al lugar. */
+  protected alCerrar(): void {
+    // El «close» llega después: si ya se volvió a abrir (cambio de modo), no es un cierre.
+    if (this.dlg().nativeElement.open) return;
     this.grande.set(false);
+    this.abrir(false);
+  }
+
+  /** Clic en el fondo oscuro. */
+  protected fuera(ev: MouseEvent): void {
+    if (this.grande() && ev.target === this.dlg().nativeElement) this.grande.set(false);
   }
 
   protected cambiar(paso: number): void {

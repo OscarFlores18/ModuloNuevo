@@ -27,10 +27,10 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     .fa-ver button { border: 0; background: #fff; padding: 5px 14px; font: inherit; font-size: .85rem; font-weight: 700; color: #475569; cursor: pointer; }
     .fa-ver button + button { border-left: 1px solid #cbd5e1; }
     .fa-ver button[aria-pressed="true"] { background: #00618a; color: #fff; }
-    .fa-flujo { flex: 1 1 260px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 5px 10px; border-radius: 8px; background: #f0f9ff; border: 1px solid #bae6fd; font-size: .8rem; }
-    .fa-flujo.venta { background: #f0fdf4; border-color: #bbf7d0; }
-    .fa-flujo .tipo { font-weight: 800; color: #0369a1; } .fa-flujo.venta .tipo { color: #15803d; }
-    .fa-flujo small { color: #64748b; } .fa-flujo .fl { color: #94a3b8; }
+    .fa-flujo { flex: 1 1 280px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0; padding: 6px 12px; border-radius: 10px; background: linear-gradient(90deg, #e0f2fe, #f0f9ff); border: 1px solid #7dd3fc; border-left: 5px solid #0284c7; font-size: .92rem; box-shadow: 0 1px 3px rgba(2, 132, 199, .15); }
+    .fa-flujo.venta { background: linear-gradient(90deg, #dcfce7, #f0fdf4); border-color: #86efac; border-left-color: #16a34a; box-shadow: 0 1px 3px rgba(22, 163, 74, .15); }
+    .fa-flujo .tipo { padding: 2px 10px; border-radius: 999px; background: #0284c7; color: #fff; font-weight: 800; font-size: .8rem; } .fa-flujo.venta .tipo { background: #16a34a; }
+    .fa-flujo b { color: #0f172a; } .fa-flujo .fl { color: #0284c7; font-weight: 800; font-size: 1.1rem; } .fa-flujo.venta .fl { color: #16a34a; }
 
     /* Xubio */
     .xb { font-family: "Open Sans", "Segoe UI", Arial, sans-serif; color: #333; background: #fff; border: 1px solid #ddd; border-top: 3px solid #4aa3df; padding: 18px 22px 0; }

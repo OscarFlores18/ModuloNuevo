@@ -491,7 +491,7 @@ export class NuevoControl {
   @HostListener('document:keydown', ['$event'])
   protected alAtajo(ev: KeyboardEvent): void {
     if (ev.key !== 'Enter' || !(ev.ctrlKey || ev.metaKey)) return;
-    if (document.querySelector('.swal2-container, dialog[open]')) return;
+    if (document.querySelector('.swal2-container, dialog[open]:modal')) return;
     ev.preventDefault();
     if (!this.ejecucion.enviando() && !this.ejecucion.hayActiva()) void this.ejecutar();
   }

@@ -19,7 +19,6 @@ const MARGEN = 8;
   selector: 'app-recorrido',
   host: {
     '(window:resize)': 'medir()',
-    '(window:scroll)': 'medir()',
     '(document:keydown)': 'alTeclado($event)',
   },
   template: `
@@ -70,7 +69,13 @@ export class Recorrido {
         setTimeout(() => this.medir(), 350);
       });
     });
-    inject(DestroyRef).onDestroy(() => cancelAnimationFrame(this.cuadro));
+    // La página se mueve dentro de su panel (no la ventana): se escucha cualquier scroll.
+    const alMover = () => this.medir();
+    document.addEventListener('scroll', alMover, { capture: true, passive: true });
+    inject(DestroyRef).onDestroy(() => {
+      cancelAnimationFrame(this.cuadro);
+      document.removeEventListener('scroll', alMover, { capture: true });
+    });
   }
 
   /**
@@ -85,8 +90,14 @@ export class Recorrido {
     const visible = r.top >= encabezado + MARGEN && r.bottom <= window.innerHeight - 200;
     if (visible) return;
     const arriba = r.height + 220 < libre ? Math.max(16, (libre - r.height - 200) / 2) : 16;
-    const destino = window.scrollY + r.top - encabezado - arriba;
-    window.scrollTo({ top: Math.max(0, destino), behavior: 'smooth' });
+    const caja = contenedorConScroll(el);
+    if (caja) {
+      const desde = caja.getBoundingClientRect().top;
+      const tope = Math.max(desde, encabezado);
+      caja.scrollTo({ top: Math.max(0, caja.scrollTop + r.top - tope - arriba), behavior: 'smooth' });
+    } else {
+      window.scrollTo({ top: Math.max(0, window.scrollY + r.top - encabezado - arriba), behavior: 'smooth' });
+    }
   }
 
   protected medir(): void {
@@ -139,4 +150,13 @@ export class Recorrido {
     else return;
     ev.preventDefault();
   }
+}
+
+/** El primer contenedor que se mueve con scroll (el panel principal), o null si es la ventana. */
+function contenedorConScroll(el: HTMLElement): HTMLElement | null {
+  for (let p = el.parentElement; p && p !== document.body; p = p.parentElement) {
+    const o = getComputedStyle(p).overflowY;
+    if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight + 1) return p;
+  }
+  return null;
 }

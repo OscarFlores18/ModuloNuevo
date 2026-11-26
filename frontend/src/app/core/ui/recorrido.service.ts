@@ -87,7 +87,7 @@ export class RecorridoService {
       this.espera = null;
       const pasos = RECORRIDOS[pantalla].filter((p) => this.elemento(p));
       // Con una ventana abierta (aviso, formulario) o la pantalla a medio cargar, espera un poco más.
-      const ocupado = !!document.querySelector('.swal2-container, dialog[open]');
+      const ocupado = !!document.querySelector('.swal2-container, dialog[open]:modal');
       if (ocupado || pasos.length < Math.min(2, RECORRIDOS[pantalla].length)) {
         this.esperarPrimeraVez(pantalla, intento + 1);
         return;
