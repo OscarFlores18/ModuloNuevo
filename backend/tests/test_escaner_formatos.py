@@ -127,3 +127,16 @@ def test_producto_sugerido_por_item():
     varios = [Item(descripcion=d) for d in ("Nafta Infinia", "Lavandina 1L", "Fee de acceso mensual", "Tornillos x100")]
     sugerir_productos(varios)
     assert [i.producto for i in varios] == ["Combustible", "Gastos de limpieza", "Servicios", "Mercaderías"]
+
+
+def test_autocorrige_descripciones_mal_leidas():
+    from backend.app.extraccion.a_excel import Item, corregir_descripcion, corregir_descripciones, verificar, Lectura
+
+    assert corregir_descripcion("AGUA NWINERAL SMART VATER 591NL") == "AGUA MINERAL SMART WATER 591ML"
+    assert corregir_descripcion("SALHON ROSAI") == "SALMON ROSAI"
+    # Lo que no se parece a nada conocido no se toca.
+    assert corregir_descripcion("Fee de acceso mensual a ACONT") == "Fee de acceso mensual a ACONT"
+    items = [Item(descripcion="AGUA NWINERAL SMART VATER 591NL", importe=1), Item(descripcion="ENTRANA", importe=1)]
+    assert corregir_descripciones(items) == 1 and items[0].leido == "AGUA NWINERAL SMART VATER 591NL"
+    v = verificar(Lectura(tipo="comprobante", items=items, totales={"total": 2}))
+    assert any(x.campo == "descripcion" and x.titulo == "Autocorregí 1 descripción" for x in v)

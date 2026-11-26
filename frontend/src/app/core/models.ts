@@ -397,6 +397,8 @@ export interface ItemLeido {
   impuestos_internos?: number | null;
   /** Producto o servicio sugerido (IA o reglas del backend). */
   producto?: string;
+  /** Lo que se leyó antes de autocorregir la descripción. */
+  leido?: string;
 }
 
 export interface HojaLeida {

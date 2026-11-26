@@ -112,6 +112,7 @@ Reglas:
 - "iva" es la suma de todo el IVA discriminado.
 - "impuestos_internos": el total de impuestos internos (y en cada ítem, el suyo si figura).
 - "producto" de cada ítem: la categoría que mejor le queda, una de estas: Mercaderías, Servicios, Honorarios, Combustible, Refrigerio (comidas y bebidas, p. ej. un restaurante), Gastos de limpieza, Alquiler.
+- "descripcion" de cada ítem tal como figura pero sin errores de lectura (p. ej. «AGUA MINERAL SMART WATER 591ML»).
 - "percepcion_iibb": la percepción de Ingresos Brutos de Buenos Aires (ARBA).
 - "otros_tributos": el resto (percepción de IVA, IIBB de otras jurisdicciones, etc.), sin repetir lo anterior.
 - Si un dato no está o no se lee, usá "" o null. No inventes nada.

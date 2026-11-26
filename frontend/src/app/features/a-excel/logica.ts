@@ -202,7 +202,8 @@ export function productosSugeridos(empresa: string, operacion: Operacion): strin
 }
 
 /** Lo que el usuario eligió para una descripción: la próxima vez se sugiere eso. */
-const CLAVE_POR_ITEM = 'cf-producto-por-item';
+// v2: la anterior aprendía de los botones de arriba (p. ej. un puré como «Alquiler»).
+const CLAVE_POR_ITEM = 'cf-producto-por-item-v2';
 const claveItem = (empresa: string, descripcion: string) =>
   `${empresa}|${descripcion.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()}`;
 

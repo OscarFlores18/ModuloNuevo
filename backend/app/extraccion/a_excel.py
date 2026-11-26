@@ -84,6 +84,8 @@ class Item(BaseModel):
     impuestos_internos: float | None = None
     # Producto o servicio sugerido para Xubio (lo propone la IA o las reglas de abajo).
     producto: str = Field(default="", max_length=60)
+    # Lo que decía antes de autocorregirlo (vacío si no se tocó).
+    leido: str = Field(default="", max_length=300)
 
 
 class Hoja(BaseModel):
@@ -584,6 +586,73 @@ _REGLAS_PRODUCTO = (
 )
 
 
+# --- Autocorrección de descripciones mal leídas -------------------------------------
+
+# Palabras de comercios (comida, bebidas, combustible, limpieza, servicios) para corregir
+# lo que el OCR lee mal («NWINERAL» -> «MINERAL», «VATER» -> «WATER»).
+_VOCABULARIO = set("""
+agua mineral gasificada saborizada water smart sprite fanta pepsi coca cola schweppes tonica soda gaseosa levite villavicencio
+cerveza quilmes stella artois corona heineken patagonia brahma vino tinto blanco rosado malbec cabernet syrah chardonnay espumante
+jugo naranja limon pomelo manzana durazno licuado limonada cafe cortado lagrima capuchino americano expreso te leche chocolate
+medialuna medialunas tostado tostados sandwich sandwiches jamon queso crudo cocido pollo carne vacio entrana bife chorizo morcilla
+asado matambre milanesa napolitana suprema salmon merluza pescado langostinos rabas papas papa fritas pure boniato batata calabaza
+zapallo ensalada mixta verde rucula tomate lechuga cebolla huevo huevos hamburguesa hamburguesas doble triple simple cheddar bacon
+panceta pan porcion porciones guarnicion postre helado flan tiramisu brownie torta empanada empanadas pizza muzzarella fugazzeta
+coleslaw salsa criolla chimichurri provoleta parrillada menu ejecutivo almuerzo cena desayuno merienda cubierto propina
+nafta super premium infinia gasoil diesel euro lubricante aceite filtro lavado
+lavandina detergente jabon liquido polvo papel higienico rollo cocina servilletas trapo rejilla escoba esponja desinfectante limpiador
+servicio servicios honorarios abono mensual alquiler expensas mantenimiento asesoramiento contable consultoria estudio acceso
+internet telefonia hosting licencia flete envio
+""".split())
+_CONFUSIONES_LETRAS = (("NW", "M"), ("RN", "M"), ("VV", "W"), ("V", "W"), ("W", "V"), ("0", "O"), ("1", "I"), ("5", "S"), ("8", "B"))
+
+
+def _corregir_palabra(palabra: str) -> str:
+    base = norm(palabra)
+    if len(base) < 4 or base in _VOCABULARIO or not re.search(r"[a-z]", base):
+        return palabra
+    candidatas = {base}
+    for mal, bien in _CONFUSIONES_LETRAS:
+        candidatas.add(norm(palabra.upper().replace(mal, bien)))
+    mejor, puntaje = "", 0.0
+    for c in candidatas:
+        if c in _VOCABULARIO:
+            mejor, puntaje = c, 1.0
+            break
+        # Parecida y con la misma primera letra (si no, «ACONT» terminaba en «BACON»).
+        for m in difflib.get_close_matches(c, [v for v in _VOCABULARIO if v[0] == c[0]], n=1, cutoff=0.8):
+            p = difflib.SequenceMatcher(None, c, m).ratio()
+            if p > puntaje:
+                mejor, puntaje = m, p
+    if not mejor or mejor == base:
+        return palabra
+    if palabra.isupper():
+        return mejor.upper()
+    return mejor.capitalize() if palabra[:1].isupper() else mejor
+
+
+def corregir_descripcion(texto: str) -> str:
+    """La descripción con las palabras mal leídas corregidas y las unidades arregladas
+    («591NL» -> «591ML», «500 6R» -> «500 GR»)."""
+    t = re.sub(r"(\d)\s*[NnHh][Ll]\b", lambda m: m.group(1) + ("ML" if m.group(0)[-1].isupper() else "ml"), texto)
+    t = re.sub(r"(\d)\s*6[Rr]\b", r"\1GR", t)
+    t = re.sub(r"(\d)\s*[Kk]6\b", r"\1KG", t)
+    return re.sub(r"[A-Za-zÁÉÍÓÚÑáéíóúñ0-9]+", lambda m: _corregir_palabra(m.group(0)), t)
+
+
+def corregir_descripciones(items: list[Item]) -> int:
+    """Autocorrige cada ítem y guarda lo que decía en «leido». Devuelve cuántos cambió."""
+    cambiados = 0
+    for item in items:
+        if item.leido:
+            continue
+        nueva = corregir_descripcion(item.descripcion)
+        if nueva != item.descripcion:
+            item.leido, item.descripcion = item.descripcion, nueva
+            cambiados += 1
+    return cambiados
+
+
 def sugerir_producto(descripcion: str) -> str:
     d = norm(descripcion)
     for producto, patron in _REGLAS_PRODUCTO:
@@ -595,12 +664,11 @@ def sugerir_producto(descripcion: str) -> str:
 def sugerir_productos(items: list[Item]) -> None:
     """Completa «producto» donde falta. Si casi todo el detalle es comida (un restaurante),
     lo que no se reconoce también va como refrigerio; si no, como mercaderías."""
-    sugeridos = [i.producto or sugerir_producto(i.descripcion) for i in items]
+    sugeridos = [sugerir_producto(i.descripcion) or (i.producto if i.producto in PRODUCTOS else "") for i in items]
     conocidos = [x for x in sugeridos if x]
     resto = "Refrigerio" if conocidos and conocidos.count("Refrigerio") >= len(conocidos) * 0.6 else "Mercaderías"
     for item, sugerido in zip(items, sugeridos):
-        if not item.producto:
-            item.producto = sugerido or (resto if item.descripcion.strip() else "")
+        item.producto = sugerido or (resto if item.descripcion.strip() else "")
 
 
 def _leer_imagen(nombre: str, contenido: bytes) -> Lectura:
@@ -734,6 +802,7 @@ def leer(nombre: str, contenido: bytes) -> Lectura:
     else:
         raise ValueError(f"«{nombre}»: formato no soportado (foto, captura, PDF, CSV o Excel).")
     if lectura.tipo == "comprobante":
+        corregir_descripciones(lectura.items)
         sugerir_productos(lectura.items)
     lectura.verificaciones = verificar(lectura)
     return lectura
@@ -931,6 +1000,18 @@ def _verificar_totales(t: dict[str, float | None], suma_items: float | None = No
 
 
 def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
+    corregidos = [(n + 1, x) for n, x in enumerate(items) if x.leido and x.leido != x.descripcion]
+    aviso = [Verificacion(
+        campo="descripcion", nivel="aviso",
+        mensaje="Estas descripciones se leyeron mal y las corregí solo (en naranja en el detalle): "
+                + "; ".join(f"ítem {n}: «{x.leido}» → «{x.descripcion}»" for n, x in corregidos) + ". Revisalas.",
+        titulo=f"Autocorregí {len(corregidos)} {'descripción' if len(corregidos) == 1 else 'descripciones'}",
+        datos=[f"#{n} {x.descripcion}" for n, x in corregidos[:4]],
+    )] if corregidos else []
+    return aviso + _verificar_items_sin_correccion(items, t)
+
+
+def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
     if not items:
         return [Verificacion(campo="items", nivel="aviso", mensaje="No se pudo leer el detalle: el Excel va a tener solo el encabezado y los totales.", titulo="Sin detalle")]
     v: list[Verificacion] = []

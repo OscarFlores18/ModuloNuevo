@@ -38,8 +38,8 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     @media (max-width: 760px) { .xb-cab { grid-template-columns: max-content minmax(0, 1fr); } }
     .xb label, .xb .xb-l { font-size: .95rem; white-space: nowrap; }
     .xb-q { display: inline-grid; place-items: center; width: 13px; height: 13px; margin-left: 4px; border-radius: 50%; background: #bbb; color: #fff; font-size: 9px; font-weight: 700; vertical-align: 1px; }
-    .xb-in.xb-sug::placeholder { color: #7c3aed; font-weight: 600; }
-    .xb-prod .xb-sug-todos { border-color: #c4b5fd; background: #f5f3ff; color: #6d28d9; font-weight: 700; }
+    .xb-in.xb-auto { background: #fff7ed; border-color: #fb923c; color: #9a3412; }
+    .xb-auto-aviso { margin: 0 0 6px; padding: 4px 10px; border-left: 3px solid #fb923c; background: #fff7ed; color: #9a3412; font-size: .8rem; }
     .xb-in { width: 100%; min-width: 0; height: 26px; padding: 2px 6px; border: 1px solid #a9a9a9; border-radius: 0; font: inherit; font-size: .88rem; color: #333; background: #fff; }
     .xb-in:focus { outline: 1px solid #4aa3df; border-color: #4aa3df; }
     .xb-in.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -147,13 +147,11 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
           <div class="xb-prod" aria-label="Productos sugeridos">
             <span>Productos:</span>
             @for (p of productos(); track p) { <button type="button" (click)="usarProducto(p)">+ {{ p }}</button> }
-            @if (faltanSugeridos()) {
-              <button type="button" class="xb-sug-todos" (click)="usarSugeridos()" title="Pone en cada ítem el producto sugerido (el que eligiste antes para esa descripción o el que propuso la IA)">✦ Completar con lo sugerido ({{ faltanSugeridos() }})</button>
-            }
           </div>
         }
 
         <div class="xb-items">
+          @if (autoAviso(); as a) { <p class="xb-auto-aviso" role="status">✎ En naranja: {{ a }}. Revisalo antes de guardar.</p> }
           <table class="xb-tabla">
             <thead>
               <tr>
@@ -167,13 +165,14 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
                 <tr>
                   <td><button type="button" class="xb-x" (click)="sacar.emit(i)" [attr.aria-label]="'Sacar el ítem ' + (i + 1)">✕</button></td>
                   <td style="width: 150px">
-                    <input class="xb-in" [class.xb-sug]="!extras().productos[i] && sugerido(i)" [value]="extras().productos[i] ?? ''" [attr.list]="id + '-prods'"
-                      [placeholder]="sugerido(i) ? '✦ ' + sugerido(i) : 'Elegí o escribí'" [title]="sugerido(i) ? 'Sugerido: ' + sugerido(i) + ' (doble clic para usarlo)' : ''"
-                      (dblclick)="!extras().productos[i] && sugerido(i) && ponerProducto(i, sugerido(i))"
+                    <input class="xb-in" [class.xb-auto]="autoProducto(i)" [value]="productoDe(i)" [attr.list]="id + '-prods'" placeholder="Elegí o escribí"
+                      [title]="autoProducto(i) ? 'Autocompletado según la descripción: revisalo' : ''"
                       (change)="ponerProducto(i, val($event))" aria-label="Producto o servicio" />
                   </td>
                   <td style="width: 130px"><input class="xb-in" [value]="extras().centros[i] ?? ''" (change)="lista('centros', i, val($event))" aria-label="Centro de costo" /></td>
-                  <td><input class="xb-in" [value]="x.descripcion" (change)="item.emit([i, 'descripcion', val($event)])" aria-label="Observaciones" /></td>
+                  <td><input class="xb-in" [class.xb-auto]="!!x.leido && x.leido !== x.descripcion" [value]="x.descripcion"
+                    [title]="x.leido && x.leido !== x.descripcion ? 'Autocorregido: decía «' + x.leido + '»' : ''"
+                    (change)="item.emit([i, 'descripcion', val($event)])" aria-label="Observaciones" /></td>
                   <td style="width: 80px"><input class="xb-in num" [value]="dec(x.cantidad)" (change)="item.emit([i, 'cantidad', val($event)])" aria-label="Cantidad" /></td>
                   <td style="width: 105px"><input class="xb-in num" [value]="dec(x.precio)" (change)="item.emit([i, 'precio', val($event)])" aria-label="Precio" /></td>
                   <td style="width: 64px"><input class="xb-in num" [value]="dec(extras().dto[i] ?? 0)" (change)="lista('dto', i, val($event))" aria-label="Descuento" /></td>
@@ -210,7 +209,7 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
           <span>Total <b>{{ dec(l.totales['total']) }}</b></span>
         </div>
         <div class="xb-pie">
-          <button type="button" class="guardar" (click)="guardar.emit(extras())" [disabled]="ocupado()" title="Genera el Excel con lo que ves">{{ ocupado() ? 'Armando…' : 'Guardar' }}</button>
+          <button type="button" class="guardar" (click)="guardar.emit(paraGuardar())" [disabled]="ocupado()" title="Genera el Excel con lo que ves">{{ ocupado() ? 'Armando…' : 'Guardar' }}</button>
           <button type="button" (click)="eliminar.emit()" title="Saca este archivo de la lista">Eliminar</button>
           <button type="button" (click)="cancelar.emit()" title="Vuelve arriba sin generar">Cancelar</button>
         </div>
@@ -369,14 +368,15 @@ export class Factura {
     });
   }
 
-  protected ponerProducto(i: number, nombre: string): void {
+  protected ponerProducto(i: number, nombre: string, recordar = true): void {
     this.cambiar((e) => {
       const productos = [...e.productos];
       productos[i] = nombre.trim();
       return { ...e, productos };
     });
     const empresa = this.estudio()?.empresa;
-    recordarProductoDeItem(empresa ?? '', this.lectura().items[i]?.descripcion ?? '', nombre.trim());
+    // Solo lo que se elige en el ítem enseña (no los botones de arriba).
+    if (recordar) recordarProductoDeItem(empresa ?? '', this.lectura().items[i]?.descripcion ?? '', nombre.trim());
     if (empresa && nombre.trim()) {
       recordarProducto(empresa, nombre.trim(), this.operacion());
       this.recordados.update((n) => n + 1);
@@ -391,26 +391,37 @@ export class Factura {
     return productoRecordado(this.estudio()?.empresa ?? '', x.descripcion) || x.producto || '';
   }
 
-  protected readonly faltanSugeridos = computed(() =>
-    this.lectura().items.filter((_, i) => !this.extras().productos[i] && this.sugerido(i)).length,
-  );
-
-  protected usarSugeridos(): void {
-    this.lectura().items.forEach((_, i) => {
-      const s = this.sugerido(i);
-      if (s && !this.extras().productos[i]) this.ponerProducto(i, s);
-    });
+  /** El producto que se ve: el elegido o, si no, el sugerido (autocompletado, en naranja). */
+  protected productoDe(i: number): string {
+    return this.extras().productos[i] || this.sugerido(i);
   }
 
+  protected autoProducto(i: number): boolean {
+    return !this.extras().productos[i] && !!this.sugerido(i);
+  }
+
+  /** «Autocompleté 8 productos y corregí 2 descripciones». */
+  protected readonly autoAviso = computed(() => {
+    const items = this.lectura().items;
+    const productos = items.filter((_, i) => this.autoProducto(i)).length;
+    const descripciones = items.filter((x) => x.leido && x.leido !== x.descripcion).length;
+    const partes = [
+      productos ? `autocompleté ${productos} ${productos === 1 ? 'producto' : 'productos'}` : '',
+      descripciones ? `corregí ${descripciones} ${descripciones === 1 ? 'descripción mal leída' : 'descripciones mal leídas'}` : '',
+    ].filter(Boolean);
+    return partes.length ? partes.join(' y ') : '';
+  });
+
+  /** Lo que va al Excel: con los productos autocompletados incluidos. */
+  protected paraGuardar(): Extras {
+    return { ...this.extras(), productos: this.lectura().items.map((_, i) => this.productoDe(i)) };
+  }
+
+  /** Un botón de producto agrega un ítem con ese producto (no pisa lo que ya tiene un ítem). */
   protected usarProducto(nombre: string): void {
-    const libre = this.lectura().items.findIndex((_, i) => !this.extras().productos[i]);
-    if (libre >= 0) {
-      this.ponerProducto(libre, nombre);
-      return;
-    }
     const nuevo = this.lectura().items.length;
     this.agregar.emit();
-    this.ponerProducto(nuevo, nombre);
+    this.ponerProducto(nuevo, nombre, false);
   }
 
   private cambiar(f: (e: Extras) => Extras): void {
