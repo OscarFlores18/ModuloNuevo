@@ -393,6 +393,8 @@ export interface ItemLeido {
   precio: number | null;
   alicuota: number | null;
   importe: number | null;
+  /** Impuestos internos del ítem (bebidas, cigarrillos, combustibles…). */
+  impuestos_internos?: number | null;
 }
 
 export interface HojaLeida {

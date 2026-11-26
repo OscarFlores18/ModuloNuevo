@@ -25,6 +25,8 @@ export const CAMPOS_TOTALES: { id: string; etiqueta: string }[] = [
   { id: 'no_gravado', etiqueta: 'No gravado' },
   { id: 'exento', etiqueta: 'Exento' },
   { id: 'iva', etiqueta: 'IVA' },
+  { id: 'impuestos_internos', etiqueta: 'Impuestos internos' },
+  { id: 'percepcion_iibb', etiqueta: 'Percepción IIBB Bs. As.' },
   { id: 'otros_tributos', etiqueta: 'Otros tributos' },
   { id: 'total', etiqueta: 'Total' },
 ];

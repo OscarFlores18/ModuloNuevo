@@ -98,3 +98,21 @@ def test_excel_con_el_modelo_de_importacion_de_xubio():
     assert filas[0][:4] == ["NUMERODECONTROL", "CLIENTE", "TIPO", "NUMERO"]
     assert filas[1][1:4] == ["CLIENTE PRUEBA S.A.", 1, "A-00004-00000751"]
     assert filas[2][10] == "Honorarios" and filas[2][13:] == [1, 2479338.84, None, 2479338.84, 21]
+
+
+def test_impuestos_internos_y_percepcion_iibb():
+    import io
+
+    from openpyxl import load_workbook
+
+    from backend.app.extraccion.a_excel import Item, Lectura, _totales, excel_importacion, verificar
+
+    t = _totales(["Neto gravado: 1.000,00", "IVA 21%: 210,00", "Impuestos internos: 50,00",
+                  "Percepción IIBB Bs. As.: 30,00", "Importe Otros Tributos: 80,00", "Total: 1.290,00"])
+    assert (t["impuestos_internos"], t["percepcion_iibb"], t["otros_tributos"]) == (50, 30, 0)
+    lectura = Lectura(tipo="comprobante", encabezado={"fecha": "01/10/2026"}, totales=t, items=[
+        Item(descripcion="Gaseosa", cantidad=1, precio=1000, alicuota=21, importe=1000, impuestos_internos=50)])
+    assert any(v.campo == "total" and v.nivel == "ok" for v in verificar(lectura))
+    wb = load_workbook(io.BytesIO(excel_importacion(lectura, "Compras")))
+    filas = list(wb["Impuestos y percepciones"].iter_rows(values_only=True))
+    assert filas[1:] == [("Impuestos internos", 1, "Gaseosa", 50), ("Percepción IIBB Bs. As.", None, None, 30)]

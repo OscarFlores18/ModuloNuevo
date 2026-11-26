@@ -49,12 +49,14 @@ MAX_PAGINAS = 20
 TOLERANCIA = 0.05
 ALICUOTAS = (21.0, 10.5, 27.0, 5.0, 2.5)
 
-TOTALES = ("neto_gravado", "no_gravado", "exento", "iva", "otros_tributos", "total")
+TOTALES = ("neto_gravado", "no_gravado", "exento", "iva", "impuestos_internos", "percepcion_iibb", "otros_tributos", "total")
 ETIQUETAS_TOTALES = {
     "neto_gravado": "Neto gravado",
     "no_gravado": "Neto no gravado",
     "exento": "Exento",
     "iva": "IVA",
+    "impuestos_internos": "Impuestos internos",
+    "percepcion_iibb": "Percepción IIBB Bs. As.",
     "otros_tributos": "Otros tributos",
     "total": "Total",
 }
@@ -79,6 +81,7 @@ class Item(BaseModel):
     precio: float | None = None
     alicuota: float | None = None
     importe: float | None = None
+    impuestos_internos: float | None = None
 
 
 class Hoja(BaseModel):
@@ -180,6 +183,12 @@ def _totales(lineas: list[str]) -> dict[str, float | None]:
             t.setdefault("iva", v)
         elif tiene(linea, "exento") or tiene(linea, "exentas"):
             t.setdefault("exento", v)
+        elif re.search(r"\bimp(?:uestos?|\.)?\s*int(?:ernos?|\.)?\b", norm(linea)):
+            t["impuestos_internos"] = round((t.get("impuestos_internos") or 0) + v, 2)
+        elif re.search(r"\bperc\w*\.?\s*(?:de\s+)?(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos)", norm(linea)):
+            # Bs. As. (ARBA) aparte; las de otras jurisdicciones (CABA…) van a otros tributos.
+            clave = "otros_tributos_det" if re.search(r"\b(caba|ciudad|agip|capital)\b", norm(linea)) else "percepcion_iibb"
+            t[clave] = round((t.get(clave) or 0) + v, 2)
         elif tiene(linea, "otros tributos"):
             t.setdefault("otros_tributos", v)
         elif tiene(linea, "total iva"):
@@ -193,6 +202,22 @@ def _totales(lineas: list[str]) -> dict[str, float | None]:
     # «Importe neto» / «Bruto» / «Subtotal»: el neto gravado si no hay otro rótulo de neto.
     if neto_sin_rotulo is not None and not any(k in t for k in ("neto_gravado", "no_gravado", "exento")):
         t["neto_gravado"] = neto_sin_rotulo
+    return _separar_tributos(t)
+
+
+def _separar_tributos(t: dict[str, float | None]) -> dict[str, float | None]:
+    """Muchas facturas listan las percepciones y además las suman en «Otros tributos»:
+    si es así, «Otros tributos» queda solo con lo que no se separó."""
+    otras = t.pop("otros_tributos_det", None)
+    separadas = round((t.get("impuestos_internos") or 0) + (t.get("percepcion_iibb") or 0), 2)
+    if t.get("otros_tributos") is None:
+        if otras:
+            t["otros_tributos"] = otras
+        return t
+    if separadas and t["otros_tributos"] >= separadas - TOLERANCIA:
+        restado = dict(t, otros_tributos=round(t["otros_tributos"] - separadas, 2))
+        if _cierra(restado) or not _cierra(t):
+            return restado
     return t
 
 
@@ -531,6 +556,7 @@ def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
             precio=_numero(x.get("precio")),
             alicuota=_numero(x.get("alicuota")),
             importe=_numero(x.get("importe")),
+            impuestos_internos=_numero(x.get("impuestos_internos")),
         )
         for x in (datos.get("items") or [])[:2000]
         if isinstance(x, dict)
@@ -1071,6 +1097,29 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
     return filas
 
 
+def _hoja_impuestos(wb, lectura: Lectura) -> None:
+    """El modelo de Xubio no trae columnas para impuestos internos ni percepciones: van
+    en otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos»."""
+    t = lectura.totales
+    internos = [(n + 1, i.descripcion, i.impuestos_internos) for n, i in enumerate(lectura.items) if i.impuestos_internos]
+    if not (internos or t.get("impuestos_internos") or t.get("percepcion_iibb") or t.get("otros_tributos")):
+        return
+    ws = wb.create_sheet("Impuestos y percepciones")
+    ws.append(["CONCEPTO", "ITEM", "DETALLE", "IMPORTE"])
+    for n, desc, v in internos:
+        ws.append(["Impuestos internos", n, desc, v])
+    if t.get("impuestos_internos") and not internos:
+        ws.append(["Impuestos internos", None, "Total de la factura", t["impuestos_internos"]])
+    if t.get("percepcion_iibb"):
+        ws.append(["Percepción IIBB Bs. As.", None, None, t["percepcion_iibb"]])
+    if t.get("otros_tributos"):
+        ws.append(["Otros tributos", None, None, t["otros_tributos"]])
+    for celda in ws["D"][1:]:
+        celda.number_format = "#,##0.00"
+    for letra, ancho in zip("ABCD", (26, 8, 40, 14)):
+        ws.column_dimensions[letra].width = ancho
+
+
 def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> bytes:
     from openpyxl import Workbook
 
@@ -1091,6 +1140,7 @@ def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
             celda.number_format = "#,##0.00"
     for i, c in enumerate(encabezado):
         ws.column_dimensions[chr(65 + i)].width = max(12, len(c) + 2)
+    _hoja_impuestos(wb, lectura)
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()

@@ -154,7 +154,7 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
               <tr>
                 <th style="width: 18px"></th><th>Producto/Servicio<span class="xb-q">?</span></th><th>Centro de Costo<span class="xb-q">?</span></th><th>Observaciones<span class="xb-q">?</span></th>
                 <th class="n">Cantidad<span class="xb-q">?</span></th><th class="n">Precio<span class="xb-q">?</span></th><th class="n">% Dto.<span class="xb-q">?</span></th>
-                <th class="n">Importe<span class="xb-q">?</span></th><th class="n">IVA<span class="xb-q">?</span></th><th class="n">Total<span class="xb-q">?</span></th>
+                <th class="n">Importe<span class="xb-q">?</span></th><th class="n">IVA<span class="xb-q">?</span></th><th class="n" title="Impuestos internos del ítem">Imp. Int.</th><th class="n">Total<span class="xb-q">?</span></th>
               </tr>
             </thead>
             <tbody>
@@ -176,6 +176,7 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
                       @if (x.alicuota !== null && !alicuotas.includes(x.alicuota)) { <option selected>{{ x.alicuota }}%</option> }
                     </select>
                   </td>
+                  <td style="width: 90px"><input class="xb-in num" [value]="dec(x.impuestos_internos)" placeholder="0,00" (change)="item.emit([i, 'impuestos_internos', val($event)])" aria-label="Impuestos internos del ítem" /></td>
                   <td class="gris" style="width: 95px">{{ dec(totalDe(x)) }}</td>
                 </tr>
               }
@@ -241,6 +242,8 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
           @if (l.totales['no_gravado']) { <div><span>Importe Neto No Gravado: $</span><span>{{ dec(l.totales['no_gravado']) }}</span></div> }
           @if (l.totales['exento']) { <div><span>Importe Exento: $</span><span>{{ dec(l.totales['exento']) }}</span></div> }
           <div><span>IVA: $</span><span>{{ dec(l.totales['iva']) }}</span></div>
+          @if (l.totales['impuestos_internos']) { <div><span>Impuestos Internos: $</span><span>{{ dec(l.totales['impuestos_internos']) }}</span></div> }
+          @if (l.totales['percepcion_iibb']) { <div><span>Percepción IIBB Bs. As.: $</span><span>{{ dec(l.totales['percepcion_iibb']) }}</span></div> }
           <div><span>Importe Otros Tributos: $</span><span>{{ dec(l.totales['otros_tributos'] ?? 0) }}</span></div>
           <div><span>Importe Total: $</span><span>{{ dec(l.totales['total']) }}</span></div>
         </div>
@@ -274,7 +277,9 @@ export class Factura {
     { id: 'iva', etiqueta: 'IVA' },
     { id: 'no_gravado', etiqueta: 'No gravado' },
     { id: 'exento', etiqueta: 'Exento' },
-    { id: 'otros_tributos', etiqueta: 'Percepciones / otros tributos' },
+    { id: 'impuestos_internos', etiqueta: 'Impuestos internos' },
+    { id: 'percepcion_iibb', etiqueta: 'Percepción IIBB Bs. As.' },
+    { id: 'otros_tributos', etiqueta: 'Otras percepciones / tributos' },
     { id: 'total', etiqueta: 'Total' },
   ];
   protected readonly cuit = (c: string | undefined) => (c ? cuitConGuiones(c) : '—');
@@ -304,7 +309,7 @@ export class Factura {
   });
   protected readonly impuestos = computed(() => {
     const t = this.lectura().totales;
-    return (t['iva'] ?? 0) + (t['otros_tributos'] ?? 0);
+    return (t['iva'] ?? 0) + (t['impuestos_internos'] ?? 0) + (t['percepcion_iibb'] ?? 0) + (t['otros_tributos'] ?? 0);
   });
 
   // «1 - Factura A» / «81 - Tique Factura A»: letra, código y nombre como en ARCA.
@@ -341,7 +346,7 @@ export class Factura {
   }
 
   protected totalDe(x: ItemLeido): number {
-    return (x.importe ?? 0) + this.ivaDe(x, x.alicuota ?? 0);
+    return (x.importe ?? 0) + this.ivaDe(x, x.alicuota ?? 0) + (x.impuestos_internos ?? 0);
   }
 
   protected extra(campo: 'condicion' | 'vencimiento', valor: string): void {
