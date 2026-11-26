@@ -395,6 +395,8 @@ export interface ItemLeido {
   importe: number | null;
   /** Impuestos internos del ítem (bebidas, cigarrillos, combustibles…). */
   impuestos_internos?: number | null;
+  /** Producto o servicio sugerido (IA o reglas del backend). */
+  producto?: string;
 }
 
 export interface HojaLeida {

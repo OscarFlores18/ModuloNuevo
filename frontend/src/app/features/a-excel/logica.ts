@@ -201,6 +201,32 @@ export function productosSugeridos(empresa: string, operacion: Operacion): strin
   return [...usados, ...PRODUCTOS_BASE[operacion]].filter((x) => !vistos.has(clave(x)) && !!vistos.add(clave(x))).slice(0, 10);
 }
 
+/** Lo que el usuario eligió para una descripción: la próxima vez se sugiere eso. */
+const CLAVE_POR_ITEM = 'cf-producto-por-item';
+const claveItem = (empresa: string, descripcion: string) =>
+  `${empresa}|${descripcion.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim()}`;
+
+export function productoRecordado(empresa: string, descripcion: string): string {
+  try {
+    return (JSON.parse(localStorage.getItem(CLAVE_POR_ITEM) ?? '{}') as Record<string, string>)[claveItem(empresa, descripcion)] ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function recordarProductoDeItem(empresa: string, descripcion: string, producto: string): void {
+  if (!empresa || !descripcion.trim() || !producto) return;
+  try {
+    const todos = JSON.parse(localStorage.getItem(CLAVE_POR_ITEM) ?? '{}') as Record<string, string>;
+    todos[claveItem(empresa, descripcion)] = producto;
+    const claves = Object.keys(todos);
+    for (const k of claves.slice(0, Math.max(0, claves.length - 500))) delete todos[k];
+    localStorage.setItem(CLAVE_POR_ITEM, JSON.stringify(todos));
+  } catch {
+    /* sin almacenamiento */
+  }
+}
+
 export function recordarProducto(empresa: string, producto: string, operacion: Operacion = 'Compras'): void {
   try {
     const todos = leerProductos();

@@ -1,6 +1,6 @@
 import { Component, computed, effect, input, output, signal } from '@angular/core';
 import { ItemLeido, LecturaExcel } from '../../core/models';
-import { FacturaDelEstudio, aTexto, cuitConGuiones, productosSugeridos, recordarProducto } from './logica';
+import { FacturaDelEstudio, aTexto, cuitConGuiones, productoRecordado, productosSugeridos, recordarProducto, recordarProductoDeItem } from './logica';
 
 /** Lo que solo existe en pantalla (todavía no va al Excel ni a Xubio). */
 export interface Extras {
@@ -38,6 +38,8 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     @media (max-width: 760px) { .xb-cab { grid-template-columns: max-content minmax(0, 1fr); } }
     .xb label, .xb .xb-l { font-size: .95rem; white-space: nowrap; }
     .xb-q { display: inline-grid; place-items: center; width: 13px; height: 13px; margin-left: 4px; border-radius: 50%; background: #bbb; color: #fff; font-size: 9px; font-weight: 700; vertical-align: 1px; }
+    .xb-in.xb-sug::placeholder { color: #7c3aed; font-weight: 600; }
+    .xb-prod .xb-sug-todos { border-color: #c4b5fd; background: #f5f3ff; color: #6d28d9; font-weight: 700; }
     .xb-in { width: 100%; min-width: 0; height: 26px; padding: 2px 6px; border: 1px solid #a9a9a9; border-radius: 0; font: inherit; font-size: .88rem; color: #333; background: #fff; }
     .xb-in:focus { outline: 1px solid #4aa3df; border-color: #4aa3df; }
     .xb-in.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -145,6 +147,9 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
           <div class="xb-prod" aria-label="Productos sugeridos">
             <span>Productos:</span>
             @for (p of productos(); track p) { <button type="button" (click)="usarProducto(p)">+ {{ p }}</button> }
+            @if (faltanSugeridos()) {
+              <button type="button" class="xb-sug-todos" (click)="usarSugeridos()" title="Pone en cada ítem el producto sugerido (el que eligiste antes para esa descripción o el que propuso la IA)">✦ Completar con lo sugerido ({{ faltanSugeridos() }})</button>
+            }
           </div>
         }
 
@@ -162,7 +167,10 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
                 <tr>
                   <td><button type="button" class="xb-x" (click)="sacar.emit(i)" [attr.aria-label]="'Sacar el ítem ' + (i + 1)">✕</button></td>
                   <td style="width: 150px">
-                    <input class="xb-in" [value]="extras().productos[i] ?? ''" [attr.list]="id + '-prods'" placeholder="Elegí o escribí" (change)="ponerProducto(i, val($event))" aria-label="Producto o servicio" />
+                    <input class="xb-in" [class.xb-sug]="!extras().productos[i] && sugerido(i)" [value]="extras().productos[i] ?? ''" [attr.list]="id + '-prods'"
+                      [placeholder]="sugerido(i) ? '✦ ' + sugerido(i) : 'Elegí o escribí'" [title]="sugerido(i) ? 'Sugerido: ' + sugerido(i) + ' (doble clic para usarlo)' : ''"
+                      (dblclick)="!extras().productos[i] && sugerido(i) && ponerProducto(i, sugerido(i))"
+                      (change)="ponerProducto(i, val($event))" aria-label="Producto o servicio" />
                   </td>
                   <td style="width: 130px"><input class="xb-in" [value]="extras().centros[i] ?? ''" (change)="lista('centros', i, val($event))" aria-label="Centro de costo" /></td>
                   <td><input class="xb-in" [value]="x.descripcion" (change)="item.emit([i, 'descripcion', val($event)])" aria-label="Observaciones" /></td>
@@ -368,6 +376,7 @@ export class Factura {
       return { ...e, productos };
     });
     const empresa = this.estudio()?.empresa;
+    recordarProductoDeItem(empresa ?? '', this.lectura().items[i]?.descripcion ?? '', nombre.trim());
     if (empresa && nombre.trim()) {
       recordarProducto(empresa, nombre.trim(), this.operacion());
       this.recordados.update((n) => n + 1);
@@ -375,6 +384,24 @@ export class Factura {
   }
 
   /** Botón de producto: va al primer ítem sin producto; si no hay, agrega uno. */
+  /** Lo sugerido para el ítem: lo que eligió antes para esa descripción, o lo que propuso la IA. */
+  protected sugerido(i: number): string {
+    const x = this.lectura().items[i];
+    if (!x) return '';
+    return productoRecordado(this.estudio()?.empresa ?? '', x.descripcion) || x.producto || '';
+  }
+
+  protected readonly faltanSugeridos = computed(() =>
+    this.lectura().items.filter((_, i) => !this.extras().productos[i] && this.sugerido(i)).length,
+  );
+
+  protected usarSugeridos(): void {
+    this.lectura().items.forEach((_, i) => {
+      const s = this.sugerido(i);
+      if (s && !this.extras().productos[i]) this.ponerProducto(i, s);
+    });
+  }
+
   protected usarProducto(nombre: string): void {
     const libre = this.lectura().items.findIndex((_, i) => !this.extras().productos[i]);
     if (libre >= 0) {

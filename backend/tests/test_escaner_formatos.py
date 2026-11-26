@@ -116,3 +116,14 @@ def test_impuestos_internos_y_percepcion_iibb():
     wb = load_workbook(io.BytesIO(excel_importacion(lectura, "Compras")))
     filas = list(wb["Impuestos y percepciones"].iter_rows(values_only=True))
     assert filas[1:] == [("Impuestos internos", 1, "Gaseosa", 50), ("Percepción IIBB Bs. As.", None, None, 30)]
+
+
+def test_producto_sugerido_por_item():
+    from backend.app.extraccion.a_excel import Item, sugerir_productos
+
+    restaurante = [Item(descripcion=d) for d in ("AGUA NWINERA", "ENTRANA", "SALHON ROSAI", "DOBLE OKLAHOMA")]
+    sugerir_productos(restaurante)
+    assert {i.producto for i in restaurante} == {"Refrigerio"}
+    varios = [Item(descripcion=d) for d in ("Nafta Infinia", "Lavandina 1L", "Fee de acceso mensual", "Tornillos x100")]
+    sugerir_productos(varios)
+    assert [i.producto for i in varios] == ["Combustible", "Gastos de limpieza", "Servicios", "Mercaderías"]

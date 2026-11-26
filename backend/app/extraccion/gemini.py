@@ -98,7 +98,7 @@ Leé la imagen y devolvé SOLO un JSON con esta forma, sin texto antes ni despu�
     "fecha": fecha de emisión en formato dd/mm/aaaa,
     "cae": CAE o CAI de 14 dígitos, o ""
   },
-  "items": [ {"codigo": "", "descripcion": "", "cantidad": número o null, "precio": número o null, "alicuota": % de IVA o null, "importe": número o null, "impuestos_internos": número o null} ],
+  "items": [ {"codigo": "", "descripcion": "", "cantidad": número o null, "precio": número o null, "alicuota": % de IVA o null, "importe": número o null, "impuestos_internos": número o null, "producto": categoría para el sistema contable} ],
   "totales": {"neto_gravado": número o null, "no_gravado": número o null, "exento": número o null, "iva": número o null, "impuestos_internos": número o null, "percepcion_iibb": número o null, "otros_tributos": número o null, "total": número o null},
   "filas": [ ["celda", "celda", ...] ],
   "texto": todo el texto visible de la imagen, respetando los renglones
@@ -111,6 +111,7 @@ Reglas:
 - Los importes como números JSON con punto decimal (1234.5), sin $ ni separador de miles. En Argentina «1.234,50» es 1234.5.
 - "iva" es la suma de todo el IVA discriminado.
 - "impuestos_internos": el total de impuestos internos (y en cada ítem, el suyo si figura).
+- "producto" de cada ítem: la categoría que mejor le queda, una de estas: Mercaderías, Servicios, Honorarios, Combustible, Refrigerio (comidas y bebidas, p. ej. un restaurante), Gastos de limpieza, Alquiler.
 - "percepcion_iibb": la percepción de Ingresos Brutos de Buenos Aires (ARBA).
 - "otros_tributos": el resto (percepción de IVA, IIBB de otras jurisdicciones, etc.), sin repetir lo anterior.
 - Si un dato no está o no se lee, usá "" o null. No inventes nada.

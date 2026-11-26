@@ -82,6 +82,8 @@ class Item(BaseModel):
     alicuota: float | None = None
     importe: float | None = None
     impuestos_internos: float | None = None
+    # Producto o servicio sugerido para Xubio (lo propone la IA o las reglas de abajo).
+    producto: str = Field(default="", max_length=60)
 
 
 class Hoja(BaseModel):
@@ -557,6 +559,7 @@ def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
             alicuota=_numero(x.get("alicuota")),
             importe=_numero(x.get("importe")),
             impuestos_internos=_numero(x.get("impuestos_internos")),
+            producto=str(x.get("producto") or "")[:60],
         )
         for x in (datos.get("items") or [])[:2000]
         if isinstance(x, dict)
@@ -564,6 +567,40 @@ def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
     t = datos.get("totales") or {}
     lectura.totales = {k: _numero(t.get(k)) for k in TOTALES}
     return lectura
+
+
+# --- Producto sugerido por ítem (cuando no lo dio la IA) ------------------------------
+
+PRODUCTOS = ("Mercaderías", "Servicios", "Honorarios", "Combustible", "Refrigerio", "Gastos de limpieza", "Alquiler")
+_REGLAS_PRODUCTO = (
+    ("Combustible", r"nafta|gas\s?oil|diesel|combustible|infinia|v.?power|\bgnc\b|lubric|\bquantium\b"),
+    ("Gastos de limpieza", r"lavandina|detergente|limpi|desinfect|papel\s+higien|rollo\s+cocina|trapo|escoba|jabon|lysoform|cif\b"),
+    ("Alquiler", r"alquiler|locacion|expensas"),
+    ("Honorarios", r"honorario"),
+    ("Servicios", r"servicio|\bfee\b|abono|suscrip|mantenimiento|asesor|consultor|internet|telefon|hosting|licencia|flete|envio"),
+    ("Refrigerio", r"\bagua\b|gaseosa|\bcafe\b|cortado|medialuna|sandwich|\bmenu\b|almuerzo|cena|empanada|pizza|cerveza|\bvino\b|"
+                   r"\bpapas?\b|pure|carne|entra[nñ]a|salm|salh|pollo|ensalada|postre|helado|hamburg|coleslaw|bife|porcion|"
+                   r"bebida|jugo|cubierto|guarnicion|milanesa|tostado|factura[s]?\s+dulce|desayuno|merienda|\bmesa\b"),
+)
+
+
+def sugerir_producto(descripcion: str) -> str:
+    d = norm(descripcion)
+    for producto, patron in _REGLAS_PRODUCTO:
+        if re.search(patron, d):
+            return producto
+    return ""
+
+
+def sugerir_productos(items: list[Item]) -> None:
+    """Completa «producto» donde falta. Si casi todo el detalle es comida (un restaurante),
+    lo que no se reconoce también va como refrigerio; si no, como mercaderías."""
+    sugeridos = [i.producto or sugerir_producto(i.descripcion) for i in items]
+    conocidos = [x for x in sugeridos if x]
+    resto = "Refrigerio" if conocidos and conocidos.count("Refrigerio") >= len(conocidos) * 0.6 else "Mercaderías"
+    for item, sugerido in zip(items, sugeridos):
+        if not item.producto:
+            item.producto = sugerido or (resto if item.descripcion.strip() else "")
 
 
 def _leer_imagen(nombre: str, contenido: bytes) -> Lectura:
@@ -696,6 +733,8 @@ def leer(nombre: str, contenido: bytes) -> Lectura:
         lectura = _leer_imagen(nombre, contenido)
     else:
         raise ValueError(f"«{nombre}»: formato no soportado (foto, captura, PDF, CSV o Excel).")
+    if lectura.tipo == "comprobante":
+        sugerir_productos(lectura.items)
     lectura.verificaciones = verificar(lectura)
     return lectura
 
@@ -1091,7 +1130,7 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
         def de(lista, defecto=None):
             return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
         filas.append([1] + [None] * 9 + [
-            de(extras.productos, it.codigo or it.descripcion[:60]), de(extras.centros), it.descripcion or None,
+            de(extras.productos, it.producto or it.codigo or it.descripcion[:60]), de(extras.centros), it.descripcion or None,
             it.cantidad, it.precio, de(extras.dto) or None, it.importe, it.alicuota,
         ])
     return filas
