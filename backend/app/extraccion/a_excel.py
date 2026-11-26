@@ -1097,6 +1097,23 @@ def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Veri
     return aviso + _verificar_items_sin_correccion(items, t)
 
 
+def _verificar_iva_por_alicuota(items: list[Item], t: dict[str, float | None]) -> Verificacion | None:
+    """Xubio calcula el IVA de cada fila (importe x alícuota). Con el detalle agrupado por
+    alícuota, ¿da el IVA de la factura? Unos centavos de diferencia se ajustan al cargar."""
+    if not items or t.get("iva") is None or any(i.importe is None or i.alicuota is None for i in items):
+        return None
+    calculado = round(sum(round(suma * (a or 0) / 100, 2) for a, suma, _ in agrupar_items(items)), 2)
+    dif = round(t["iva"] - calculado, 2)
+    if not dif or abs(dif) > 0.05:
+        return None
+    return Verificacion(
+        campo="iva", nivel="aviso", titulo="Redondeo de IVA",
+        mensaje=(f"Xubio va a calcular un IVA de {_fmt(calculado)} y la factura dice {_fmt(t['iva'])} "
+                 f"(diferencia {_fmt(dif)}): ajustá esos centavos al importar el comprobante."),
+        datos=[f"Xubio {_fmt(calculado)}", f"Factura {_fmt(t['iva'])}", f"Dif. {_fmt(dif)}"],
+    )
+
+
 def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
     if not items:
         return [Verificacion(campo="items", nivel="aviso", mensaje="No se pudo leer el detalle: el Excel va a tener solo el encabezado y los totales.", titulo="Sin detalle")]
@@ -1104,6 +1121,9 @@ def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None
     sin_importe = [i + 1 for i, x in enumerate(items) if x.importe is None]
     if sin_importe:
         v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin importe: {', '.join(map(str, sin_importe))}.", titulo="Ítems sin importe", datos=[f"#{n}" for n in sin_importe[:6]]))
+    mal_cant = [i + 1 for i, x in enumerate(items) if x.cantidad is not None and x.cantidad <= 0]
+    if mal_cant:
+        v.append(Verificacion(campo="items", nivel="error", mensaje=f"Ítems con cantidad 0 o negativa: {', '.join(map(str, mal_cant))}.", titulo="Cantidad mal leída", datos=[f"#{n}" for n in mal_cant[:6]]))
     sin_desc = [i + 1 for i, x in enumerate(items) if not x.descripcion.strip()]
     if sin_desc:
         v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin descripción: {', '.join(map(str, sin_desc))}.", titulo="Ítems sin descripción", datos=[f"#{n}" for n in sin_desc[:6]]))
@@ -1199,6 +1219,8 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
         v.append(x)
     v += _verificar_totales(t, round(sum(x.importe or 0 for x in lectura.items), 2) if lectura.items else None)
     v += _verificar_items(lectura.items, t)
+    if (x := _verificar_iva_por_alicuota(lectura.items, t)) is not None:
+        v.append(x)
     for campo, leido in lectura.corregidos.items():
         ahora = e.get(campo, "")
         if leido and ahora and leido != ahora:
@@ -1263,6 +1285,9 @@ class Extras(BaseModel):
     productos: list[str] = Field(default_factory=list, max_length=2000)
     centros: list[str] = Field(default_factory=list, max_length=2000)
     dto: list[float | None] = Field(default_factory=list, max_length=2000)
+    # Un solo producto para todo el detalle («Refrigerio»): una fila por alícuota y los
+    # artículos en «PRODUCTOOBSERVACION». Vacío: una fila por ítem.
+    agrupar: str = Field(default="", max_length=60)
 
 
 # El modelo de Xubio «Importar comprobantes» (modelo-importacion-ventas): una fila con
@@ -1303,6 +1328,22 @@ def _fecha_xubio(texto: str):
         return texto or None
 
 
+def _cantidad(c: float | None) -> str:
+    c = 1 if c is None else c
+    return str(int(c)) if float(c).is_integer() else f"{c:.3f}".rstrip("0").replace(".", ",")
+
+
+def agrupar_items(items: list[Item]) -> list[tuple[float | None, float, str]]:
+    """Por alícuota: (alícuota, suma de los importes netos, «1x AGUA…; 2x ENTRAÑA»), con
+    las cantidades leídas. El IVA de cada alícuota queda igual."""
+    grupos: dict[float | None, tuple[float, list[str]]] = {}
+    for it in items:
+        suma, detalle = grupos.get(it.alicuota, (0.0, []))
+        detalle.append(f"{_cantidad(it.cantidad)}x {it.descripcion.strip() or 'Sin descripción'}")
+        grupos[it.alicuota] = (round(suma + (it.importe or 0), 2), detalle)
+    return [(a, suma, "; ".join(d)) for a, (suma, d) in grupos.items()]
+
+
 def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> list[list]:
     extras = extras or Extras()
     e, t = lectura.encabezado, lectura.totales
@@ -1318,6 +1359,11 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
         alicuota=_alicuota_de(t.get("neto_gravado") or 0.0, t.get("iva") or 0.0),
     )]
     filas = [cabecera]
+    if extras.agrupar.strip() and lectura.items:
+        centro = next((c for c in extras.centros if c), None)
+        for alicuota, suma, detalle in agrupar_items(lectura.items):
+            filas.append([1] + [None] * 9 + [extras.agrupar.strip(), centro, detalle, 1, suma, None, suma, alicuota])
+        return filas
     for n, it in enumerate(items):
         def de(lista, defecto=None):
             return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto

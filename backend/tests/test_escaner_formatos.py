@@ -166,6 +166,60 @@ def test_importe_corregido_solo_avisa():
     assert v[0].datos == ["Leído 2.937,73", "Ahora 2.937,79"]
 
 
+def _factura_referencia():
+    """Tique Factura A 00103-00000524 de FOC Fuels Marketing SA (25/10/2026)."""
+    from backend.app.extraccion.a_excel import Item, Lectura
+
+    filas = [("AGUA MINERAL SMART WATER 591ML", 1, 2937.79), ("AGUA SMART WATER CON GAS 591ML", 1, 2937.79),
+             ("ENTRAÑA", 1, 21900.83), ("SALMON ROSADO", 1, 23140.50), ("DOBLE OKLAHOMA FRIED ONION", 2, 22314.05),
+             ("PORCION DE PAPAS FRITAS", 1, 4545.45), ("PURE DE BONIATO", 1, 3719.01), ("COLESLAW DE REMOLACHA", 1, 2479.33)]
+    items = [Item(descripcion=d, cantidad=c, precio=round(i / c, 2), alicuota=21, importe=i) for d, c, i in filas]
+    return Lectura(
+        archivo="tique.jpg", tipo="comprobante",
+        encabezado={"emisor": "FOC FUELS MARKETING SA", "tipo": "081 - Tique Factura A",
+                    "numero": "00103-00000524", "fecha": "25/10/2026"},
+        items=items,
+        totales={"neto_gravado": 83974.75, "iva": 17634.71, "impuestos_internos": 90.54,
+                 "percepcion_iibb": 6717.98, "otros_tributos": 0.0, "total": 108417.98},
+    )
+
+
+def test_refrigerio_agrupa_la_factura_de_referencia():
+    import io
+
+    from openpyxl import load_workbook
+
+    from backend.app.extraccion.a_excel import Extras, excel_importacion, verificar
+
+    l = _factura_referencia()
+    assert round(sum(i.importe for i in l.items), 2) == 83974.75
+    wb = load_workbook(io.BytesIO(excel_importacion(l, "Compras", Extras(agrupar="Refrigerio"))))
+    filas = list(wb["Sheet0"].iter_rows(values_only=True))
+    assert filas[0][1] == "PROVEEDOR" and filas[0][12] == "PRODUCTOOBSERVACION"
+    assert filas[1][1] == "FOC FUELS MARKETING SA" and filas[1][3] == "A-00103-00000524" and filas[1][2] == 1
+    # Una sola fila de detalle (todo al 21 %): Refrigerio, cantidad 1, el neto y la alícuota.
+    assert len(filas) == 3
+    prod, _, obs, cant, precio, _, importe, iva = filas[2][10:18]
+    assert (prod, cant, precio, importe, iva) == ("Refrigerio", 1, 83974.75, 83974.75, 21)
+    for d in ("1x AGUA MINERAL SMART WATER 591ML", "2x DOBLE OKLAHOMA FRIED ONION", "1x COLESLAW DE REMOLACHA", "1x ENTRAÑA"):
+        assert d in obs
+    assert obs.count("x ") == 8
+    # Impuestos internos y percepción, sin tocar y sin contarlos dos veces.
+    imp = list(wb["Impuestos y percepciones"].iter_rows(values_only=True))[1:]
+    assert [(c, v) for c, _, _, v in imp] == [("Impuestos internos", 90.54), ("Percepción IIBB Bs. As.", 6717.98)]
+    # El total cierra y el IVA que calcula Xubio difiere en un centavo: se avisa.
+    v = verificar(l)
+    assert not [x for x in v if x.nivel == "error"], [x.titulo for x in v if x.nivel == "error"]
+    red = [x for x in v if x.titulo == "Redondeo de IVA"]
+    assert len(red) == 1 and red[0].datos[-1] == "Dif. 0,01"
+
+
+def test_sin_agrupar_sigue_una_fila_por_item():
+    from backend.app.extraccion.a_excel import filas_importacion
+
+    assert len(filas_importacion(_factura_referencia(), "Compras")) == 9
+
+
 def test_emisor_con_simbolo_se_autocorrige():
     from backend.app.extraccion.a_excel import Lectura, limpiar_nombres, verificar
 

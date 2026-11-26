@@ -10,6 +10,8 @@ export interface Extras {
   productos: string[];
   centros: string[];
   dto: number[];
+  /** Un solo producto para todo el detalle («Refrigerio»); vacío: uno por ítem. */
+  agrupar?: string;
 }
 
 const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
@@ -43,6 +45,9 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     .xb-menu button { padding: 4px 10px; border: 1px solid #b6d7ea; border-radius: 999px; background: #f2f9fd; color: #00618a; font: inherit; font-size: .8rem; cursor: pointer; }
     .xb-menu button:hover, .xb-menu button.activo { background: #00618a; border-color: #00618a; color: #fff; }
     .xb-in.xb-auto { background: #fff7ed; border-color: #fb923c; color: #9a3412; }
+    .xb-agr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 6px; padding: 4px 10px; border-radius: 8px; background: #eff6ff; font-size: .8rem; color: #1e3a8a; }
+    .xb-agr .xb-in { width: 130px; font-weight: 700; }
+    .xb-agr small { color: #475569; }
     .xb-auto-aviso { margin: 0 0 6px; padding: 4px 10px; border-left: 3px solid #fb923c; background: #fff7ed; color: #9a3412; font-size: .8rem; }
     .xb-in { width: 100%; min-width: 0; height: 26px; padding: 2px 6px; border: 1px solid #a9a9a9; border-radius: 0; font: inherit; font-size: .88rem; color: #333; background: #fff; }
     .xb-in:focus { outline: 1px solid #4aa3df; border-color: #4aa3df; }
@@ -146,7 +151,14 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
 
 
         <div class="xb-items">
-          @if (autoAviso(); as a) { <p class="xb-auto-aviso" role="status">✎ En naranja: {{ a }}. Revisalo antes de guardar.</p> }
+          <div class="xb-agr">
+            <label><input type="checkbox" [checked]="!!agrupado()" (change)="agruparEn(chk($event) ? 'Refrigerio' : '')" /> Agrupar en un solo producto</label>
+            @if (agrupado()) {
+              <input class="xb-in" [value]="agrupado()" (change)="agruparEn(val($event) || 'Refrigerio')" aria-label="Producto para todo el detalle" />
+              <small>Una fila por alícuota; los artículos y cantidades van en Observaciones. «{{ agrupado() }}» tiene que existir en Xubio.</small>
+            }
+          </div>
+          @if (!agrupado() && autoAviso(); as a) { <p class="xb-auto-aviso" role="status">✎ En naranja: {{ a }}. Revisalo antes de guardar.</p> }
           <table class="xb-tabla">
             <thead>
               <tr>
@@ -160,7 +172,7 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
                 <tr>
                   <td><button type="button" class="xb-x" (click)="sacar.emit(i)" [attr.aria-label]="'Sacar el ítem ' + (i + 1)">✕</button></td>
                   <td style="width: 150px">
-                    <input class="xb-in" [class.xb-auto]="autoProducto(i)" [value]="productoDe(i)" placeholder="Elegí o escribí" autocomplete="off"
+                    <input class="xb-in" [class.xb-auto]="!agrupado() && autoProducto(i)" [value]="agrupado() || productoDe(i)" [disabled]="!!agrupado()" placeholder="Elegí o escribí" autocomplete="off"
                       (focus)="abrirMenu(i, $event)" (blur)="cerrarMenu()"
                       [title]="autoProducto(i) ? 'Autocompletado según la descripción: revisalo' : ''"
                       (change)="ponerProducto(i, val($event))" aria-label="Producto o servicio" />
@@ -456,7 +468,20 @@ export class Factura {
 
   /** Lo que va al Excel: con los productos autocompletados incluidos. */
   protected paraGuardar(): Extras {
-    return { ...this.extras(), productos: this.lectura().items.map((_, i) => this.productoDe(i)) };
+    return { ...this.extras(), productos: this.lectura().items.map((_, i) => this.productoDe(i)), agrupar: this.agrupado() };
+  }
+
+  /** En una compra con varios artículos, por defecto todo va como «Refrigerio». */
+  protected readonly agrupado = computed(
+    () => this.extras().agrupar ?? (this.operacion() === 'Compras' && this.lectura().items.length > 1 ? 'Refrigerio' : ''),
+  );
+
+  protected agruparEn(nombre: string): void {
+    this.cambiar((e) => ({ ...e, agrupar: nombre.trim() }));
+  }
+
+  protected chk(e: Event): boolean {
+    return (e.target as HTMLInputElement).checked;
   }
 
   private cambiar(f: (e: Extras) => Extras): void {
