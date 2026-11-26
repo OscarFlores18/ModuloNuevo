@@ -193,7 +193,8 @@ def _totales(lineas: list[str]) -> dict[str, float | None]:
             t.setdefault("exento", v)
         elif re.search(r"\bimp(?:uestos?|\.)?\s*int(?:ernos?|\.)?\b", norm(linea)):
             t["impuestos_internos"] = round((t.get("impuestos_internos") or 0) + v, 2)
-        elif re.search(r"\bperc\w*\.?\s*(?:de\s+)?(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos)", norm(linea)):
+        elif re.search(r"\bperc\w*\.?\s*(?:de\s+)?(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos)", norm(linea)) \
+                or re.search(r"\b(?:p\.?\s*)?(?:iibb|ii\.?\s*bb)\s*(?:bs\.?\s*as|buenos\s+aires|arba|pba)\b", norm(linea)):
             # Bs. As. (ARBA) aparte; las de otras jurisdicciones (CABA…) van a otros tributos.
             clave = "otros_tributos_det" if re.search(r"\b(caba|ciudad|agip|capital)\b", norm(linea)) else "percepcion_iibb"
             t[clave] = round((t.get(clave) or 0) + v, 2)
@@ -845,6 +846,33 @@ def _esqueleto(nombre: str) -> str:
     return re.sub(r"[^A-Z0-9]", "", sin.upper())
 
 
+_MENCIONA_IIBB = re.compile(r"\b(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos|arba)\b", re.I)
+
+
+def completar_tributos(lectura: Lectura) -> None:
+    """Si el total no cierra y hay un solo tributo leído (percepción u otros), ese tributo
+    es lo que falta para el total (6.709,98 leído -> 6.717,98). Si la factura nombra
+    Ingresos Brutos y solo se leyó «Otros tributos», es la percepción IIBB."""
+    t = lectura.totales
+    antes = {k: t.get(k) for k in ("percepcion_iibb", "otros_tributos")}
+    iibb, otros = t.get("percepcion_iibb") or 0, t.get("otros_tributos") or 0
+    if otros and not iibb and _MENCIONA_IIBB.search(lectura.texto or "") \
+            and not re.search(r"\b(caba|agip|ciudad\s+aut)", lectura.texto or "", re.I):
+        t["percepcion_iibb"], t["otros_tributos"] = otros, 0.0
+        iibb, otros = otros, 0
+    if t.get("total") is not None and not _cierra(t) and bool(iibb) != bool(otros):
+        campo = "percepcion_iibb" if iibb else "otros_tributos"
+        resto = round(t["total"] - sum(t.get(k) or 0 for k in TOTALES if k not in ("total", campo)), 2)
+        if resto > 0 and abs(resto - t[campo]) <= 0.1 * resto:
+            t[campo] = resto
+    for campo, valor in antes.items():
+        if valor and t.get(campo) != valor:
+            lectura.corregidos[campo] = _fmt(valor)
+    if antes["otros_tributos"] and not antes["percepcion_iibb"] and t.get("percepcion_iibb"):
+        lectura.corregidos.pop("otros_tributos", None)
+        lectura.corregidos["percepcion_iibb"] = "Otros tributos " + _fmt(antes["otros_tributos"])
+
+
 def limpiar_nombres(lectura: Lectura) -> None:
     """Emisor y receptor que cada pasada leyó distinto solo por caracteres sueltos
     («FOC FUELS MARKETING $» / «… SA»): se queda con el más limpio (sin símbolos y con
@@ -880,6 +908,7 @@ def leer(nombre: str, contenido: bytes) -> Lectura:
         corregir_descripciones(lectura.items)
         corregir_importes_items(lectura.items, lectura.totales)
         limpiar_nombres(lectura)
+        completar_tributos(lectura)
         sugerir_productos(lectura.items)
     lectura.verificaciones = verificar(lectura)
     return lectura
@@ -1222,10 +1251,11 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
     if (x := _verificar_iva_por_alicuota(lectura.items, t)) is not None:
         v.append(x)
     for campo, leido in lectura.corregidos.items():
-        ahora = e.get(campo, "")
+        ahora = _fmt(t[campo]) if campo in TOTALES and t.get(campo) is not None else e.get(campo, "")
         if leido and ahora and leido != ahora:
-            etiqueta = ETIQUETAS_ENCABEZADO.get(campo, campo)
-            v.append(Verificacion(campo=campo, nivel="aviso", titulo=f"Autocorregí el {etiqueta.lower()}",
+            etiqueta = ETIQUETAS_ENCABEZADO.get(campo) or ETIQUETAS_TOTALES.get(campo, campo)
+            articulo = {"percepcion_iibb": "la ", "impuestos_internos": "los ", "otros_tributos": ""}.get(campo, "el ")
+            v.append(Verificacion(campo=campo, nivel="aviso", titulo=f"Autocorregí {articulo}{etiqueta.lower()}",
                                   mensaje=f"{etiqueta}: se leyó «{leido}» y lo dejé como «{ahora}». Si no es así, cambialo a mano.",
                                   datos=[f"Leído {leido}", f"Ahora {ahora}"]))
     # Lo que cada pasada leyó distinto y sigue sin verificarse por otro lado.
@@ -1274,7 +1304,7 @@ def nombre_excel(lectura: Lectura, operacion: str | None = None, empresa: str = 
     cliente = limpiar_nombre(empresa).rstrip(". ") or base
     fecha = lectura.encabezado.get("fecha", "")
     periodo = f" - {mes_anio(fecha)}" if re.fullmatch(r"\d{2}/\d{2}/\d{4}", fecha) else ""
-    return f"Conversor de facturas {operacion} con AFIP{periodo} - {cliente}.xlsx"
+    return f"Conversor de facturas {operacion} con AFIP{periodo} - {cliente}.xls"
 
 
 class Extras(BaseModel):
@@ -1316,13 +1346,34 @@ TRIBUTOS_COMPRAS = (
 )
 
 
+# Tique Factura A / B / C (081, 082, 111): en compras, Xubio los importa como tipo 5.
+TIQUES_FACTURA = {81, 82, 111}
+
+
+def _tipo_compra(tipo: str) -> int | str:
+    m = re.match(r"\s*(\d+)", tipo or "")
+    return 5 if m and int(m.group(1)) in TIQUES_FACTURA else _tipo_xubio(tipo)
+
+
+def _precio_neto(cantidad: float | None, importe: float | None, observacion: str | None) -> tuple:
+    """PRECIO x CANTIDAD tiene que dar el IMPORTE (neto), no el precio con IVA de la foto.
+    Si el unitario no da justo con dos decimales, va como 1 con la cantidad en la observación."""
+    cant = cantidad or 1
+    if importe is None:
+        return cant, None, observacion
+    unitario = round(importe / cant, 2)
+    if round(unitario * cant, 2) == round(importe, 2):
+        return cant, unitario, observacion
+    return 1, importe, f"{_cantidad(cant)}x {observacion or ''}".strip()
+
+
 def filas_compras(lectura: Lectura, extras: Extras | None = None) -> list[list]:
     """Cabecera, detalle (o el detalle agrupado) y una fila por cada impuesto o percepción."""
     extras = extras or Extras()
     e, t = lectura.encabezado, lectura.totales
     fecha = _fecha_xubio(e.get("fecha", ""))
     vence = _fecha_xubio(extras.vencimiento) if extras.vencimiento else fecha
-    filas = [[1, e.get("emisor", ""), _tipo_xubio(e.get("tipo", "")), _numero_xubio(lectura), fecha, vence,
+    filas = [[1, e.get("emisor", ""), _tipo_compra(e.get("tipo", "")), _numero_xubio(lectura), fecha, vence,
               "pesos argentinos", "", fecha, Path(lectura.archivo).stem[:200]] + [None] * 8]
     detalle = []  # (producto, centro, observación, cantidad, precio, importe, alícuota)
     if extras.agrupar.strip() and lectura.items:
@@ -1332,8 +1383,9 @@ def filas_compras(lectura: Lectura, extras: Extras | None = None) -> list[list]:
         for n, it in enumerate(lectura.items):
             def de(lista, defecto=None):
                 return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
+            cant, precio, obs = _precio_neto(it.cantidad, it.importe, it.descripcion or None)
             detalle.append((de(extras.productos, it.producto or it.codigo or it.descripcion[:60]), de(extras.centros),
-                            it.descripcion or None, it.cantidad, it.precio, it.importe, it.alicuota))
+                            obs, cant, precio, it.importe, it.alicuota))
     elif t.get("neto_gravado"):
         neto = t["neto_gravado"]
         detalle = [(extras.agrupar.strip() or "Según factura", None, None, 1, neto, neto, _alicuota_de(neto, t.get("iva") or 0.0))]
@@ -1424,54 +1476,60 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
     return filas
 
 
-def _hoja_impuestos(wb, lectura: Lectura) -> None:
-    """El modelo de Xubio no trae columnas para impuestos internos ni percepciones: van
-    en otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos»."""
+def _hoja_impuestos(lectura: Lectura) -> list[list]:
+    """Ventas: el modelo no trae columnas para impuestos internos ni percepciones; van en
+    otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos»."""
     t = lectura.totales
     internos = [(n + 1, i.descripcion, i.impuestos_internos) for n, i in enumerate(lectura.items) if i.impuestos_internos]
-    if not (internos or t.get("impuestos_internos") or t.get("percepcion_iibb") or t.get("otros_tributos")):
-        return
-    ws = wb.create_sheet("Impuestos y percepciones")
-    ws.append(["CONCEPTO", "ITEM", "DETALLE", "IMPORTE"])
-    for n, desc, v in internos:
-        ws.append(["Impuestos internos", n, desc, v])
+    filas: list[list] = [["Impuestos internos", n, desc, v] for n, desc, v in internos]
     if t.get("impuestos_internos") and not internos:
-        ws.append(["Impuestos internos", None, "Total de la factura", t["impuestos_internos"]])
+        filas.append(["Impuestos internos", None, "Total de la factura", t["impuestos_internos"]])
     if t.get("percepcion_iibb"):
-        ws.append(["Percepción IIBB Bs. As.", None, None, t["percepcion_iibb"]])
+        filas.append(["Percepción IIBB Bs. As.", None, None, t["percepcion_iibb"]])
     if t.get("otros_tributos"):
-        ws.append(["Otros tributos", None, None, t["otros_tributos"]])
-    for celda in ws["D"][1:]:
-        celda.number_format = "#,##0.00"
-    for letra, ancho in zip("ABCD", (26, 8, 40, 14)):
-        ws.column_dimensions[letra].width = ancho
+        filas.append(["Otros tributos", None, None, t["otros_tributos"]])
+    return [["CONCEPTO", "ITEM", "DETALLE", "IMPORTE"], *filas] if filas else []
 
 
-def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> bytes:
-    from openpyxl import Workbook
+def _xls(hojas: list[tuple[str, list[list], set[int], set[int]]]) -> bytes:
+    """Excel 97-2003 (.xls), como los modelos de Xubio: (nombre, filas, columnas de
+    fecha, columnas de importe)."""
+    import xlwt
 
-    wb = Workbook()
-    ws = wb.active
-    compras = operacion == "Compras"
-    ws.title = "Hoja1" if compras else "Sheet0"
-    encabezado = COLUMNAS_COMPRAS if compras else COLUMNAS_IMPORTACION
-    ws.append(list(encabezado))
-    for fila in filas_compras(lectura, extras) if compras else filas_importacion(lectura, operacion, extras):
-        ws.append(fila)
-    for letra in "EFI" if compras else "EF":
-        for celda in ws[letra][1:]:
-            celda.number_format = "dd/mm/yyyy"
-    for letra in "OPR" if compras else "OPQ":
-        for celda in ws[letra][1:]:
-            celda.number_format = "#,##0.00"
-    for i, c in enumerate(encabezado):
-        ws.column_dimensions[chr(65 + i)].width = max(12, len(c) + 2)
-    # En compras los impuestos ya van en la hoja; en ventas el modelo no los trae.
-    if not compras:
-        _hoja_impuestos(wb, lectura)
+    fecha = xlwt.easyxf(num_format_str="dd/mm/yyyy")
+    numero = xlwt.easyxf(num_format_str="#,##0.00")
+    negrita = xlwt.easyxf("font: bold on")
+    wb = xlwt.Workbook(encoding="utf-8")
+    for nombre, filas, fechas, numeros in hojas:
+        ws = wb.add_sheet(nombre)
+        for i, fila in enumerate(filas):
+            for j, valor in enumerate(fila):
+                if valor is None or valor == "":
+                    continue
+                if i == 0:
+                    ws.write(i, j, valor, negrita)
+                elif j in fechas and isinstance(valor, datetime):
+                    ws.write(i, j, valor, fecha)
+                elif j in numeros and isinstance(valor, (int, float)):
+                    ws.write(i, j, valor, numero)
+                else:
+                    ws.write(i, j, valor)
+        for j, titulo in enumerate(filas[0] if filas else []):
+            ws.col(j).width = 256 * max(12, len(str(titulo)) + 2)
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> bytes:
+    """El .xls con el modelo de importación de Xubio (Compras: «Hoja1»; Ventas: «Sheet0»)."""
+    if operacion == "Compras":
+        # En compras los impuestos internos y las percepciones van como filas del comprobante.
+        return _xls([("Hoja1", [COLUMNAS_COMPRAS, *filas_compras(lectura, extras)], {4, 5, 8}, {14, 15, 17})])
+    hojas = [("Sheet0", [COLUMNAS_IMPORTACION, *filas_importacion(lectura, operacion, extras)], {4, 5}, {14, 15, 16})]
+    if impuestos := _hoja_impuestos(lectura):
+        hojas.append(("Impuestos y percepciones", impuestos, set(), {3}))
+    return _xls(hojas)
 
 
 def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | None = None) -> bytes:

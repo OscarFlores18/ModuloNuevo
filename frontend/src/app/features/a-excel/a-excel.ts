@@ -13,7 +13,7 @@ import { Verificaciones } from './verificaciones';
 import { ToastService } from '../../core/ui/toast';
 import {
   ACEPTA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
-  cuitConGuiones, detectarEmpresa, empresaDeTrabajo, recordarEmpresaDeTrabajo, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
+  cuitConGuiones, detectarEmpresa, empresaDeTrabajo, recordarEmpresaDeTrabajo, aplicarContrapartes, recordarContraparte, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
 } from './logica';
 
 /**
@@ -649,7 +649,7 @@ export class PasarAExcel implements OnDestroy {
       // Los nuevos reemplazan a los del mismo nombre; el primero nuevo queda a la vista.
       const nombres = new Set(lecturas.map((l) => l.archivo));
       const resto = this.lecturas().filter((l) => !nombres.has(l.archivo));
-      this.lecturas.set([...resto, ...lecturas]);
+      this.lecturas.set([...resto, ...lecturas.map(aplicarContrapartes)]);
       this.indice.set(resto.length);
     } catch (err) {
       this.error.set(mensajeDeError(err, 'No se pudieron leer los archivos.'));
@@ -692,7 +692,16 @@ export class PasarAExcel implements OnDestroy {
 
   protected cambiarEncabezado(campo: string, valor: string): void {
     const l = this.actual();
-    if (l) this.reemplazar(sinDuda({ ...l, encabezado: { ...l.encabezado, [campo]: valor.trim() } }, campo));
+    if (!l) return;
+    // Proveedor o cliente corregido a mano: se recuerda para las próximas facturas.
+    const lado = campo.replace(/_cuit$/, '');
+    if (lado === 'emisor' || lado === 'receptor') {
+      const e = { ...l.encabezado, [campo]: valor.trim() };
+      const leido = l.corregidos?.[lado] ?? l.encabezado[lado] ?? '';
+      const leidoCuit = l.corregidos?.[`${lado}_cuit`] ?? l.encabezado[`${lado}_cuit`] ?? '';
+      recordarContraparte(leido, leidoCuit, e[lado] ?? '', e[`${lado}_cuit`] ?? '');
+    }
+    this.reemplazar(sinDuda({ ...l, encabezado: { ...l.encabezado, [campo]: valor.trim() } }, campo));
   }
 
   /** Entre lo que dieron las lecturas, el valor que eligió el usuario. */
@@ -735,7 +744,9 @@ export class PasarAExcel implements OnDestroy {
       const est = this.estudio();
       const r = await this.api.generarAExcel(l, est ? { operacion: est.operacion, empresa: est.empresa, extras } : {});
       const bytes = Uint8Array.from(atob(r.contenido), (c) => c.charCodeAt(0));
-      descargarBlob(r.nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      // El modelo de Xubio es .xls (Excel 97-2003); lo demás, .xlsx.
+      const tipo = /\.xls$/i.test(r.nombre) ? 'application/vnd.ms-excel' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      descargarBlob(r.nombre, new Blob([bytes], { type: tipo }));
       this.toast.ok('Excel listo', r.nombre);
     } catch (err) {
       this.toast.error('No se pudo armar el Excel', mensajeDeError(err, ''));

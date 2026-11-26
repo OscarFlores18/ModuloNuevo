@@ -160,6 +160,56 @@ export function recordarEmpresaDeTrabajo(nombre: string): void {
   try { if (nombre) localStorage.setItem(CLAVE_TRABAJO, nombre); } catch { /* sin almacenamiento */ }
 }
 
+// --- Proveedores (y clientes) corregidos a mano ---------------------------------------
+// «FOC FUELS MARKETING SA» con un CUIT mal leído -> «FGC FUELS MARKETING SA» y su CUIT: lo
+// que se corrige una vez queda para las próximas facturas (por CUIT y por nombre leído).
+const CLAVE_CONTRAPARTES = 'cf-contrapartes-v1';
+type Contraparte = { nombre: string; cuit: string };
+
+const claveNombre = (n: string) => 'n:' + n.normalize('NFD').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+const claveCuit = (c: string) => 'c:' + soloDigitos(c);
+
+function contrapartes(): Record<string, Contraparte> {
+  try { return JSON.parse(localStorage.getItem(CLAVE_CONTRAPARTES) ?? '{}') ?? {}; } catch { return {}; }
+}
+
+/** Guarda la corrección: lo leído (nombre y CUIT) -> lo correcto. */
+export function recordarContraparte(leidoNombre: string, leidoCuit: string, nombre: string, cuit: string): void {
+  if (!nombre.trim()) return;
+  const m = contrapartes();
+  const valor = { nombre: nombre.trim(), cuit: soloDigitos(cuit) };
+  for (const k of [leidoNombre && claveNombre(leidoNombre), soloDigitos(leidoCuit).length === 11 && claveCuit(leidoCuit),
+    claveNombre(nombre), valor.cuit.length === 11 && claveCuit(valor.cuit)]) if (k) m[k] = valor;
+  // Lo anterior que llevaba a este mismo nombre queda con el CUIT nuevo.
+  for (const k of Object.keys(m)) if (m[k].nombre === valor.nombre) m[k] = valor;
+  try { localStorage.setItem(CLAVE_CONTRAPARTES, JSON.stringify(m)); } catch { /* sin almacenamiento */ }
+}
+
+/** Aplica lo recordado al emisor y al receptor; lo cambiado queda como autocorregido (naranja y aviso). */
+export function aplicarContrapartes(l: LecturaExcel): LecturaExcel {
+  const m = contrapartes();
+  let e = l.encabezado;
+  const corregidos = { ...l.corregidos };
+  const avisos: Verificacion[] = [];
+  for (const lado of ['emisor', 'receptor']) {
+    const nombre = e[lado] ?? '';
+    const cuit = e[`${lado}_cuit`] ?? '';
+    const r = (soloDigitos(cuit).length === 11 ? m[claveCuit(cuit)] : undefined) ?? (nombre ? m[claveNombre(nombre)] : undefined);
+    if (!r || (r.nombre === nombre && (!r.cuit || r.cuit === soloDigitos(cuit)))) continue;
+    e = { ...e, [lado]: r.nombre, ...(r.cuit ? { [`${lado}_cuit`]: r.cuit } : {}) };
+    if (r.nombre !== nombre && nombre) corregidos[lado] = nombre;
+    if (r.cuit && r.cuit !== soloDigitos(cuit) && cuit) corregidos[`${lado}_cuit`] = cuit;
+    avisos.push({
+      campo: lado, nivel: 'aviso', sugerencia: null, titulo: `Autocorregí el ${lado} (como lo corregiste antes)`,
+      mensaje: `Se leyó «${nombre}${cuit ? ' · ' + cuit : ''}» y lo dejé como lo corregiste la otra vez.`,
+      datos: [`Leído ${nombre}`, `Ahora ${r.nombre}`],
+    });
+  }
+  if (!avisos.length) return l;
+  const campos = new Set(avisos.map((v) => v.campo));
+  return { ...l, encabezado: e, corregidos, verificaciones: [...avisos, ...l.verificaciones.filter((v) => !campos.has(v.campo) || v.nivel === 'ok')] };
+}
+
 /** La factura desde el lado de la empresa: en una compra la contraparte es el emisor; en una venta, el receptor. */
 export function adaptar(encabezado: Record<string, string>, empresa: string, operacion: Operacion, origen: FacturaDelEstudio['origen']): FacturaDelEstudio {
   const lado = operacion === 'Compras' ? 'emisor' : 'receptor';

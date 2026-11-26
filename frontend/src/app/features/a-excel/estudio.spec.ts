@@ -1,4 +1,5 @@
-import { adaptar, cuitConGuiones, detectarEmpresa, mismoNombre, sinCae } from './logica';
+import { LecturaExcel } from '../../core/models';
+import { adaptar, aplicarContrapartes, cuitConGuiones, detectarEmpresa, mismoNombre, recordarContraparte, sinCae } from './logica';
 import { corta } from './verificaciones';
 
 const empresas = [
@@ -83,5 +84,20 @@ describe('avisos cortos con un backend anterior', () => {
     expect(v('CUIT del emisor: el dígito verificador da bien.').titulo).toBe('CUIT del emisor');
     expect(v('Neto + IVA + otros tributos = total (108.417,98).').titulo).toBe('El total cierra');
     expect(v('El IVA es el 21% del neto gravado.').titulo).toBe('IVA 21%');
+  });
+});
+
+describe('proveedor corregido a mano', () => {
+  it('se recuerda por CUIT y por nombre leído, con el CUIT corregido', () => {
+    localStorage.clear();
+    // Primero corrige el nombre y después el CUIT.
+    recordarContraparte('FOC FUELS MARKETING SA', '30-11111111-1', 'FGC FUELS MARKETING SA', '30-11111111-1');
+    recordarContraparte('FGC FUELS MARKETING SA', '30-11111111-1', 'FGC FUELS MARKETING SA', '30-71234567-8');
+    const leida = { archivo: 'a', tipo: 'comprobante', metodo: 'ocr', items: [], totales: {}, hojas: [], texto: '', dudas: {}, avisos: [],
+      encabezado: { emisor: 'FOC FUELS MARKETING SA', emisor_cuit: '30111111111' }, verificaciones: [] } as unknown as LecturaExcel;
+    const l = aplicarContrapartes(leida);
+    expect([l.encabezado['emisor'], l.encabezado['emisor_cuit']]).toEqual(['FGC FUELS MARKETING SA', '30712345678']);
+    expect(l.corregidos?.['emisor']).toBe('FOC FUELS MARKETING SA');
+    expect(l.verificaciones[0].nivel).toBe('aviso');
   });
 });

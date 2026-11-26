@@ -81,6 +81,31 @@ def test_no_corrige_un_cero():
     assert corregir_totales(t) == {"iva": 17634.71, "otros_tributos": 6808.52}
 
 
+def _hojas_xls(contenido: bytes) -> dict[str, list[tuple]]:
+    """El .xls como lo ve openpyxl: filas con None en lo vacío, fechas y enteros."""
+    import xlrd
+
+    libro = xlrd.open_workbook(file_contents=contenido)
+    hojas = {}
+    for h in libro.sheets():
+        filas = []
+        for i in range(h.nrows):
+            fila = []
+            for j in range(h.ncols):
+                c = h.cell(i, j)
+                if c.ctype == xlrd.XL_CELL_EMPTY:
+                    fila.append(None)
+                elif c.ctype == xlrd.XL_CELL_DATE:
+                    fila.append(xlrd.xldate_as_datetime(c.value, libro.datemode))
+                elif c.ctype == xlrd.XL_CELL_NUMBER and float(c.value).is_integer():
+                    fila.append(int(c.value))
+                else:
+                    fila.append(c.value)
+            filas.append(tuple(fila))
+        hojas[h.name] = filas
+    return hojas
+
+
 def test_excel_con_el_modelo_de_importacion_de_xubio():
     import io
 
@@ -92,9 +117,8 @@ def test_excel_con_el_modelo_de_importacion_de_xubio():
     e["tipo"] = "1 - Factura A"
     lectura = Lectura(archivo="factura.pdf", tipo="comprobante", encabezado=e, items=items, totales=t)
     assert nombre_excel(lectura, "Ventas", "Vendedora Prueba S.A.") == \
-        "Conversor de facturas Ventas con AFIP - 11-26 - Vendedora Prueba S.A.xlsx"
-    ws = load_workbook(io.BytesIO(excel_importacion(lectura, "Ventas", Extras(productos=["Honorarios"])))).active
-    filas = [list(f) for f in ws.iter_rows(values_only=True)]
+        "Conversor de facturas Ventas con AFIP - 11-26 - Vendedora Prueba S.A.xls"
+    filas = [list(f) for f in _hojas_xls(excel_importacion(lectura, "Ventas", Extras(productos=["Honorarios"])))["Sheet0"]]
     assert filas[0][:4] == ["NUMERODECONTROL", "CLIENTE", "TIPO", "NUMERO"]
     assert filas[1][1:4] == ["CLIENTE PRUEBA S.A.", 1, "A-00004-00000751"]
     assert filas[2][10] == "Honorarios" and filas[2][13:] == [1, 2479338.84, None, 2479338.84, 21]
@@ -114,10 +138,9 @@ def test_impuestos_internos_y_percepcion_iibb():
         Item(descripcion="Gaseosa", cantidad=1, precio=1000, alicuota=21, importe=1000, impuestos_internos=50)])
     assert any(v.campo == "total" and v.nivel == "ok" for v in verificar(lectura))
     # Compras: como filas del modelo de Xubio. Ventas: en la hoja aparte.
-    filas = list(load_workbook(io.BytesIO(excel_importacion(lectura, "Compras")))["Hoja1"].iter_rows(values_only=True))
+    filas = _hojas_xls(excel_importacion(lectura, "Compras"))["Hoja1"]
     assert [(f[10], f[15]) for f in filas[3:]] == [("Impuestos Internos", 50), ("Percepción IIBB Buenos Aires", 30)]
-    wb = load_workbook(io.BytesIO(excel_importacion(lectura, "Ventas")))
-    filas = list(wb["Impuestos y percepciones"].iter_rows(values_only=True))
+    filas = _hojas_xls(excel_importacion(lectura, "Ventas"))["Impuestos y percepciones"]
     assert filas[1:] == [("Impuestos internos", 1, "Gaseosa", 50), ("Percepción IIBB Bs. As.", None, None, 30)]
 
 
@@ -179,7 +202,7 @@ def _factura_referencia():
     items = [Item(descripcion=d, cantidad=c, precio=round(i / c, 2), alicuota=21, importe=i) for d, c, i in filas]
     return Lectura(
         archivo="tique.jpg", tipo="comprobante",
-        encabezado={"emisor": "FOC FUELS MARKETING SA", "tipo": "081 - Tique Factura A",
+        encabezado={"emisor": "FGC FUELS MARKETING SA", "tipo": "081 - Tique Factura A",
                     "numero": "00103-00000524", "fecha": "25/10/2026"},
         items=items,
         totales={"neto_gravado": 83974.75, "iva": 17634.71, "impuestos_internos": 90.54,
@@ -196,13 +219,16 @@ def test_refrigerio_agrupa_la_factura_de_referencia():
 
     l = _factura_referencia()
     assert round(sum(i.importe for i in l.items), 2) == 83974.75
-    wb = load_workbook(io.BytesIO(excel_importacion(l, "Compras", Extras(agrupar="Refrigerio"))))
-    assert wb.sheetnames == ["Hoja1"]
-    filas = [dict(zip(COLUMNAS_COMPRAS, f)) for f in wb["Hoja1"].iter_rows(values_only=True)]
+    contenido = excel_importacion(l, "Compras", Extras(agrupar="Refrigerio"))
+    assert contenido[:8] == bytes.fromhex("D0CF11E0A1B11AE1")  # .xls (Excel 97-2003), como el modelo
+    hojas = _hojas_xls(contenido)
+    assert list(hojas) == ["Hoja1"]
+    filas = [dict(zip(COLUMNAS_COMPRAS, f)) for f in hojas["Hoja1"]]
     # Las columnas, tal cual el modelo de compras de Xubio.
     assert list(filas[0]) == list(filas[0].values()) == COLUMNAS_COMPRAS
     cab = filas[1]
-    assert (cab["PROVEEDOR"], cab["TIPO"], cab["NUMERO"], cab["MONEDA"]) == ("FOC FUELS MARKETING SA", 1, "A-00103-00000524", "pesos argentinos")
+    # Tique Factura A: tipo 5 en compras.
+    assert (cab["PROVEEDOR"], cab["TIPO"], cab["NUMERO"], cab["MONEDA"]) == ("FGC FUELS MARKETING SA", 5, "A-00103-00000524", "pesos argentinos")
     assert cab["FECHA"].strftime("%d/%m/%Y") == cab["FECHAFISCAL"].strftime("%d/%m/%Y") == "25/10/2026"
     assert all(f["NUMERODECONTROL"] == 1 for f in filas[1:])
     # Una sola fila de detalle (todo al 21 %) y una por impuesto, sin tocar los importes.
@@ -225,8 +251,40 @@ def test_refrigerio_agrupa_la_factura_de_referencia():
 def test_sin_agrupar_sigue_una_fila_por_item():
     from backend.app.extraccion.a_excel import filas_compras
 
+    filas = filas_compras(_factura_referencia())
     # Cabecera + 8 ítems + impuestos internos + percepción.
-    assert len(filas_compras(_factura_referencia())) == 11
+    assert len(filas) == 11
+    # PRECIO x CANTIDAD = IMPORTE (el neto, no el precio con IVA de la foto).
+    for f in filas[1:9]:
+        assert round(f[13] * f[14], 2) == f[15], f
+    # 22.314,05 / 2 no da justo: va 1 x 22.314,05 y la cantidad en la observación.
+    assert filas[5][12:16] == ["2x DOBLE OKLAHOMA FRIED ONION", 1, 22314.05, 22314.05]
+
+
+def test_precio_neto_que_no_da_justo_va_como_uno():
+    from backend.app.extraccion.a_excel import _precio_neto
+
+    assert _precio_neto(1, 2937.79, "AGUA") == (1, 2937.79, "AGUA")
+    assert _precio_neto(2, 100.0, "X") == (2, 50.0, "X")
+    assert _precio_neto(3, 100.0, "X") == (1, 100.0, "3x X")
+
+
+def test_percepcion_iibb_leida_como_otros_tributos():
+    from backend.app.extraccion.a_excel import completar_tributos, verificar
+
+    l = _factura_referencia()
+    l.texto = "Perc. IIBB BS AS 6.709,98\nOtros tributos 6.808,52"
+    l.totales.update(percepcion_iibb=None, otros_tributos=6709.98)
+    completar_tributos(l)
+    assert (l.totales["percepcion_iibb"], l.totales["otros_tributos"]) == (6717.98, 0)
+    v = [x for x in verificar(l) if x.campo == "percepcion_iibb"]
+    assert len(v) == 1 and v[0].titulo == "Autocorregí la percepción iibb bs. as."
+    assert v[0].datos == ["Leído Otros tributos 6.709,98", "Ahora 6.717,98"]
+    # Sin mención de Ingresos Brutos: sigue como otros tributos, con lo que falta para el total.
+    l = _factura_referencia()
+    l.totales.update(percepcion_iibb=None, otros_tributos=6709.98)
+    completar_tributos(l)
+    assert (l.totales["percepcion_iibb"], l.totales["otros_tributos"]) == (None, 6717.98)
 
 
 def test_emisor_con_simbolo_se_autocorrige():
