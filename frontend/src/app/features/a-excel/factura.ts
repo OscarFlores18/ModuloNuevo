@@ -31,6 +31,8 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     .fa-sesion b { color: #0f172a; }
     .fa-op { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 800; background: #e0f2fe; color: #075985; }
     .fa-op.venta { background: #dcfce7; color: #166534; }
+    .fa-lector { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 800; background: #f1f5f9; color: #475569; }
+    .fa-lector.ia { background: #f3e8ff; color: #6b21a8; }
 
     /* Xubio */
     .xb { font-family: "Open Sans", "Segoe UI", Arial, sans-serif; color: #333; background: #fff; border: 1px solid #ddd; border-top: 3px solid #4aa3df; padding: 18px 22px 0; }
@@ -98,6 +100,7 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
         <button type="button" [attr.aria-pressed]="modo() === 'xubio'" (click)="modo.set('xubio')">Como en Xubio</button>
         <button type="button" [attr.aria-pressed]="modo() === 'arca'" (click)="modo.set('arca')">Como en ARCA</button>
       </div>
+      <span class="fa-lector" [class.ia]="l.metodo === 'ia'" [title]="l.metodo === 'ia' ? 'Leída con Gemini: compará con la imagen igual' : ''">{{ lector() }}</span>
       <span class="fa-op" [class.venta]="operacion() === 'Ventas'">{{ operacion() === 'Ventas' ? 'Factura de venta' : 'Factura de compra' }}</span>
       <span class="fa-sesion">
         @if (sesion()) { Estudio en Xubio: <b>{{ sesion() }}</b> } @else { Sin sesión de Xubio guardada }
@@ -280,6 +283,11 @@ export class Factura {
   private readonly porArchivo = signal<Record<string, Extras>>({});
   /** Para que las sugerencias se actualicen al recordar un producto. */
   private readonly recordados = signal(0);
+
+  /** Con qué se leyó: la IA (Gemini), el OCR, el texto del PDF o la planilla. */
+  protected readonly lector = computed(
+    () => ({ ia: '✦ Leída con IA (Gemini)', ocr: 'Leída con OCR', pdf: 'Leída del PDF', planilla: 'Leída de la planilla' })[this.lectura().metodo] ?? '',
+  );
 
   protected readonly operacion = computed(() => this.estudio()?.operacion ?? 'Compras');
   /** La contraparte: el emisor en una compra, el receptor en una venta. */

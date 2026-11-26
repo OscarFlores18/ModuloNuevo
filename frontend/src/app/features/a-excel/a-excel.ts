@@ -1,4 +1,4 @@
-import { Component, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, OnDestroy, computed, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { descargarBlob } from '../../core/descargar';
 import { ItemLeido, LecturaExcel, Verificacion, mensajeDeError } from '../../core/models';
@@ -133,7 +133,7 @@ import {
     <div class="fx-grilla">
       <section class="mf-panel" aria-labelledby="t-elegir" data-tour="ax-archivos">
         <div class="fx-cab">
-          <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Se leen apenas los soltás. De las fotos se lee el texto con OCR (tres veces, para comparar); de los PDF digitales, su texto; de CSV y planillas, las celdas." /></h2>
+          <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Se leen apenas los soltás. Las fotos y capturas las lee la IA (Gemini) y, si no está disponible, el OCR; de los PDF digitales se lee su texto; de CSV y planillas, las celdas. Una captura también la podés pegar con Ctrl+V." /></h2>
           <p class="mf-sub m-0 mt-1">Facturas o tablas: fotos o capturas (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX. Hasta 20 por vez.</p>
         </div>
 
@@ -180,10 +180,10 @@ import {
               </div>
             } @else if (leyendo()) {
               <span class="inline-flex items-center gap-2 font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</span>
-              <span class="mf-tenue text-sm">Las fotos tardan unos segundos: se leen tres veces para comparar.</span>
+              <span class="mf-tenue text-sm">Las fotos tardan unos segundos.</span>
             } @else {
               <span class="font-semibold">Arrastrá los archivos acá</span>
-              <span class="mf-tenue text-sm">Fotos, capturas, PDF, CSV o planillas</span>
+              <span class="mf-tenue text-sm">Fotos, capturas, PDF, CSV o planillas · una captura, pegala con Ctrl+V</span>
               <span class="mf-tenue text-sm">o</span>
               <label class="mf-btn mf-btn-suave cursor-pointer">
                 Elegir archivos
@@ -285,7 +285,7 @@ import {
                   <div class="min-w-0">
                     <h3>Revisá lo que leí</h3>
                     <p class="mf-sub m-0 mb-2">
-                      Leído {{ l.metodo === 'ocr' ? 'con OCR (de la imagen)' : l.metodo === 'pdf' ? 'del texto del PDF' : 'de la planilla' }}
+                      Leído {{ l.metodo === 'ia' ? 'con IA (Gemini) de la imagen' : l.metodo === 'ocr' ? 'con OCR (de la imagen)' : l.metodo === 'pdf' ? 'del texto del PDF' : 'de la planilla' }}
                       @if (verificando()) { · <span class="ej-spinner" aria-hidden="true"></span> verificando… }
                     </p>
                     <div class="fx-estado">
@@ -516,6 +516,23 @@ export class PasarAExcel implements OnDestroy {
   protected elegirXubio(id: string): void {
     const l = this.actual();
     if (l) this.xubioElegido.update((m) => ({ ...m, [l.archivo]: id }));
+  }
+
+  /** Ctrl+V con una captura (o una imagen copiada) en cualquier lugar de la pantalla. */
+  @HostListener('document:paste', ['$event'])
+  protected pegar(e: ClipboardEvent): void {
+    const destino = e.target as HTMLElement | null;
+    // Pegar texto en un campo de la revisión sigue siendo pegar texto.
+    if (destino?.closest('input, textarea, [contenteditable]')) return;
+    const imagenes = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
+    if (!imagenes.length) return;
+    e.preventDefault();
+    const hora = new Date().toTimeString().slice(0, 8).replace(/:/g, '');
+    const archivos = imagenes.map((f, i) => {
+      const ext = f.type === 'image/jpeg' ? 'jpg' : (f.type.split('/')[1] ?? 'png');
+      return new File([f], `Captura ${hora}${imagenes.length > 1 ? `-${i + 1}` : ''}.${ext}`, { type: f.type });
+    });
+    void this.leer(archivos);
   }
 
   ngOnDestroy(): void {
