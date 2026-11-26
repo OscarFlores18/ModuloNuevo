@@ -140,3 +140,16 @@ def test_autocorrige_descripciones_mal_leidas():
     assert corregir_descripciones(items) == 1 and items[0].leido == "AGUA NWINERAL SMART VATER 591NL"
     v = verificar(Lectura(tipo="comprobante", items=items, totales={"total": 2}))
     assert any(x.campo == "descripcion" and x.titulo == "Autocorregí 1 descripción" for x in v)
+
+
+def test_corrige_el_importe_de_un_item_mal_leido():
+    from backend.app.extraccion.a_excel import Item, corregir_importes_items
+
+    importes = [2937.79, 2937.73, 25619.83, 21487.60, 15702.48, 6611.57, 4545.45, 4132.23]
+    precios = [3600, 3600, 31000, 26000, 19000, 8000, 5500, 5000]
+    items = [Item(cantidad=1, precio=p, alicuota=21, importe=v) for p, v in zip(precios, importes)]
+    # El ítem 2 es igual al 1 (misma cantidad y precio): con su importe, el detalle suma el neto.
+    assert corregir_importes_items(items, {"neto_gravado": 83974.75, "total": 108417.98}) == 1
+    assert (items[1].importe, items[1].importe_leido) == (2937.79, 2937.73)
+    # Si ya suma, no se toca nada.
+    assert corregir_importes_items(items, {"neto_gravado": 83974.75}) == 0

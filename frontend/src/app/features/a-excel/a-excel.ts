@@ -673,7 +673,7 @@ export class PasarAExcel implements OnDestroy {
     if (!l) return;
     const nuevo = campo === 'codigo' || campo === 'descripcion' ? valor : aNumero(valor);
     // Si corrige la descripción a mano, deja de figurar como autocorregida.
-    const extra = campo === 'descripcion' ? { leido: '' } : {};
+    const extra = campo === 'descripcion' ? { leido: '' } : campo === 'importe' ? { importe_leido: null } : {};
     this.reemplazar({ ...l, items: l.items.map((x, j) => (j === i ? { ...x, [campo]: nuevo, ...extra } : x)) });
   }
 

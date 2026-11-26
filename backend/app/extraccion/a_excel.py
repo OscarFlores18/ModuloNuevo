@@ -86,6 +86,8 @@ class Item(BaseModel):
     producto: str = Field(default="", max_length=60)
     # Lo que decía antes de autocorregirlo (vacío si no se tocó).
     leido: str = Field(default="", max_length=300)
+    # El importe que se leyó antes de autocorregirlo (None si no se tocó).
+    importe_leido: float | None = None
 
 
 class Hoja(BaseModel):
@@ -653,6 +655,47 @@ def corregir_descripciones(items: list[Item]) -> int:
     return cambiados
 
 
+def _tolerancia_items(n: int) -> float:
+    return max(TOLERANCIA, 0.01 * n / 2)
+
+
+def corregir_importes_items(items: list[Item], t: dict[str, float | None]) -> int:
+    """Si el detalle no suma el neto (o el total), busca UN importe mal leído que lo
+    arregle: el de un ítem igual a otro (misma cantidad, precio y alícuota) o un dígito
+    que el lector confunde (3 y 9, 6 y 8…). Si hay una sola explicación, lo corrige y
+    guarda lo leído en «importe_leido». Devuelve cuántos cambió (0 o 1)."""
+    if len(items) < 2 or any(i.importe is None for i in items):
+        return 0
+    suma = round(sum(i.importe for i in items), 2)
+    tol = _tolerancia_items(len(items))
+    objetivos = [t.get(k) for k in ("neto_gravado", "total") if t.get(k) is not None]
+    if not objetivos or any(abs(o - suma) <= tol for o in objetivos):
+        return 0
+    candidatos: dict[tuple[int, float], tuple[int, float]] = {}  # (ítem, valor) -> (prioridad, diferencia)
+    for n, a in enumerate(items):
+        gemelos = [b.importe for m, b in enumerate(items) if m != n and a.precio
+                   and (a.cantidad, a.precio, a.alicuota) == (b.cantidad, b.precio, b.alicuota)
+                   and b.importe != a.importe and abs(b.importe - a.importe) < 0.02 * max(a.importe, b.importe)]
+        opciones = [(0, g) for g in gemelos] + [(1, v) for v in _variantes_importe(a.importe) if v > 0 and v != a.importe]
+        for prioridad, valor in opciones:
+            nueva = round(suma - a.importe + valor, 2)
+            dif = min(abs(o - nueva) for o in objetivos)
+            if dif <= tol:
+                previo = candidatos.get((n, valor))
+                if previo is None or (prioridad, dif) < previo:
+                    candidatos[(n, valor)] = (prioridad, dif)
+    if not candidatos:
+        return 0
+    orden = sorted(candidatos.items(), key=lambda x: x[1])
+    mejor = orden[0]
+    # Dos arreglos igual de buenos en ítems distintos: no se adivina.
+    if len(orden) > 1 and orden[1][1] == mejor[1] and orden[1][0][0] != mejor[0][0]:
+        return 0
+    (n, valor), _ = mejor
+    items[n].importe_leido, items[n].importe = items[n].importe, valor
+    return 1
+
+
 def sugerir_producto(descripcion: str) -> str:
     d = norm(descripcion)
     for producto, patron in _REGLAS_PRODUCTO:
@@ -803,6 +846,7 @@ def leer(nombre: str, contenido: bytes) -> Lectura:
         raise ValueError(f"«{nombre}»: formato no soportado (foto, captura, PDF, CSV o Excel).")
     if lectura.tipo == "comprobante":
         corregir_descripciones(lectura.items)
+        corregir_importes_items(lectura.items, lectura.totales)
         sugerir_productos(lectura.items)
     lectura.verificaciones = verificar(lectura)
     return lectura
@@ -1008,6 +1052,15 @@ def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Veri
         titulo=f"Autocorregí {len(corregidos)} {'descripción' if len(corregidos) == 1 else 'descripciones'}",
         datos=[f"#{n} {x.descripcion}" for n, x in corregidos[:4]],
     )] if corregidos else []
+    for n, x in enumerate(items):
+        if x.importe_leido is not None and x.importe is not None and x.importe_leido != x.importe:
+            aviso.append(Verificacion(
+                campo="items", nivel="aviso",
+                mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)} y lo corregí a {_fmt(x.importe)}: "
+                         "con ese valor el detalle suma el neto (en naranja en el detalle). Compará con la imagen."),
+                titulo=f"Corregí el importe del ítem {n + 1}",
+                datos=[f"Leído {_fmt(x.importe_leido)}", f"Ahora {_fmt(x.importe)}"],
+            ))
     return aviso + _verificar_items_sin_correccion(items, t)
 
 

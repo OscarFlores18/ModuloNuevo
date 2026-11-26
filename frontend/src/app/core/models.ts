@@ -399,6 +399,8 @@ export interface ItemLeido {
   producto?: string;
   /** Lo que se leyó antes de autocorregir la descripción. */
   leido?: string;
+  /** El importe leído antes de autocorregirlo. */
+  importe_leido?: number | null;
 }
 
 export interface HojaLeida {

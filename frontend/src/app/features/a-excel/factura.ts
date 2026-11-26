@@ -176,7 +176,9 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
                   <td style="width: 80px"><input class="xb-in num" [value]="dec(x.cantidad)" (change)="item.emit([i, 'cantidad', val($event)])" aria-label="Cantidad" /></td>
                   <td style="width: 105px"><input class="xb-in num" [value]="dec(x.precio)" (change)="item.emit([i, 'precio', val($event)])" aria-label="Precio" /></td>
                   <td style="width: 64px"><input class="xb-in num" [value]="dec(extras().dto[i] ?? 0)" (change)="lista('dto', i, val($event))" aria-label="Descuento" /></td>
-                  <td style="width: 105px"><input class="xb-in num" [value]="dec(x.importe)" (change)="item.emit([i, 'importe', val($event)])" aria-label="Importe" /></td>
+                  <td style="width: 105px"><input class="xb-in num" [class.xb-auto]="importeCorregido(x)" [value]="dec(x.importe)"
+                    [title]="importeCorregido(x) ? 'Autocorregido: se leyó ' + dec(x.importe_leido) + ' (así el detalle suma el neto)' : ''"
+                    (change)="item.emit([i, 'importe', val($event)])" aria-label="Importe" /></td>
                   <td style="width: 120px">
                     <select class="xb-in" (change)="item.emit([i, 'alicuota', val($event)])" aria-label="Alícuota de IVA">
                       @for (a of alicuotas; track a) { <option [value]="a" [selected]="x.alicuota === a">{{ a }}% · {{ dec(ivaDe(x, a)) }}</option> }
@@ -405,12 +407,19 @@ export class Factura {
     const items = this.lectura().items;
     const productos = items.filter((_, i) => this.autoProducto(i)).length;
     const descripciones = items.filter((x) => x.leido && x.leido !== x.descripcion).length;
+    const importes = items.filter((x) => this.importeCorregido(x)).length;
     const partes = [
       productos ? `autocompleté ${productos} ${productos === 1 ? 'producto' : 'productos'}` : '',
       descripciones ? `corregí ${descripciones} ${descripciones === 1 ? 'descripción mal leída' : 'descripciones mal leídas'}` : '',
+      importes ? `corregí ${importes === 1 ? 'un importe mal leído' : importes + ' importes mal leídos'} para que el detalle sume el neto` : '',
     ].filter(Boolean);
-    return partes.length ? partes.join(' y ') : '';
+    if (!partes.length) return '';
+    return partes.length === 1 ? partes[0] : `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}`;
   });
+
+  protected importeCorregido(x: ItemLeido): boolean {
+    return x.importe_leido !== null && x.importe_leido !== undefined && x.importe_leido !== x.importe;
+  }
 
   /** Lo que va al Excel: con los productos autocompletados incluidos. */
   protected paraGuardar(): Extras {
