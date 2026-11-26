@@ -27,16 +27,10 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
     .fa-ver button { border: 0; background: #fff; padding: 5px 14px; font: inherit; font-size: .85rem; font-weight: 700; color: #475569; cursor: pointer; }
     .fa-ver button + button { border-left: 1px solid #cbd5e1; }
     .fa-ver button[aria-pressed="true"] { background: #00618a; color: #fff; }
-    .fa-sesion { font-size: .8rem; color: #64748b; }
-    .fa-sesion b { color: #0f172a; }
-    .fa-op { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 800; background: #e0f2fe; color: #075985; }
-    .fa-op.venta { background: #dcfce7; color: #166534; }
-    .fa-flujo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; padding: 5px 10px; border-radius: 8px; background: #f0f9ff; border: 1px solid #bae6fd; font-size: .8rem; }
+    .fa-flujo { flex: 1 1 260px; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 5px 10px; border-radius: 8px; background: #f0f9ff; border: 1px solid #bae6fd; font-size: .8rem; }
     .fa-flujo.venta { background: #f0fdf4; border-color: #bbf7d0; }
     .fa-flujo .tipo { font-weight: 800; color: #0369a1; } .fa-flujo.venta .tipo { color: #15803d; }
     .fa-flujo small { color: #64748b; } .fa-flujo .fl { color: #94a3b8; }
-    .fa-lector { padding: 2px 10px; border-radius: 999px; font-size: .75rem; font-weight: 800; background: #f1f5f9; color: #475569; }
-    .fa-lector.ia { background: #f3e8ff; color: #6b21a8; }
 
     /* Xubio */
     .xb { font-family: "Open Sans", "Segoe UI", Arial, sans-serif; color: #333; background: #fff; border: 1px solid #ddd; border-top: 3px solid #4aa3df; padding: 18px 22px 0; }
@@ -104,24 +98,16 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
         <button type="button" [attr.aria-pressed]="modo() === 'xubio'" (click)="modo.set('xubio')">Como en Xubio</button>
         <button type="button" [attr.aria-pressed]="modo() === 'arca'" (click)="modo.set('arca')">Como en ARCA</button>
       </div>
-      <span class="fa-lector" [class.ia]="l.metodo === 'ia'" [title]="l.metodo === 'ia' ? 'Leída con Gemini: compará con la imagen igual' : ''">{{ lector() }}</span>
-      <span class="fa-op" [class.venta]="operacion() === 'Ventas'">{{ operacion() === 'Ventas' ? '↗ Venta' : '↘ Compra' }}</span>
-      <span class="fa-sesion">
-        @if (sesion()) { Estudio en Xubio: <b>{{ sesion() }}</b> } @else { Sin sesión de Xubio guardada }
-        @if (f) { · Empresa: <b>{{ f.empresa }}</b> }
-      </span>
+      @if (f) {
+        @let venta = f.operacion === 'Ventas';
+        <div class="fa-flujo" [class.venta]="venta" [title]="sesion() ? 'Estudio en Xubio: ' + sesion() : ''">
+          <span class="tipo">{{ venta ? '↗ Venta' : '↘ Compra' }}</span>
+          <b>{{ venta ? f.empresa : (f.contraparte.nombre || 'proveedor sin nombre') }}</b>
+          <span class="fl" aria-hidden="true">⟶</span>
+          <b>{{ venta ? (f.contraparte.nombre || 'cliente sin nombre') : f.empresa }}</b>
+        </div>
+      }
     </div>
-
-    @if (f) {
-      @let venta = f.operacion === 'Ventas';
-      <div class="fa-flujo" [class.venta]="venta">
-        <span class="tipo">{{ venta ? '↗ Venta' : '↘ Compra' }}</span>
-        <small>{{ venta ? 'de' : 'a' }}</small> <b>{{ venta ? f.empresa : (f.contraparte.nombre || 'proveedor sin nombre') }}</b>
-        <span class="fl" aria-hidden="true">⟶</span>
-        <b>{{ venta ? (f.contraparte.nombre || 'cliente sin nombre') : f.empresa }}</b>
-        <small>({{ venta ? 'cliente' : 'tu cliente' }})</small>
-      </div>
-    }
 
     @if (modo() === 'xubio') {
       <div class="xb">
@@ -157,7 +143,7 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
 
         @if (productos().length) {
           <div class="xb-prod" aria-label="Productos sugeridos">
-            <span>{{ f ? 'Productos de ' + f.empresa : (operacion() === 'Ventas' ? 'Productos de venta' : 'Productos de compra') }}:</span>
+            <span>Productos:</span>
             @for (p of productos(); track p) { <button type="button" (click)="usarProducto(p)">+ {{ p }}</button> }
           </div>
         }
@@ -298,11 +284,6 @@ export class Factura {
   private readonly porArchivo = signal<Record<string, Extras>>({});
   /** Para que las sugerencias se actualicen al recordar un producto. */
   private readonly recordados = signal(0);
-
-  /** Con qué se leyó: la IA (Gemini), el OCR, el texto del PDF o la planilla. */
-  protected readonly lector = computed(
-    () => ({ ia: '✦ Leída con IA (Gemini)', ocr: 'Leída con OCR', pdf: 'Leída del PDF', planilla: 'Leída de la planilla' })[this.lectura().metodo] ?? '',
-  );
 
   protected readonly operacion = computed(() => this.estudio()?.operacion ?? 'Compras');
   /** La contraparte: el emisor en una compra, el receptor en una venta. */

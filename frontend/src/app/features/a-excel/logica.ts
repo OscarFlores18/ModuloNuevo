@@ -194,7 +194,9 @@ function leerProductos(): Record<string, string[]> {
 /** Primero los que ya usó esa empresa (el último arriba), después los de siempre. */
 export function productosSugeridos(empresa: string, operacion: Operacion): string[] {
   const usados = empresa ? (leerProductos()[`${empresa}|${operacion}`] ?? []) : [];
-  return [...new Set([...usados, ...PRODUCTOS_BASE[operacion]])].slice(0, 10);
+  const clave = (x: string) => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const vistos = new Set<string>();
+  return [...usados, ...PRODUCTOS_BASE[operacion]].filter((x) => !vistos.has(clave(x)) && !!vistos.add(clave(x))).slice(0, 10);
 }
 
 export function recordarProducto(empresa: string, producto: string, operacion: Operacion = 'Compras'): void {

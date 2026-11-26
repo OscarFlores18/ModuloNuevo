@@ -1,4 +1,5 @@
 import { adaptar, cuitConGuiones, detectarEmpresa, mismoNombre, sinCae } from './logica';
+import { corta } from './verificaciones';
 
 const empresas = [
   { nombre: 'Piccinini', cuits: ['30-71080988-3', '20111111112'] },
@@ -62,5 +63,25 @@ describe('detección tolerante al OCR', () => {
 
   it('no confunde nombres distintos', () => {
     expect(mismoNombre('Vendedora Prueba S.A.', 'Otra Empresa SRL')).toBe(false);
+  });
+});
+
+describe('avisos cortos con un backend anterior', () => {
+  const v = (mensaje: string) => corta({ campo: 'x', nivel: 'aviso', mensaje, sugerencia: null });
+
+  it('arma título y números del mensaje largo', () => {
+    const a = v('Los 8 ítems suman 83.974,68 y el neto gravado es 83.974,75 (diferencia 0,07): algún importe está mal leído o falta un ítem.');
+    expect([a.titulo, a.datos]).toEqual(['Los ítems no suman el neto', ['Ítems 83.974,68', 'Neto 83.974,75', 'Dif. 0,07']]);
+  });
+
+  it('las lecturas distintas quedan para elegir', () => {
+    const a = v('Emisor: cada lectura dio algo distinto (FOC FUELS MARKETING $ / FOC FUELS MARKETING SA). Compará con la imagen.');
+    expect([a.titulo, a.opciones]).toEqual(['Emisor: ¿cuál es?', ['FOC FUELS MARKETING $', 'FOC FUELS MARKETING SA']]);
+  });
+
+  it('lo verificado queda en pocas palabras', () => {
+    expect(v('CUIT del emisor: el dígito verificador da bien.').titulo).toBe('CUIT del emisor');
+    expect(v('Neto + IVA + otros tributos = total (108.417,98).').titulo).toBe('El total cierra');
+    expect(v('El IVA es el 21% del neto gravado.').titulo).toBe('IVA 21%');
   });
 });
