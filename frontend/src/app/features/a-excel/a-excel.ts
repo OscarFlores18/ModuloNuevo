@@ -227,6 +227,10 @@ import {
                   @if (estudio(); as f) {
                     @if (f.origen === 'receptor' || f.origen === 'emisor') {
                       <p class="fx-detec ok">✓ Detectada: <b>{{ f.empresa }}</b> es el {{ f.origen }} de la factura, así que es {{ f.operacion === 'Compras' ? 'una compra' : 'una venta' }}.</p>
+                      @if (f.ambigua) {
+                        <p class="fx-detec aviso">El {{ f.origen === 'emisor' ? 'receptor' : 'emisor' }} también es cliente del estudio.
+                          <button type="button" class="fx-link" (click)="invertir()">Es {{ f.operacion === 'Compras' ? 'una venta' : 'una compra' }} →</button></p>
+                      }
                     } @else if (f.origen === 'trabajo') {
                       <p class="fx-detec aviso">La factura no nombra a ningún cliente del estudio: la tomé para <b>{{ f.empresa }}</b>, la empresa con la que venís trabajando, como compra. Cambiala arriba si no es así.</p>
                     } @else {
@@ -428,7 +432,7 @@ export class PasarAExcel implements OnDestroy {
   protected readonly estudio = computed<FacturaDelEstudio | null>(() => {
     const l = this.actual();
     if (!l || l.tipo !== 'comprobante') return null;
-    const detectada = detectarEmpresa(l.encabezado, this.empresas());
+    const detectada = detectarEmpresa(l.encabezado, this.empresas(), { archivo: l.archivo, trabajo: empresaDeTrabajo() });
     const manual = this.elegido()[l.archivo];
     if (!manual) {
       if (detectada) return detectada;
@@ -436,9 +440,10 @@ export class PasarAExcel implements OnDestroy {
       return trabajo ? adaptar(l.encabezado, trabajo.nombre, 'Compras', 'trabajo') : null;
     }
     if (!manual.empresa) return null;
-    const mismaEmpresa = detectada?.empresa === manual.empresa;
-    const operacion = manual.operacion ?? (mismaEmpresa ? detectada!.operacion : 'Compras');
-    const origen = mismaEmpresa && operacion === detectada!.operacion ? detectada!.origen : 'manual';
+    // Elegida a mano: compra o venta según de qué lado de la factura está esa empresa.
+    const propia = detectarEmpresa(l.encabezado, this.empresas().filter((e) => e.nombre === manual.empresa));
+    const operacion = manual.operacion ?? propia?.operacion ?? 'Compras';
+    const origen = propia && operacion === propia.operacion ? propia.origen : 'manual';
     return adaptar(l.encabezado, manual.empresa, operacion, origen);
   });
 
@@ -520,6 +525,16 @@ export class PasarAExcel implements OnDestroy {
     const l = this.actual();
     if (l) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: nombre, operacion: null } }));
     recordarEmpresaDeTrabajo(nombre);
+  }
+
+  /** Emisor y receptor son clientes: mirarla desde el otro lado (compra <-> venta). */
+  protected invertir(): void {
+    const l = this.actual();
+    const f = this.estudio();
+    if (!l || !f) return;
+    const lado = f.operacion === 'Compras' ? 'emisor' : 'receptor';
+    const otra = detectarEmpresa({ [lado]: l.encabezado[lado] ?? '', [`${lado}_cuit`]: l.encabezado[`${lado}_cuit`] ?? '' }, this.empresas());
+    if (otra) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: otra.empresa, operacion: otra.operacion } }));
   }
 
   protected elegirOperacion(operacion: Operacion): void {

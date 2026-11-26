@@ -108,6 +108,8 @@ export interface FacturaDelEstudio {
   empresa: string;
   operacion: Operacion;
   /** Cómo se detectó: por la CUIT del receptor, del emisor, o elegida a mano. */
+  /** El emisor y el receptor son clientes del estudio: se eligió uno (se puede cambiar). */
+  ambigua?: boolean;
   origen: 'receptor' | 'emisor' | 'manual' | 'trabajo';
   /** Proveedor (compra) o cliente (venta). */
   contraparte: { nombre: string; cuit: string };
@@ -119,8 +121,28 @@ export const soloDigitos = (s: string | undefined | null) => (s ?? '').replace(/
  * La empresa del estudio de esta factura: si es el receptor, es una compra; si es
  * el emisor, una venta. Primero el receptor (lo más común: facturas de proveedores).
  */
-export function detectarEmpresa(encabezado: Record<string, string>, empresas: EmpresaEstudio[]): FacturaDelEstudio | null {
+export function detectarEmpresa(
+  encabezado: Record<string, string>, empresas: EmpresaEstudio[], pista: { archivo?: string; trabajo?: string } = {},
+): FacturaDelEstudio | null {
   const lados: ['receptor' | 'emisor', Operacion][] = [['receptor', 'Compras'], ['emisor', 'Ventas']];
+  // El emisor y el receptor son los dos clientes del estudio: ¿desde cuál se mira?
+  // 1) el nombre del archivo («Comprobantes de Venta»); 2) la empresa con la que se viene
+  // trabajando; 3) si no, como siempre (compra).
+  const deCadaLado = lados.map(([lado, operacion]) => {
+    const cuit = soloDigitos(encabezado[`${lado}_cuit`]);
+    const nombre = encabezado[lado] ?? '';
+    const e = empresas.find((x) => cuit.length === 11 && x.cuits.some((c) => digitosDistintos(soloDigitos(c), cuit) <= 2))
+      ?? empresas.find((x) => mismoNombre(x.nombre, nombre));
+    return e ? adaptar(encabezado, e.nombre, operacion, lado) : null;
+  });
+  const [compra, venta] = deCadaLado;
+  if (compra && venta && compra.empresa !== venta.empresa) {
+    const archivo = (pista.archivo ?? '').toLowerCase();
+    if (/\bventas?\b/.test(archivo) && !/\bcompras?\b/.test(archivo)) return { ...venta, ambigua: true };
+    if (/\bcompras?\b/.test(archivo) && !/\bventas?\b/.test(archivo)) return { ...compra, ambigua: true };
+    if (pista.trabajo === venta.empresa) return { ...venta, ambigua: true };
+    return { ...compra, ambigua: true };
+  }
   // 1) La CUIT tal cual; 2) la CUIT con 1 o 2 dígitos mal leídos (OCR); 3) el nombre.
   const pruebas: ((e: EmpresaEstudio, cuit: string, nombre: string) => boolean)[] = [
     (e, cuit) => cuit.length === 11 && e.cuits.map(soloDigitos).includes(cuit),
