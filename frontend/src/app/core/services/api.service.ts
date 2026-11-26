@@ -54,9 +54,9 @@ export class ApiService {
     );
   }
   /** El .xlsx (en base64). */
-  generarAExcel(lectura: LecturaExcel): Promise<{ nombre: string; contenido: string }> {
+  generarAExcel(lectura: LecturaExcel, extra: { operacion?: string; empresa?: string; extras?: unknown } = {}): Promise<{ nombre: string; contenido: string }> {
     return firstValueFrom(
-      this.http.post<{ nombre: string; contenido: string }>(`${this.url}/a-excel/generar`, { lectura }).pipe(errorLegible('No se pudo armar el Excel.')),
+      this.http.post<{ nombre: string; contenido: string }>(`${this.url}/a-excel/generar`, { lectura, ...extra }).pipe(errorLegible('No se pudo armar el Excel.')),
     );
   }
   /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */

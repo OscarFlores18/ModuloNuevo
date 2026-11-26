@@ -10,6 +10,8 @@ Las rutas `/api/jobs` siguen existiendo para uso programático.
 
 from __future__ import annotations
 
+from typing import Literal
+
 import base64
 import binascii
 import re
@@ -444,13 +446,20 @@ def verificar_a_excel(body: LecturaRequest) -> dict:
     return {"verificaciones": [v.model_dump() for v in a_excel.verificar(body.lectura)]}
 
 
+class GenerarAExcelRequest(LecturaRequest):
+    # Del panel «Para el estudio»: con esto la factura sale con las columnas de Xubio.
+    operacion: Literal["Compras", "Ventas"] | None = None
+    empresa: str = Field(default="", max_length=200)
+    extras: a_excel.Extras | None = None
+
+
 @router.post("/a-excel/generar")
-def generar_a_excel(body: LecturaRequest) -> dict:
+def generar_a_excel(body: GenerarAExcelRequest) -> dict:
     lectura = body.lectura
     lectura.verificaciones = a_excel.verificar(lectura)
     return {
-        "nombre": a_excel.nombre_excel(lectura),
-        "contenido": base64.b64encode(a_excel.generar(lectura)).decode("ascii"),
+        "nombre": a_excel.nombre_excel(lectura, body.operacion, body.empresa),
+        "contenido": base64.b64encode(a_excel.generar(lectura, body.operacion, body.extras)).decode("ascii"),
     }
 
 

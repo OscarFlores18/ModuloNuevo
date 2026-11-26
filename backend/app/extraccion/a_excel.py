@@ -968,12 +968,123 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
 # --- Excel ---------------------------------------------------------------------------
 
 
-def nombre_excel(lectura: Lectura) -> str:
+def nombre_excel(lectura: Lectura, operacion: str | None = None, empresa: str = "") -> str:
+    """Como el AUX de un control: «Conversor de facturas Compras con AFIP - 10-26 - Cliente.xlsx»."""
+    from ..core.controles import mes_anio
+    from ..core.paths import limpiar_nombre
+
     base = re.sub(r'[\\/*?:"<>|]', "", Path(lectura.archivo).stem).strip() or "documento"
-    return f"{base}.xlsx"
+    if lectura.tipo != "comprobante" or operacion not in ("Compras", "Ventas"):
+        return f"{base}.xlsx"
+    cliente = limpiar_nombre(empresa).rstrip(". ") or base
+    fecha = lectura.encabezado.get("fecha", "")
+    periodo = f" - {mes_anio(fecha)}" if re.fullmatch(r"\d{2}/\d{2}/\d{4}", fecha) else ""
+    return f"Conversor de facturas {operacion} con AFIP{periodo} - {cliente}.xlsx"
 
 
-def generar(lectura: Lectura) -> bytes:
+class Extras(BaseModel):
+    """Lo que se completa en la factura «como en Xubio» y no sale del archivo."""
+
+    condicion: str = Field(default="", max_length=60)
+    vencimiento: str = Field(default="", max_length=10)
+    productos: list[str] = Field(default_factory=list, max_length=2000)
+    centros: list[str] = Field(default_factory=list, max_length=2000)
+    dto: list[float | None] = Field(default_factory=list, max_length=2000)
+
+
+# El modelo de Xubio «Importar comprobantes» (modelo-importacion-ventas): una fila con
+# la cabecera y una por ítem, unidas por NUMERODECONTROL. En compras va el proveedor.
+COLUMNAS_IMPORTACION = [
+    "NUMERODECONTROL", "CLIENTE", "TIPO", "NUMERO", "FECHA", "VENCIMIENTODELCOBRO",
+    "COMPROBANTEASOCIADO", "MONEDA", "COTIZACION", "OBSERVACIONES", "PRODUCTOSERVICIO",
+    "CENTRODECOSTO", "PRODUCTOOBSERVACION", "CANTIDAD", "PRECIO", "DESCUENTO", "IMPORTE", "IVA",
+]
+
+
+def _tipo_xubio(tipo: str) -> int | str:
+    """Código de ARCA -> tipo de Xubio: 1 factura, 2 nota de débito, 3 nota de crédito."""
+    m = re.match(r"\s*(\d+)", tipo or "")
+    if not m:
+        return ""
+    codigo = int(m.group(1))
+    for xubio, codigos in ((1, {1, 6, 11, 19, 51, 81, 82, 111}), (2, {2, 7, 12, 20, 52}), (3, {3, 8, 13, 21, 53})):
+        if codigo in codigos:
+            return xubio
+    return codigo
+
+
+def _numero_xubio(lectura: Lectura) -> str:
+    """«00001-00000001» con la letra del tipo -> «A-00001-00000001»."""
+    numero = lectura.encabezado.get("numero", "")
+    m = re.search(r"\b([ABCEM])\s*$", lectura.encabezado.get("tipo", ""))
+    pv, _, nro = numero.partition("-")
+    if not (pv.isdigit() and nro.isdigit()):
+        return numero
+    return f"{m.group(1) + '-' if m else ''}{pv.zfill(5)}-{nro.zfill(8)}"
+
+
+def _fecha_xubio(texto: str):
+    try:
+        return datetime.strptime(texto.strip(), "%d/%m/%Y")
+    except ValueError:
+        return texto or None
+
+
+def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> list[list]:
+    extras = extras or Extras()
+    e, t = lectura.encabezado, lectura.totales
+    lado = "emisor" if operacion == "Compras" else "receptor"
+    fecha = _fecha_xubio(e.get("fecha", ""))
+    cabecera = [
+        1, e.get(lado, ""), _tipo_xubio(e.get("tipo", "")), _numero_xubio(lectura), fecha,
+        _fecha_xubio(extras.vencimiento) if extras.vencimiento else fecha,
+        "", "Pesos Argentinos", "", Path(lectura.archivo).stem[:200],
+    ] + [None] * 8
+    items = lectura.items or [Item(
+        descripcion="Según factura", cantidad=1, precio=t.get("neto_gravado"), importe=t.get("neto_gravado"),
+        alicuota=_alicuota_de(t.get("neto_gravado") or 0.0, t.get("iva") or 0.0),
+    )]
+    filas = [cabecera]
+    for n, it in enumerate(items):
+        def de(lista, defecto=None):
+            return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
+        filas.append([1] + [None] * 9 + [
+            de(extras.productos, it.codigo or it.descripcion[:60]), de(extras.centros), it.descripcion or None,
+            it.cantidad, it.precio, de(extras.dto) or None, it.importe, it.alicuota,
+        ])
+    return filas
+
+
+def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> bytes:
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet0"
+    encabezado = list(COLUMNAS_IMPORTACION)
+    if operacion == "Compras":
+        encabezado[1], encabezado[5] = "PROVEEDOR", "VENCIMIENTODELPAGO"
+    ws.append(encabezado)
+    for fila in filas_importacion(lectura, operacion, extras):
+        ws.append(fila)
+    for letra in "EF":
+        for celda in ws[letra][1:]:
+            celda.number_format = "dd/mm/yyyy"
+    for letra in "OPQ":
+        for celda in ws[letra][1:]:
+            celda.number_format = "#,##0.00"
+    for i, c in enumerate(encabezado):
+        ws.column_dimensions[chr(65 + i)].width = max(12, len(c) + 2)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | None = None) -> bytes:
+    """Una factura con el estudio elegido sale con el modelo de importación de Xubio; lo
+    demás (planillas, o sin compra/venta) se transcribe como antes."""
+    if lectura.tipo == "comprobante" and operacion in ("Compras", "Ventas"):
+        return excel_importacion(lectura, operacion, extras)
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter

@@ -6,7 +6,7 @@ import { ApiService } from '../../core/services/api.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
-import { Factura } from './factura';
+import { Extras, Factura } from './factura';
 import { ToastService } from '../../core/ui/toast';
 import {
   ACEPTA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
@@ -370,7 +370,7 @@ import {
                   (item)="cambiarItem($event[0], $event[1], $event[2])"
                   (agregar)="agregarItem()"
                   (sacar)="sacarItem($event)"
-                  (guardar)="generar()"
+                  (guardar)="generar($event)"
                   (eliminar)="quitar(indice())"
                   (cancelar)="volverArriba()"
                 />
@@ -707,12 +707,13 @@ export class PasarAExcel implements OnDestroy {
 
   // --- Generar ------------------------------------------------------------------------
 
-  protected async generar(): Promise<void> {
+  protected async generar(extras?: Extras): Promise<void> {
     const l = this.actual();
     if (!l) return;
     this.generando.set(true);
     try {
-      const r = await this.api.generarAExcel(l);
+      const est = this.estudio();
+      const r = await this.api.generarAExcel(l, est ? { operacion: est.operacion, empresa: est.empresa, extras } : {});
       const bytes = Uint8Array.from(atob(r.contenido), (c) => c.charCodeAt(0));
       descargarBlob(r.nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
       this.toast.ok('Excel listo', r.nombre);

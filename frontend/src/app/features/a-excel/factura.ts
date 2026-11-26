@@ -3,7 +3,7 @@ import { ItemLeido, LecturaExcel } from '../../core/models';
 import { FacturaDelEstudio, aTexto, cuitConGuiones, productosSugeridos, recordarProducto } from './logica';
 
 /** Lo que solo existe en pantalla (todavía no va al Excel ni a Xubio). */
-interface Extras {
+export interface Extras {
   condicion: string;
   vencimiento: string;
   productos: string[];
@@ -200,7 +200,7 @@ const ALICUOTAS = [21, 10.5, 27, 5, 2.5, 0];
           <span>Total <b>{{ dec(l.totales['total']) }}</b></span>
         </div>
         <div class="xb-pie">
-          <button type="button" class="guardar" (click)="guardar.emit()" [disabled]="ocupado()" title="Genera el Excel con lo que ves">{{ ocupado() ? 'Armando…' : 'Guardar' }}</button>
+          <button type="button" class="guardar" (click)="guardar.emit(extras())" [disabled]="ocupado()" title="Genera el Excel con lo que ves">{{ ocupado() ? 'Armando…' : 'Guardar' }}</button>
           <button type="button" (click)="eliminar.emit()" title="Saca este archivo de la lista">Eliminar</button>
           <button type="button" (click)="cancelar.emit()" title="Vuelve arriba sin generar">Cancelar</button>
         </div>
@@ -260,7 +260,7 @@ export class Factura {
   readonly item = output<[number, keyof ItemLeido, string]>();
   readonly agregar = output<void>();
   readonly sacar = output<number>();
-  readonly guardar = output<void>();
+  readonly guardar = output<Extras>();
   readonly eliminar = output<void>();
   readonly cancelar = output<void>();
 

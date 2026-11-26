@@ -79,3 +79,22 @@ def test_no_corrige_un_cero():
     # IVA (9 por 3) y otros tributos (0 por 8) mal leídos; el 0,00 del no gravado no se toca.
     t = {"neto_gravado": 83974.75, "no_gravado": 0.0, "exento": None, "iva": 17694.71, "otros_tributos": 6800.52, "total": 108417.98}
     assert corregir_totales(t) == {"iva": 17634.71, "otros_tributos": 6808.52}
+
+
+def test_excel_con_el_modelo_de_importacion_de_xubio():
+    import io
+
+    from openpyxl import load_workbook
+
+    from backend.app.extraccion.a_excel import Extras, Lectura, excel_importacion, nombre_excel
+
+    e, items, t = comprobante_de_texto(XUBIO)
+    e["tipo"] = "1 - Factura A"
+    lectura = Lectura(archivo="factura.pdf", tipo="comprobante", encabezado=e, items=items, totales=t)
+    assert nombre_excel(lectura, "Ventas", "Vendedora Prueba S.A.") == \
+        "Conversor de facturas Ventas con AFIP - 11-26 - Vendedora Prueba S.A.xlsx"
+    ws = load_workbook(io.BytesIO(excel_importacion(lectura, "Ventas", Extras(productos=["Honorarios"])))).active
+    filas = [list(f) for f in ws.iter_rows(values_only=True)]
+    assert filas[0][:4] == ["NUMERODECONTROL", "CLIENTE", "TIPO", "NUMERO"]
+    assert filas[1][1:4] == ["CLIENTE PRUEBA S.A.", 1, "A-00004-00000751"]
+    assert filas[2][10] == "Honorarios" and filas[2][13:] == [1, 2479338.84, None, 2479338.84, 21]
