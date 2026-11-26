@@ -19,6 +19,8 @@ import { DomSanitizer } from '@angular/platform-browser';
     .va.grande .va-lienzo { max-height: none; flex: 1; }
     .va-lienzo.arrastrando { cursor: grabbing; }
     .va-lienzo img { display: block; height: auto; max-width: none; user-select: none; }
+    .va-lienzo img.entera { width: auto !important; max-width: 100%; max-height: calc(100vh - 190px); margin: 0 auto; }
+    .va.grande .va-lienzo img.entera { max-height: calc(100vh - 90px); }
     iframe { display: block; width: 100%; height: calc(100vh - 200px); border: 0; }
     .va.grande iframe { height: 100%; }
   `,
@@ -29,7 +31,7 @@ import { DomSanitizer } from '@angular/platform-browser';
         <button type="button" (click)="cambiar(-25)" [disabled]="zoom() <= 25" aria-label="Alejar">−</button>
         <span class="pct" aria-live="polite">{{ zoom() }}%</span>
         <button type="button" (click)="cambiar(25)" [disabled]="zoom() >= 400" aria-label="Acercar">+</button>
-        <button type="button" (click)="zoom.set(100)" title="Al ancho del panel">Ajustar</button>
+        <button type="button" (click)="zoom.set(100)" title="La hoja entera a la vista">Ajustar</button>
         <span class="sep"></span>
         <button type="button" (click)="grande.set(!grande())" [attr.aria-pressed]="grande()">{{ grande() ? 'Cerrar' : 'Pantalla completa' }}</button>
       </div>
@@ -45,7 +47,7 @@ import { DomSanitizer } from '@angular/platform-browser';
           (pointerleave)="arrastre = null"
           title="Doble clic o Ctrl + rueda para hacer zoom; arrastrá para moverte"
         >
-          <img [src]="url()" [alt]="nombre()" [style.width.%]="zoom()" draggable="false" />
+          <img [src]="url()" [alt]="nombre()" [class.entera]="zoom() === 100" [style.width.%]="zoom()" draggable="false" />
         </div>
       } @else {
         <iframe [src]="pdf()" [title]="nombre()"></iframe>

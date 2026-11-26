@@ -48,7 +48,7 @@ import {
     .fx-cab-der { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding-bottom: 14px; border-bottom: 1px solid var(--color-borde); }
     .fx-res-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 14px; font-size: 1rem; }
     .fx-res-cab .op { padding: 3px 8px; min-width: 0; }
-    .fx-pasos { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-direction: column; gap: 22px; }
+    .fx-pasos { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
     .fx-paso { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; }
     .fx-num { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: #eff6ff; color: var(--color-acento); font-weight: 800; font-size: .9rem; }
     .fx-paso h3 { display: flex; align-items: center; gap: 4px; margin: 4px 0 8px; font-size: .98rem; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--color-texto, #0f172a); }
@@ -59,7 +59,7 @@ import {
     .fx-estado .e-error { background: #fef2f2; color: #991b1b; }
     .fx-estado .e-aviso { background: #fffbeb; color: #92400e; }
     .fx-estado .e-ok { background: #f0fdf4; color: #166534; }
-    .fx-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--color-borde); }
+    .fx-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-borde); }
     .fx-link { border: 0; background: none; padding: 0; color: var(--color-tenue); font-size: .85rem; text-decoration: underline; cursor: pointer; }
     .fx-link:hover { color: var(--color-acento); }
     .ax-punto { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #16a34a; }
@@ -83,8 +83,8 @@ import {
     .ax-tabla tfoot td { font-weight: 700; padding: 6px; }
     .ax-texto { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .75rem; background: #f8fafc; padding: 10px; border-radius: 8px; max-height: 320px; overflow: auto; }
     /* Para el estudio */
-    .fx-estudio { margin-top: 16px; padding: 14px 16px; border: 1px solid #c7d2fe; border-radius: 12px; background: #f8f9ff; }
-    .fx-estudio h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; font-size: .98rem; font-weight: 800; color: #312e81; }
+    .fx-estudio { margin-top: 10px; padding: 10px 14px; border: 1px solid #c7d2fe; border-radius: 12px; background: #f8f9ff; }
+    .fx-estudio h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: .98rem; font-weight: 800; color: #312e81; }
     .fx-est-fila { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
     .fx-est-fila label { display: flex; flex-direction: column; gap: 3px; flex: 1 1 200px; font-size: .74rem; font-weight: 700; color: #64748b; }
     .fx-seg { display: inline-flex; border: 1px solid #c7d2fe; border-radius: 8px; overflow: hidden; }
@@ -92,15 +92,11 @@ import {
     .fx-seg button + button { border-left: 1px solid #c7d2fe; }
     .fx-seg button[aria-pressed="true"] { background: #4338ca; color: #fff; }
     .fx-seg button:disabled { cursor: not-allowed; opacity: .55; }
-    .fx-detec { margin: 10px 0 0; padding: 7px 10px; border-radius: 8px; font-size: .84rem; line-height: 1.35; }
+    .fx-detec { margin: 6px 0 0; padding: 7px 10px; border-radius: 8px; font-size: .84rem; line-height: 1.35; }
     .fx-detec.ok { background: #f0fdf4; color: #166534; }
     .fx-detec.aviso { background: #fffbeb; color: #92400e; }
-    .fx-adapt { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 12px; }
-    .fx-adapt div { padding: 8px 10px; border: 1px solid var(--color-borde); border-radius: 8px; background: #fff; min-width: 0; }
-    .fx-adapt dt { font-size: .7rem; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: .03em; }
-    .fx-adapt dd { margin: 2px 0 0; font-weight: 700; font-size: .88rem; overflow-wrap: anywhere; }
-    .fx-adapt dd small { display: block; font-weight: 500; color: #64748b; font-variant-numeric: tabular-nums; }
-    .fx-bloque { margin-top: 14px; padding-top: 12px; border-top: 1px dashed #c7d2fe; }
+    .fx-mas { margin-top: 8px; font-size: .84rem; } .fx-mas summary { cursor: pointer; font-weight: 700; color: #4338ca; }
+    .fx-bloque { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #c7d2fe; }
     .fx-bloque-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; }
     .fx-bloque-cab strong { font-size: .9rem; }
     .fx-chip { padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 800; }
@@ -235,13 +231,6 @@ import {
                     } @else {
                       <p class="fx-detec aviso">{{ avisoManual() }}</p>
                     }
-                    <dl class="fx-adapt" aria-label="La factura desde la empresa">
-                      <div><dt>Libro</dt><dd>IVA {{ f.operacion }}</dd></div>
-                      <div><dt>{{ f.operacion === 'Compras' ? 'Proveedor' : 'Cliente' }}</dt><dd>{{ f.contraparte.nombre || 'Sin nombre' }}<small>{{ f.contraparte.cuit ? cuit(f.contraparte.cuit) : 'Sin CUIT' }}</small></dd></div>
-                      <div><dt>Comprobante</dt><dd>{{ l.encabezado['tipo'] || 'Sin tipo' }}<small>{{ l.encabezado['numero'] || 'sin número' }}</small></dd></div>
-                      <div><dt>Fecha</dt><dd>{{ l.encabezado['fecha'] || '—' }}</dd></div>
-                      <div><dt>Total</dt><dd>{{ l.totales['total'] !== null && l.totales['total'] !== undefined ? '$ ' + texto(l.totales['total']) : '—' }}</dd></div>
-                    </dl>
                   } @else {
                     <p class="fx-detec aviso">
                       @if (!empresas().length) { No se pudieron ver los clientes del estudio (cargalos o desbloqueá «Clientes»). }
@@ -249,6 +238,8 @@ import {
                     </p>
                   }
 
+                  <details class="fx-mas" data-tour="ax-xubio">
+                  <summary>ARCA y Xubio <span class="fx-chip pronto">Próximamente</span></summary>
                   <div class="fx-bloque" data-tour="ax-arca">
                     <div class="fx-bloque-cab"><strong>En ARCA</strong><span class="fx-chip gris">Sin consultar</span><span class="fx-chip pronto">Próximamente</span></div>
                     <div class="fx-arca">
@@ -258,7 +249,7 @@ import {
                     </div>
                   </div>
 
-                  <div class="fx-bloque" data-tour="ax-xubio">
+                  <div class="fx-bloque">
                     <div class="fx-bloque-cab"><strong>En Xubio</strong><span class="fx-chip pronto">Próximamente</span></div>
                     <div class="fx-opciones" role="group" aria-label="Qué hacer en Xubio">
                       @for (o of opcionesXubio(); track o.id) {
@@ -272,6 +263,7 @@ import {
                       <span class="mf-tenue">Por ahora: generá el Excel abajo y cargalo a mano en Xubio.</span>
                     </div>
                   </div>
+                  </details>
                 </section>
               }
               <ol class="fx-pasos">
