@@ -1,4 +1,4 @@
-import { adaptar, cuitConGuiones, detectarEmpresa, sinCae } from './logica';
+import { adaptar, cuitConGuiones, detectarEmpresa, mismoNombre, sinCae } from './logica';
 
 const empresas = [
   { nombre: 'Piccinini', cuits: ['30-71080988-3', '20111111112'] },
@@ -44,5 +44,23 @@ describe('Conversor: productos de cada empresa', () => {
     expect(p.slice(0, 2)).toEqual(['Refrigerio', 'Gastos de limpieza']);
     expect(p.filter((x) => x === 'Refrigerio')).toHaveLength(1);
     expect(productosSugeridos('Otra', 'Compras')[0]).toBe('Mercaderías');
+  });
+});
+
+describe('detección tolerante al OCR', () => {
+  const empresas = [{ nombre: 'Vendedora Prueba S.A.', cuits: ['30-71080988-3'] }];
+
+  it('encuentra la CUIT con un dígito mal leído', () => {
+    const f = detectarEmpresa({ receptor_cuit: '30710809885', emisor_cuit: '20111111112' }, empresas);
+    expect(f?.operacion).toBe('Compras');
+  });
+
+  it('encuentra la empresa por el nombre si la CUIT no se leyó', () => {
+    const f = detectarEmpresa({ emisor: 'VENDEDORA PRUEBA SA', emisor_cuit: '' }, empresas);
+    expect([f?.empresa, f?.operacion]).toEqual(['Vendedora Prueba S.A.', 'Ventas']);
+  });
+
+  it('no confunde nombres distintos', () => {
+    expect(mismoNombre('Vendedora Prueba S.A.', 'Otra Empresa SRL')).toBe(false);
   });
 });

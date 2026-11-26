@@ -7,10 +7,11 @@ import { Alerta } from '../../core/ui/alerta';
 import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
 import { Extras, Factura } from './factura';
+import { VistaArchivo } from './vista-archivo';
 import { ToastService } from '../../core/ui/toast';
 import {
   ACEPTA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
-  cuitConGuiones, detectarEmpresa, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
+  cuitConGuiones, detectarEmpresa, empresaDeTrabajo, recordarEmpresaDeTrabajo, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
 } from './logica';
 
 /**
@@ -28,7 +29,7 @@ import {
  */
 @Component({
   selector: 'app-a-excel',
-  imports: [Encabezado, Alerta, Ayuda, Factura],
+  imports: [Encabezado, Alerta, Ayuda, Factura, VistaArchivo],
   styles: `
     :host { display: flex; flex-direction: column; gap: 14px; }
     .zona { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
@@ -65,9 +66,6 @@ import {
     .ax-grilla { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
     .ax-grilla.sin-vista { grid-template-columns: minmax(0, 1fr); }
     @media (max-width: 900px) { .ax-grilla { grid-template-columns: minmax(0, 1fr); } }
-    .ax-vista { position: sticky; top: 12px; border: 1px solid var(--color-borde); border-radius: 10px; background: #f1f5f9; overflow: auto; max-height: calc(100vh - 140px); }
-    .ax-vista img { display: block; width: 100%; height: auto; }
-    .ax-vista iframe { display: block; width: 100%; height: calc(100vh - 160px); border: 0; }
     .ax-ver { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
     .ax-ver li { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border-radius: 8px; font-size: .84rem; line-height: 1.35; }
     .ax-ver li.error { background: #fef2f2; color: #991b1b; }
@@ -235,8 +233,10 @@ import {
                   </div>
 
                   @if (estudio(); as f) {
-                    @if (f.origen !== 'manual') {
-                      <p class="fx-detec ok">✓ Detectada por la CUIT del {{ f.origen }}: es {{ f.operacion === 'Compras' ? 'una compra' : 'una venta' }} de <b>{{ f.empresa }}</b>.</p>
+                    @if (f.origen === 'receptor' || f.origen === 'emisor') {
+                      <p class="fx-detec ok">✓ Detectada: <b>{{ f.empresa }}</b> es el {{ f.origen }} de la factura, así que es {{ f.operacion === 'Compras' ? 'una compra' : 'una venta' }}.</p>
+                    } @else if (f.origen === 'trabajo') {
+                      <p class="fx-detec aviso">La factura no nombra a ningún cliente del estudio: la tomé para <b>{{ f.empresa }}</b>, la empresa con la que venís trabajando, como compra. Cambiala arriba si no es así.</p>
                     } @else {
                       <p class="fx-detec aviso">{{ avisoManual() }}</p>
                     }
@@ -332,9 +332,7 @@ import {
         <section class="mf-panel" id="ax-revision" aria-labelledby="ax-titulo" data-tour="ax-verificar">
           <div class="ax-grilla" [class.sin-vista]="!vista()">
             @if (vista(); as v) {
-              <div class="ax-vista" aria-label="El archivo original">
-                @if (v.tipo === 'imagen') { <img [src]="v.url" [alt]="l.archivo" /> } @else { <iframe [src]="v.seguro" [title]="l.archivo"></iframe> }
-              </div>
+              <app-vista-archivo [url]="v.url" [tipo]="v.tipo" [nombre]="l.archivo" />
             }
             <div class="min-w-0">
               <h2 id="ax-titulo" class="m-0 text-lg font-bold">
@@ -456,7 +454,11 @@ export class PasarAExcel implements OnDestroy {
     if (!l || l.tipo !== 'comprobante') return null;
     const detectada = detectarEmpresa(l.encabezado, this.empresas());
     const manual = this.elegido()[l.archivo];
-    if (!manual) return detectada;
+    if (!manual) {
+      if (detectada) return detectada;
+      const trabajo = this.empresas().find((e) => e.nombre === empresaDeTrabajo());
+      return trabajo ? adaptar(l.encabezado, trabajo.nombre, 'Compras', 'trabajo') : null;
+    }
     if (!manual.empresa) return null;
     const mismaEmpresa = detectada?.empresa === manual.empresa;
     const operacion = manual.operacion ?? (mismaEmpresa ? detectada!.operacion : 'Compras');
@@ -505,6 +507,7 @@ export class PasarAExcel implements OnDestroy {
   protected elegirEmpresa(nombre: string): void {
     const l = this.actual();
     if (l) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: nombre, operacion: null } }));
+    recordarEmpresaDeTrabajo(nombre);
   }
 
   protected elegirOperacion(operacion: Operacion): void {

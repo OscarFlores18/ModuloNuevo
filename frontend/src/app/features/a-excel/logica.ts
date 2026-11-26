@@ -103,7 +103,7 @@ export interface FacturaDelEstudio {
   empresa: string;
   operacion: Operacion;
   /** Cómo se detectó: por la CUIT del receptor, del emisor, o elegida a mano. */
-  origen: 'receptor' | 'emisor' | 'manual';
+  origen: 'receptor' | 'emisor' | 'manual' | 'trabajo';
   /** Proveedor (compra) o cliente (venta). */
   contraparte: { nombre: string; cuit: string };
 }
@@ -115,14 +115,44 @@ export const soloDigitos = (s: string | undefined | null) => (s ?? '').replace(/
  * el emisor, una venta. Primero el receptor (lo más común: facturas de proveedores).
  */
 export function detectarEmpresa(encabezado: Record<string, string>, empresas: EmpresaEstudio[]): FacturaDelEstudio | null {
-  const receptor = soloDigitos(encabezado['receptor_cuit']);
-  const emisor = soloDigitos(encabezado['emisor_cuit']);
-  const de = (cuit: string) => (cuit.length === 11 ? empresas.find((e) => e.cuits.map(soloDigitos).includes(cuit)) : undefined);
-  const comoReceptor = de(receptor);
-  if (comoReceptor) return adaptar(encabezado, comoReceptor.nombre, 'Compras', 'receptor');
-  const comoEmisor = de(emisor);
-  if (comoEmisor) return adaptar(encabezado, comoEmisor.nombre, 'Ventas', 'emisor');
+  const lados: ['receptor' | 'emisor', Operacion][] = [['receptor', 'Compras'], ['emisor', 'Ventas']];
+  // 1) La CUIT tal cual; 2) la CUIT con 1 o 2 dígitos mal leídos (OCR); 3) el nombre.
+  const pruebas: ((e: EmpresaEstudio, cuit: string, nombre: string) => boolean)[] = [
+    (e, cuit) => cuit.length === 11 && e.cuits.map(soloDigitos).includes(cuit),
+    (e, cuit) => cuit.length === 11 && e.cuits.some((c) => digitosDistintos(soloDigitos(c), cuit) <= 2),
+    (e, _, nombre) => mismoNombre(e.nombre, nombre),
+  ];
+  for (const prueba of pruebas) {
+    for (const [lado, operacion] of lados) {
+      const cuit = soloDigitos(encabezado[`${lado}_cuit`]);
+      const e = empresas.find((x) => prueba(x, cuit, encabezado[lado] ?? ''));
+      if (e) return adaptar(encabezado, e.nombre, operacion, lado);
+    }
+  }
   return null;
+}
+
+/** Cuántos dígitos cambian entre dos CUIT del mismo largo. */
+export function digitosDistintos(a: string, b: string): number {
+  if (a.length !== b.length) return 99;
+  return [...a].filter((d, i) => d !== b[i]).length;
+}
+
+const SOCIEDAD = /\b(s\.?\s?a\.?\s?s?|s\.?\s?r\.?\s?l|s\.?\s?a\.?\s?u|srl|sas|sau|sa)\b\.?/g;
+/** «Vendedora Prueba S.A.» y «VENDEDORA PRUEBA SA» son la misma empresa. */
+export function mismoNombre(a: string, b: string): boolean {
+  const n = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(SOCIEDAD, ' ').replace(/[^a-z0-9]+/g, ' ').trim();
+  const x = n(a), y = n(b);
+  return x.length >= 4 && y.length >= 4 && (x === y || x.includes(y) || y.includes(x));
+}
+
+/** La empresa con la que se viene trabajando: queda elegida si la factura no la nombra. */
+const CLAVE_TRABAJO = 'cf-empresa-de-trabajo';
+export function empresaDeTrabajo(): string {
+  try { return localStorage.getItem(CLAVE_TRABAJO) ?? ''; } catch { return ''; }
+}
+export function recordarEmpresaDeTrabajo(nombre: string): void {
+  try { if (nombre) localStorage.setItem(CLAVE_TRABAJO, nombre); } catch { /* sin almacenamiento */ }
 }
 
 /** La factura desde el lado de la empresa: en una compra la contraparte es el emisor; en una venta, el receptor. */
