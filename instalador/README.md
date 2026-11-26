@@ -6,9 +6,9 @@ menú Inicio.
 
 | | |
 |---|---|
-| Versión | 1.3.8 (se ve al lado del título de la app y en el pie, con la fecha en que se armó) |
-| Tamaño | 90,5 MB |
-| SHA-256 | `8E0DF02891B7432CF20FFFEA2CEF91519D357B0751D0C405E267C0C0DF6AD354` |
+| Versión | 1.3.9 (se ve al lado del título de la app y en el pie, con la fecha en que se armó) |
+| Tamaño | 90,7 MB |
+| SHA-256 | `D53AF6E6CFA8F991EB40CA800E23956F19DE9EC10292E6F1B5BC07DBE8A412DD` |
 
 ---
 

@@ -92,7 +92,9 @@ $argumentos = @(
     '--collect-submodules', 'backend',
     '--collect-submodules', 'uvicorn',
     # Lo que usan los diálogos «Guardar como» del backend.
-    '--hidden-import', 'tkinter.filedialog'
+    '--hidden-import', 'tkinter.filedialog',
+    # El .xls con el modelo de importación de Xubio (se importa adentro de una función).
+    '--hidden-import', 'xlwt'
 )
 # Lectura de PDF (pypdfium2 trae su propia DLL de PDFium).
 $argumentos += @('--collect-all', 'pypdfium2', '--collect-all', 'pypdfium2_raw')
