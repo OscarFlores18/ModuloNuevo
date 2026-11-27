@@ -183,7 +183,7 @@ interface ArchivoElegido {
     <section class="mf-panel" aria-labelledby="t-resultado" data-tour="resultado">
       <div class="fx-cab-der">
         <div class="min-w-0 flex-1">
-          <h2 id="t-resultado" class="m-0 text-lg font-bold"><span class="mf-paso-num" aria-hidden="true">2</span>Subilos a Xubio<app-ayuda texto="«Subir a Xubio» abre Xubio en esta PC, carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y aprieta «Importar». Te avisa lo que contestó Xubio." /></h2>
+          <h2 id="t-resultado" class="m-0 text-lg font-bold"><span class="mf-paso-num" aria-hidden="true">2</span>Subilos a Xubio<app-ayuda texto="«Subir a Xubio» abre Xubio en esta PC, carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y frena antes de «Importar»: lo revisás y lo apretás vos." /></h2>
           <p class="mf-sub m-0 mt-1">El bot los carga en Xubio por vos, o descargás el archivo para importarlo a mano.</p>
         </div>
         @if (precarga(); as p) {
@@ -277,12 +277,12 @@ interface ArchivoElegido {
                   <li class="fx-paso">
                     <span class="fx-num" aria-hidden="true">3</span>
                     <div class="min-w-0">
-                      <h3>Subilos<app-ayuda texto="Se abre Xubio en esta PC, el bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y aprieta «Importar». Si Xubio no confirma que importó, la ventana de Chrome queda abierta para que lo mires." /></h3>
+                      <h3>Subilos<app-ayuda texto="Se abre Xubio en esta PC, el bot carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y frena antes de «Importar». La ventana de Chrome queda abierta para que lo revises y aprietes «Importar»." /></h3>
                       <div class="fx-subir-lista">
                         @for (op of operacionesConZip(r); track op) {
                           @let clave = i + '-' + op;
                           @if (cargados()[clave]) {
-                            <span class="fx-hecho">✓ {{ op }} importado en Xubio</span>
+                            <span class="fx-hecho">✓ {{ op }} cargado en Xubio</span>
                           } @else {
                             <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="cargarEnXubio(r, i, op)" [disabled]="!!cargandoXubio() || !empresaDe(r, i) || !perspectiva.canEdit()" [attr.aria-busy]="cargandoXubio() === clave" [title]="perspectiva.motivoBloqueo() ?? (empresaDe(r, i) ? '' : 'Elegí primero la empresa en Xubio')">
                               @if (cargandoXubio() === clave) {
@@ -297,7 +297,7 @@ interface ArchivoElegido {
                             <p class="m-0 text-sm" [style.color]="est.ok ? 'var(--color-ok-texto)' : 'var(--color-error)'">{{ est.texto }}</p>
                           }
                         }
-                        <span class="mf-tenue text-sm">El bot aprieta «Importar» en Xubio: antes te pide que confirmes.</span>
+                        <span class="mf-tenue text-sm">El bot carga el archivo en Xubio y frena antes de «Importar»: lo apretás vos.</span>
                       </div>
                     </div>
                   </li>
@@ -380,19 +380,22 @@ export class ConvertirPantalla {
     }
   }
 
-  /** El AUX del control (sin los destildados) directo al paso 2, sin arrastrar archivos. */
+  /**
+   * Directo al paso 2, sin arrastrar archivos: el CSV que bajó ARCA en ese control, solo
+   * con las partidas faltantes (sin los destildados) y sin reescribirlas. Xubio no acepta
+   * un CSV rearmado por la app.
+   */
   private async convertirDesdeControl(p: Precarga): Promise<void> {
     this.convirtiendo.set(true);
     this.error.set(null);
     try {
-      const contenido = await base64De(await this.api.archivo(p.ejecucionId, p.indice, p.aux), p.aux);
-      const r = await this.api.convertirAux([{ nombre: p.aux, contenido, excluir: p.excluir }]);
+      const r = await this.api.csvXubio(p.ejecucionId, p.indice, p.operacion, p.excluir);
       if (this.precarga() !== p) return;
       this.resultados.set(r.resultados);
       this.cargados.set({});
       this.estadoXubio.set({});
     } catch (err) {
-      this.error.set(mensajeDeError(err, 'No se pudo leer el AUX del control. Elegilo a mano.'));
+      this.error.set(mensajeDeError(err, 'No se pudo armar el archivo con el CSV de ARCA de este control.'));
     } finally {
       this.convirtiendo.set(false);
     }
@@ -449,15 +452,15 @@ export class ConvertirPantalla {
     const zip = r.zips[op];
     const clave = `${i}-${op}`;
     if (!zip || !empresa || this.cargandoXubio() || this.cargados()[clave]) return;
-    // La única confirmación: el bot aprieta «Importar» en Xubio y eso no se deshace.
+    // El bot carga el archivo y frena antes de «Importar»: lo aprieta la persona en Xubio.
     const seguir = await this.alertas.confirmar(
-      `Importar ${op} en Xubio`,
-      `Se van a importar ${r.partidas[op]} ${r.partidas[op] === 1 ? 'comprobante' : 'comprobantes'} de ${op} en la empresa «${empresa}».`,
-      'Importar en Xubio',
+      `Cargar ${op} en Xubio`,
+      `Se va a cargar el archivo con ${r.partidas[op]} ${r.partidas[op] === 1 ? 'comprobante' : 'comprobantes'} de ${op} en la empresa «${empresa}».`,
+      'Cargar en Xubio',
       [
-        'El bot abre Xubio en esta PC, carga el archivo y aprieta «Importar».',
-        'No se puede deshacer: si ya los importaste, no lo hagas de nuevo (quedarían repetidos).',
-        'Si Xubio no confirma que importó, la ventana de Chrome queda abierta para que lo mires.',
+        'El bot abre Xubio en esta PC y carga el archivo en «Importar desde Mis Comprobantes (ARCA)».',
+        'Frena antes de «Importar»: revisalo en la ventana de Chrome y apretalo vos.',
+        'Si ya los importaste, no lo hagas de nuevo (quedarían repetidos).',
       ],
     );
     if (!seguir) return;
@@ -470,7 +473,15 @@ export class ConvertirPantalla {
       // Solo el .zip de esta operación (un único CSV en la raíz).
       const res = await this.api.cargarEnXubio(empresa, op, zip.contenido);
       const dijo = res.mensaje ? ` Xubio: «${res.mensaje}».` : '';
-      if (res.importado === true) {
+      if (res.frenado) {
+        // Freno: el archivo quedó cargado y «Importar» lo aprieta la persona. No se
+        // ofrece volver a cargarlo, para no duplicar si ya lo importó.
+        const ok = res.boton_importar_habilitado;
+        if (ok) this.cargados.update((m) => ({ ...m, [clave]: true }));
+        this.estadoXubio.update((m) => ({ ...m, [clave]: { ok, texto: `${op}: ${res.mensaje}` } }));
+        if (ok) this.toast.info('Archivo cargado en Xubio', `${op} · ${empresa}: revisalo y apretá «Importar» en Chrome.`);
+        else this.toast.aviso('Revisá en Xubio', `${op}: Xubio no habilitó «Importar».`);
+      } else if (res.importado === true) {
         this.cargados.update((m) => ({ ...m, [clave]: true }));
         this.estadoXubio.update((m) => ({ ...m, [clave]: { ok: true, texto: `${op} importado en Xubio (${empresa}).${dijo}` } }));
         this.toast.ok('Importado en Xubio', `${op} · ${empresa}`);

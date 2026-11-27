@@ -869,7 +869,9 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             _cli,
                             str(carpeta),
                             bajar_excel=True,
-                            bajar_csv=False,
+                            # El CSV de ARCA es el que se sube a Xubio («Subir a
+                            # Xubio» deja solo las filas faltantes, sin reescribirlas).
+                            bajar_csv=True,
                         )
                     except (SesionVencida, FiltroNoDisponible) as exc:
                         if intento == 2:
@@ -1242,12 +1244,33 @@ def es_corregido(nombre: str) -> bool:
     return Path(nombre).stem.endswith(SUFIJO_CORREGIDO)
 
 
-def _archivo_de(cli: ClienteEnCurso, patron: str) -> str | None:
-    """El archivo original (no el corregido) del cliente que empieza con ``patron``."""
+def _archivo_de(cli: ClienteEnCurso, patron: str, extensiones: tuple[str, ...] = (".xlsx", ".xls")) -> str | None:
+    """El archivo original (no el corregido) del cliente que empieza con ``patron``.
+    Por defecto solo Excel: ARCA deja también su CSV con el mismo nombre."""
     for a in cli.archivos:
-        if a["nombre"].lower().startswith(patron.lower()) and not es_corregido(a["nombre"]):
-            return a["nombre"]
+        nombre = a["nombre"]
+        if (
+            nombre.lower().startswith(patron.lower())
+            and nombre.lower().endswith(extensiones)
+            and not es_corregido(nombre)
+        ):
+            return nombre
     return None
+
+
+def csv_arca_de(ej: Ejecucion, indice: int, operacion: str) -> Path:
+    """El CSV de Mis Comprobantes que bajó ARCA en este control para la operación."""
+    if not 0 <= indice < len(ej.clientes):
+        raise ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
+    tipo_arca = "Emitidos" if operacion == "Ventas" else "Recibidos"
+    nombre = _archivo_de(ej.clientes[indice], f"Mis comprobantes - {tipo_arca} - ", (".csv",))
+    if not nombre:
+        raise ErrorEjecucion(
+            f"Este control no tiene el CSV de ARCA de {operacion} (los controles anteriores a este "
+            "cambio solo bajaban el Excel). Volvé a correr el control para subirlo a Xubio.",
+            404,
+        )
+    return ruta_archivo(ej, indice, nombre)
 
 
 def aplicar_cambios(ej: Ejecucion, cambios: list[dict]) -> dict:

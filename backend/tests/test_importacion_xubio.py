@@ -40,7 +40,8 @@ def test_endpoint_rechaza_cliente_desconocido(cliente_demo):
 
 
 def test_endpoint_corre_el_bot_e_importa(cliente_demo, monkeypatch):
-    """Con el bot simulado: entra a la empresa, carga el .zip, importa y devuelve lo que dijo Xubio."""
+    """Con MODULONUEVO_XUBIO_IMPORTAR=1: entra a la empresa, carga el .zip, importa y devuelve lo que dijo Xubio."""
+    monkeypatch.setenv("MODULONUEVO_XUBIO_IMPORTAR", "1")
     llamadas = []
 
     class SesionFalsa:
@@ -78,3 +79,47 @@ def test_endpoint_corre_el_bot_e_importa(cliente_demo, monkeypatch):
     assert r.json()["boton_importar_habilitado"] is True
     assert r.json()["importado"] is True and r.json()["mensaje"] == "Se importaron 3 comprobantes"
     assert llamadas == [("empresa", cliente), ("zip", "Compras", [f"{PREFIJO_CSV} Compras - X.csv"])]
+
+
+def test_por_defecto_frena_antes_de_importar(cliente_demo, monkeypatch):
+    """Sin la variable: carga el archivo y no aprieta «Importar» (la persona lo revisa)."""
+    monkeypatch.delenv("MODULONUEVO_XUBIO_IMPORTAR", raising=False)
+    monkeypatch.setattr(srv, "VENTANA_ABIERTA_S", 0)
+
+    class Pagina:
+        def wait_for_event(self, *a, **k):
+            pass
+
+    class SesionFalsa:
+        def __init__(self, *a, **k):
+            self._page = Pagina()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def cambiar_empresa(self, nombre):
+            pass
+
+        def importar_arca(self, *a):
+            pytest.fail("no tenía que apretar «Importar»")
+
+        def preparar_importacion_arca(self, operacion, ruta_zip):
+            return {"archivo_cargado": True, "boton_importar_habilitado": True}
+
+    monkeypatch.setattr(srv, "SesionXubio", SesionFalsa)
+
+    class Cred:
+        usuario, clave = "u", "c"
+
+    monkeypatch.setattr(srv.ServicioCredenciales, "xubio", lambda self: Cred())
+    cliente = next(iter(cliente_demo.get("/api/clientes").json()))["nombre"]
+    r = cliente_demo.post("/api/convertir-aux/xubio", json={
+        "cliente": cliente, "operacion": "Compras",
+        "zip": base64.b64encode(_zip(f"{PREFIJO_CSV} Compras - X.csv")).decode(),
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["frenado"] is True and r.json()["importado"] is None
+    assert "apretá «Importar»" in r.json()["mensaje"]

@@ -759,6 +759,69 @@ def faltantes_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str | N
     return {"nombre": nombre, "contenido": base64.b64encode(excel_de(tablas)).decode("ascii")}
 
 
+class CsvXubioRequest(BaseModel):
+    operacion: Literal["Ventas", "Compras"]
+    # Claves «CUIT|comprobante» destildadas en la pantalla del control.
+    excluir: list[str] = Field(default_factory=list, max_length=5000)
+
+
+@router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/csv-xubio")
+def csv_xubio_ejecucion(ejecucion_id: str, indice: int, body: CsvXubioRequest) -> dict:
+    """«Subir a Xubio» desde un control: el CSV que bajó ARCA en ese control, solo con
+    las líneas de las partidas no encontradas en el Libro IVA (sin las destildadas),
+    copiadas tal cual. Devuelve un ResultadoConversion, como /convertir-aux."""
+    from ...auditor.csv_arca import clave_fila, filas_de_tabla
+    from ...auditor.csv_original import CsvArcaIlegible, claves_de_faltantes, filtrar_csv_arca
+    from ...services.importacion_xubio import zip_para_xubio
+
+    op = body.operacion
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        if not 0 <= indice < len(ej.clientes):
+            raise ejecuciones_srv.ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
+        aux = _aux_activos([a["nombre"] for a in ej.clientes[indice].archivos]).get(op)
+        if not aux:
+            raise ejecuciones_srv.ErrorEjecucion(f"Este control no tiene el AUX de {op}.", 404)
+        ruta_aux = ejecuciones_srv.ruta_archivo(ej, indice, aux)
+        ruta_csv = ejecuciones_srv.csv_arca_de(ej, indice, op)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+
+    cliente = ej.clientes[indice].nombre
+    periodo = datos_del_nombre(aux)[1]
+    tabla = leer_faltantes_de_control(ruta_aux, op)
+    excluir = set(body.excluir)
+    item: dict = {"cliente": cliente, "periodo": periodo, "archivos": [aux], "partidas": {}, "filas": {}, "zips": {}, "excel": None, "avisos": [], "error": None}
+    buscadas = claves_de_faltantes(tabla, op, excluir)
+    if not buscadas:
+        item["partidas"][op] = 0
+        item["avisos"].append(f"{op}: no hay partidas de ARCA para subir (o se destildaron todas).")
+        return {"resultados": [item]}
+    try:
+        contenido, faltan = filtrar_csv_arca(ruta_csv.read_bytes(), op, buscadas)
+    except (CsvArcaIlegible, OSError) as exc:
+        item["error"] = f"No se pudo leer el CSV de ARCA «{ruta_csv.name}»: {exc}"
+        return {"resultados": [item]}
+    if faltan:
+        item["avisos"].append(
+            f"{op}: {len(faltan)} de las partidas no están en el CSV de ARCA y no van ({', '.join(faltan[:5])}"
+            + ("…" if len(faltan) > 5 else "") + "). Cargalas a mano o volvé a correr el control."
+        )
+    subidas = len(buscadas) - len(faltan)
+    item["partidas"][op] = subidas
+    if subidas:
+        sufijo = f" - {periodo}" if periodo else ""
+        nombre_csv = f"{PREFIJO_CSV} {op} - {cliente}{sufijo}.csv"
+        item["zips"][op] = {
+            "nombre": f"{PREFIJO_CSV} {op} - {cliente}{sufijo}.zip",
+            "contenido": base64.b64encode(zip_para_xubio(nombre_csv, contenido)).decode("ascii"),
+        }
+        quedan = set(buscadas.values()) - set(faltan)
+        van = [clave_fila(fila, op) in quedan for _, fila in tabla.iterrows()]
+        item["filas"][op] = filas_de_tabla(tabla[van], op)
+    return {"resultados": [item]}
+
+
 class BloqueHallazgo(BaseModel):
     """Un hallazgo tal como se ve en la ventana (lo arma el frontend)."""
 
