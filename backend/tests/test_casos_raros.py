@@ -171,3 +171,67 @@ def test_otros_tributos_que_es_la_suma_no_se_duplica(gemini_responde):
     l = a_excel.leer("factura.jpg", _png())
     assert len(l.tributos) == 2 and l.totales["otros_tributos"] is None
     assert _no_ok(l) == []
+
+
+# --- Gemini en el límite por minuto y sin OCR local -----------------------------------
+
+
+def _cliente_con_cupo(respuestas):
+    """Un cliente de Gemini falso: cada pedido saca la siguiente respuesta (o error)."""
+    pedidos = []
+
+    class Modelos:
+        def generate_content(self, model, contents, config):
+            pedidos.append(model)
+            r = respuestas.pop(0)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+    class Cliente:
+        models = Modelos()
+
+    return Cliente(), pedidos
+
+
+def _sin_cupo(detalle: str = "PerMinute", demora: str = "12s"):
+    from google.genai import errors
+
+    return errors.ClientError(429, {"error": {"code": 429, "status": "RESOURCE_EXHAUSTED",
+                                              "message": f"Quota exceeded for metric ...{detalle}...",
+                                              "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": demora}]}})
+
+
+def test_limite_por_minuto_sin_ocr_local_espera_y_reintenta(monkeypatch):
+    """Caso real: «se llegó al límite gratuito por minuto» y no hay Tesseract: antes
+    no se leía nada; ahora espera lo que pide Google y vuelve a probar."""
+    from google.genai import errors, types
+
+    esperas = []
+    monkeypatch.setattr(gemini.time, "sleep", esperas.append)
+    monkeypatch.setattr(gemini, "modelo", lambda: "primero")
+    cliente, pedidos = _cliente_con_cupo([_sin_cupo(), _sin_cupo(), _sin_cupo(), "respuesta"])
+    assert gemini._pedir(cliente, types, errors, b"jpeg") == "respuesta"
+    assert esperas == [13.0]  # el retryDelay de Google + 1 s
+    assert len(pedidos) == 4
+
+
+def test_cupo_del_dia_no_espera(monkeypatch):
+    from google.genai import errors, types
+
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: pytest.fail("no tenía que esperar"))
+    monkeypatch.setattr(gemini, "modelo", lambda: "primero")
+    cliente, _ = _cliente_con_cupo([_sin_cupo("PerDay")] * 3)
+    with pytest.raises(errors.ClientError):
+        gemini._pedir(cliente, types, errors, b"jpeg")
+
+
+def test_con_ocr_local_no_espera_el_cupo(monkeypatch):
+    """Con plazo (hay OCR local para seguir) no se espera: se lee con el OCR."""
+    from google.genai import errors, types
+
+    monkeypatch.setattr(gemini.time, "sleep", lambda s: pytest.fail("no tenía que esperar"))
+    monkeypatch.setattr(gemini, "modelo", lambda: "primero")
+    cliente, _ = _cliente_con_cupo([_sin_cupo()] * 3)
+    with pytest.raises(errors.ClientError):
+        gemini._pedir(cliente, types, errors, b"jpeg", plazo_s=15)

@@ -151,9 +151,36 @@ RESPALDOS = ("gemini-3.5-flash", "gemini-3.1-flash-lite")
 PAUSAS_S = (2,)
 
 
+# Sin plazo (no hay OCR local para seguir): si todos los modelos dan el límite por
+# minuto, se espera lo que pide Google (hasta esto) y se prueba una vez más.
+ESPERA_CUPO_S = 65.0
+
+
+def espera_por_cupo(exc) -> float | None:
+    """Cuánto esperar ante un 429 por minuto (el «retryDelay» de Google, o 30 s);
+    None si es el cupo del día (no tiene sentido esperar)."""
+    texto = str(exc)
+    if "PerDay" in texto:
+        return None
+    m = re.search(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", texto)
+    return min(float(m.group(1)) + 1 if m else 30.0, numero("GEMINI_ESPERA_CUPO_S", ESPERA_CUPO_S))
+
+
 def _pedir(cliente, types, errors, jpeg: bytes, plazo_s: float | None = None):
     """Con `plazo_s`, todo (modelos de respaldo incluidos) tiene que terminar en ese
-    tiempo; si no, TimeoutError."""
+    tiempo; si no, TimeoutError. Sin plazo, si todos los modelos están en el límite
+    por minuto, espera y vuelve a probar una vez."""
+    try:
+        return _pedir_una_vuelta(cliente, types, errors, jpeg, plazo_s)
+    except errors.APIError as exc:
+        if plazo_s or exc.code != 429 or (espera := espera_por_cupo(exc)) is None:
+            raise
+        logger.info("Gemini: todos los modelos en el límite por minuto; se espera %.0f s y se reintenta.", espera)
+        time.sleep(espera)
+        return _pedir_una_vuelta(cliente, types, errors, jpeg, None)
+
+
+def _pedir_una_vuelta(cliente, types, errors, jpeg: bytes, plazo_s: float | None = None):
     modelos = list(dict.fromkeys([modelo(), *RESPALDOS]))
     if plazo_s:
         # Con plazo, primero el más rápido: el resto suele tardar más que el plazo.
