@@ -83,6 +83,39 @@ def preparar(
                    "importar_arca", clientes, credenciales, log)
 
 
+def nombre_original(nombre: str, contenido: bytes) -> str:
+    """El nombre con que se sube lo que exportó ARCA: el mismo que le puso ARCA. Solo
+    los controles viejos lo guardaban renombrado («Mis comprobantes - … .csv»): ahí
+    se recupera el de ARCA, que es el del CSV de adentro con .zip."""
+    nombre = Path(nombre).name
+    if nombre.lower().startswith("comprobantes_consulta_csv_"):
+        return nombre
+    try:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as z:
+            adentro = [n for n in z.namelist() if n.lower().endswith(".csv")]
+    except zipfile.BadZipFile as exc:
+        raise ErrorImportacion("El archivo de ARCA no es un .zip válido: volvé a correr el control.") from exc
+    if len(adentro) != 1:
+        raise ErrorImportacion("El .zip de ARCA tiene que traer un solo CSV: volvé a correr el control.")
+    return f"{Path(adentro[0]).stem}.zip"
+
+
+def subir_original(
+    cliente: str,
+    operacion: str,
+    nombre: str,
+    contenido: bytes,
+    clientes: ClientesRepository,
+    credenciales: CredencialesXubioRepository,
+    log=logger.info,
+) -> dict:
+    """El .zip que exportó ARCA en el control, sin abrirlo ni rearmarlo (Xubio no
+    acepta otro), en «Importar desde Mis Comprobantes (ARCA)»."""
+    _validar(cliente, operacion, clientes)
+    return _correr(cliente, operacion, nombre_original(nombre, contenido), contenido,
+                   "importar_arca", clientes, credenciales, log)
+
+
 def subir_excel(
     cliente: str,
     operacion: str,

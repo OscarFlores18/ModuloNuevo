@@ -16,7 +16,7 @@ from pathlib import Path
 MAX_FILAS = 500
 MAX_COLUMNAS = 60
 MAX_HOJAS = 20
-EXTENSIONES = (".xlsx", ".xlsm", ".xls", ".csv", ".txt")
+EXTENSIONES = (".xlsx", ".xlsm", ".xls", ".csv", ".txt", ".zip")  # .zip: el CSV de ARCA
 # Hasta este tamaño el Excel se abre entero (fórmulas y formato); más grande,
 # solo los valores guardados, para no tardar.
 MAX_BYTES_CON_FORMULAS = 8_000_000
@@ -196,7 +196,7 @@ def vista(ruta: Path) -> dict:
         raise SinVista(f"«{ruta.name}» no se puede ver acá: descargalo para abrirlo.")
     contenido = ruta.read_bytes()
     try:
-        if sufijo in (".csv", ".txt"):
+        if sufijo in (".csv", ".txt", ".zip"):
             hojas = _csv(contenido)
         elif sufijo == ".xls":
             import pandas as pd

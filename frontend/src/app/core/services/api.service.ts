@@ -114,9 +114,9 @@ export class ApiService {
     );
   }
 
-  cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string): Promise<ResultadoCargaXubio> {
+  cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string, original?: { nombre: string }): Promise<ResultadoCargaXubio> {
     return firstValueFrom(
-      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo subir a Xubio.')),
+      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip, original: !!original, nombre: original?.nombre ?? null }).pipe(errorLegible('No se pudo subir a Xubio.')),
     );
   }
 

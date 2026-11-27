@@ -16,6 +16,7 @@ from __future__ import annotations
 import csv
 import io
 import re
+import zipfile
 
 import pandas as pd
 
@@ -96,10 +97,25 @@ class CsvArcaIlegible(ValueError):
     """El archivo no tiene el encabezado del CSV de Mis Comprobantes."""
 
 
+def contenido_csv(contenido: bytes) -> bytes:
+    """ARCA exporta el CSV dentro de un .zip: devuelve el CSV de adentro tal cual.
+    Si ya es un CSV suelto, lo devuelve sin cambios."""
+    if not contenido.startswith(b"PK"):
+        return contenido
+    try:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as z:
+            nombres = [n for n in z.namelist() if n.lower().endswith(".csv")] or z.namelist()
+            if not nombres:
+                raise CsvArcaIlegible("El .zip que bajó ARCA está vacío.")
+            return z.read(nombres[0])
+    except zipfile.BadZipFile as e:
+        raise CsvArcaIlegible("El archivo que bajó ARCA no es un CSV ni un .zip válido.") from e
+
+
 def filtrar_csv_arca(contenido: bytes, operacion: str, buscadas: dict[Clave, str]) -> tuple[bytes, list[str]]:
     """El CSV de ARCA con el encabezado y solo las líneas de `buscadas`, sin tocar
     nada de cada línea. Devuelve (csv, las «CUIT|comprobante» que no se encontraron)."""
-    lineas = contenido.splitlines(keepends=True)
+    lineas = contenido_csv(contenido).splitlines(keepends=True)
     encabezado_i = None
     indices = None
     for i, crudo in enumerate(lineas[:10]):
@@ -131,6 +147,7 @@ def filtrar_csv_arca(contenido: bytes, operacion: str, buscadas: dict[Clave, str
 def unir_partes(partes: list[bytes]) -> bytes:
     """Las partes que bajó ARCA (un período largo se pide en tramos) en un solo
     CSV: el encabezado una vez y las filas de cada parte tal cual."""
+    partes = [contenido_csv(p) for p in partes]
     if not partes:
         return b""
     unido = partes[0]

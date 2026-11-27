@@ -55,6 +55,21 @@ def test_utf8_con_bom_y_ultima_linea_sin_salto():
     assert salida.startswith(b"\xef\xbb\xbf") and salida.endswith(b"\r\n")
 
 
+def _zip_arca(csv: bytes) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(ZIP_ARCA[:-4] + ".csv", csv)
+    return buf.getvalue()
+
+
+def test_arca_manda_el_csv_dentro_de_un_zip():
+    original = _csv(_fila(9), _fila(10), _fila(11), codificacion="utf-8").replace(b"\r\n", b"\n")
+    salida, faltan = filtrar_csv_arca(_zip_arca(original), "Compras", claves_de_faltantes(_faltantes(), "Compras"))
+    lineas = original.splitlines(keepends=True)
+    assert salida == lineas[0] + lineas[2] + lineas[3] and faltan == []
+    assert unir_partes([_zip_arca(_csv(_fila(1))), _zip_arca(_csv(_fila(2)))]) == _csv(_fila(1), _fila(2))
+
+
 def test_sin_encabezado_de_arca_falla():
     with pytest.raises(CsvArcaIlegible):
         filtrar_csv_arca(b"a;b;c\r\n1;2;3\r\n", "Compras", {})
@@ -68,13 +83,17 @@ def test_unir_partes_no_pierde_filas():
 # --- Endpoint ------------------------------------------------------------------------
 
 
-def _ejecucion(tmp_path, con_csv: bool = True):
+ZIP_ARCA = "comprobantes_consulta_csv_recibidos_1_30500000000_20251201-1200 (montos expresados en pesos).zip"
+
+
+def _ejecucion(tmp_path, con_csv: bool = True, viejo: bool = False):
     carpeta = tmp_path / "salidas" / "Acme" / "032025"
     carpeta.mkdir(parents=True)
     (carpeta / "AUX - Control de facturas Compras con AFIP - 03-25 - Acme - 1er control.xlsx").write_bytes(_aux("Compras", 2))
     (carpeta / "Mis comprobantes - Recibidos - Acme - 03-2025 al 03-2025.xlsx").write_bytes(b"x")
     if con_csv:
-        (carpeta / "Mis comprobantes - Recibidos - Acme - 03-2025 al 03-2025.csv").write_bytes(_csv(_fila(9), _fila(10), _fila(11)))
+        nombre = "Mis comprobantes - Recibidos - Acme - 03-2025 al 03-2025.csv" if viejo else ZIP_ARCA
+        (carpeta / nombre).write_bytes(_zip_arca(_csv(_fila(9), _fila(10), _fila(11))))
     ej = srv.Ejecucion(
         id="csvx123", usuario="test", parametros={"desde": "01/03/2025", "hasta": "31/03/2025"},
         clientes=[srv.ClienteEnCurso("Acme", [], carpeta=str(carpeta), archivos=srv.listar_archivos(carpeta))],
@@ -82,30 +101,43 @@ def _ejecucion(tmp_path, con_csv: bool = True):
     )
     with srv._lock:
         srv._ejecuciones[ej.id] = ej
-    return ej
+    return ej, carpeta
 
 
-def test_endpoint_arma_el_zip_con_el_csv_de_arca(entorno, tmp_path):
+@pytest.mark.parametrize("viejo", [False, True])
+def test_endpoint_devuelve_el_zip_de_arca_sin_tocar(entorno, tmp_path, viejo):
     client, _ = entorno
-    ej = _ejecucion(tmp_path)
-    r = client.post(f"/api/ejecuciones/{ej.id}/clientes/0/csv-xubio", json={"operacion": "Compras", "excluir": ["30500000000|A-00001-00000011"]})
+    ej, carpeta = _ejecucion(tmp_path, viejo=viejo)
+    nombre = "Mis comprobantes - Recibidos - Acme - 03-2025 al 03-2025.csv" if viejo else ZIP_ARCA
+    original = (carpeta / nombre).read_bytes()
+    r = client.post(f"/api/ejecuciones/{ej.id}/clientes/0/csv-xubio", json={"operacion": "Compras"})
     assert r.status_code == 200, r.text
     item = r.json()["resultados"][0]
-    assert item["error"] is None and item["partidas"] == {"Compras": 1} and item["archivos"][0].startswith("AUX - ")
-    assert len(item["filas"]["Compras"]) == 1
-    with zipfile.ZipFile(io.BytesIO(base64.b64decode(item["zips"]["Compras"]["contenido"]))) as z:
-        (nombre,) = z.namelist()
-        assert nombre.startswith("Partidas de ARCA no encontradas en Libro IVA Compras - Acme")
-        assert z.read(nombre) == _csv(_fila(10))
+    assert item["error"] is None and item["partidas"] == {"Compras": 3}
+    z = item["zips"]["Compras"]
+    assert z["original"] is True and z["nombre"] == ZIP_ARCA
+    assert base64.b64decode(z["contenido"]) == original  # byte por byte
+    assert len(item["filas"]["Compras"]) == 2
 
 
 def test_endpoint_sin_csv_pide_volver_a_correr(entorno, tmp_path):
     client, _ = entorno
-    ej = _ejecucion(tmp_path, con_csv=False)
+    ej, _ = _ejecucion(tmp_path, con_csv=False)
     r = client.post(f"/api/ejecuciones/{ej.id}/clientes/0/csv-xubio", json={"operacion": "Compras"})
     assert r.status_code == 404 and "Volvé a correr el control" in r.text
 
 
+def test_subir_original_no_rearma_el_zip(monkeypatch):
+    from backend.app.services import importacion_xubio as imp
+
+    vistos = {}
+    monkeypatch.setattr(imp, "_validar", lambda *a: None)
+    monkeypatch.setattr(imp, "_correr", lambda cli, op, nombre, contenido, accion, *a: vistos.update(n=nombre, c=contenido, a=accion) or {})
+    datos = _zip_arca(_csv(_fila(1)))
+    imp.subir_original("Acme", "Compras", "Mis comprobantes - Recibidos - Acme.csv", datos, None, None)
+    assert vistos == {"n": ZIP_ARCA, "c": datos, "a": "importar_arca"}
+
+
 def test_aplicar_cambios_sigue_tomando_el_excel_de_arca(tmp_path):
-    ej = _ejecucion(tmp_path)
+    ej, _ = _ejecucion(tmp_path)
     assert srv._archivo_de(ej.clientes[0], "Mis comprobantes - Recibidos - ").endswith(".xlsx")

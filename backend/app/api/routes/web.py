@@ -14,8 +14,10 @@ from typing import Literal
 
 import base64
 import binascii
+import io
 import re
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -553,6 +555,9 @@ class CargarEnXubioRequest(BaseModel):
     cliente: str = Field(min_length=1)
     operacion: str
     zip: str  # base64 del .zip que devolvió /convertir-aux o /comprobantes/preparar
+    # True: es el .zip que exportó ARCA en el control (csv-xubio): va sin tocar, con `nombre`.
+    original: bool = False
+    nombre: str | None = Field(default=None, max_length=300)
 
 
 @router.post("/convertir-aux/xubio")
@@ -568,6 +573,8 @@ def cargar_en_xubio(
     except (binascii.Error, ValueError) as exc:
         raise HTTPException(status_code=422, detail={"mensaje": "No se pudo leer el .zip."}) from exc
     try:
+        if body.original:
+            return importacion_srv.subir_original(body.cliente, body.operacion, body.nombre or "", datos, clientes, creds)
         return importacion_srv.preparar(body.cliente, body.operacion, datos, clientes, creds)
     except importacion_srv.ErrorImportacion as exc:
         raise HTTPException(status_code=exc.status, detail={"mensaje": exc.mensaje}) from exc
@@ -829,18 +836,16 @@ def faltantes_excel_ejecucion(ejecucion_id: str, indice: int, operacion: str | N
 
 class CsvXubioRequest(BaseModel):
     operacion: Literal["Ventas", "Compras"]
-    # Claves «CUIT|comprobante» destildadas en la pantalla del control.
+    # Ya no se usa: va el archivo de ARCA entero (queda por compatibilidad).
     excluir: list[str] = Field(default_factory=list, max_length=5000)
 
 
 @router.post("/ejecuciones/{ejecucion_id}/clientes/{indice}/csv-xubio")
 def csv_xubio_ejecucion(ejecucion_id: str, indice: int, body: CsvXubioRequest) -> dict:
-    """«Subir a Xubio» desde un control: el CSV que bajó ARCA en ese control, solo con
-    las líneas de las partidas no encontradas en el Libro IVA (sin las destildadas),
-    copiadas tal cual. Devuelve un ResultadoConversion, como /convertir-aux."""
-    from ...auditor.csv_arca import clave_fila, filas_de_tabla
-    from ...auditor.csv_original import CsvArcaIlegible, claves_de_faltantes, filtrar_csv_arca
-    from ...services.importacion_xubio import zip_para_xubio
+    """«Subir a Xubio» desde un control: el .zip que exportó ARCA con «CSV» en ese
+    control, tal cual (Xubio no acepta un archivo armado por la app). Devuelve un
+    ResultadoConversion, como /convertir-aux, con ``zips[op].original = True``."""
+    from ...auditor.csv_arca import filas_de_tabla
 
     op = body.operacion
     try:
@@ -848,45 +853,39 @@ def csv_xubio_ejecucion(ejecucion_id: str, indice: int, body: CsvXubioRequest) -
         if not 0 <= indice < len(ej.clientes):
             raise ejecuciones_srv.ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
         aux = _aux_activos([a["nombre"] for a in ej.clientes[indice].archivos]).get(op)
-        if not aux:
-            raise ejecuciones_srv.ErrorEjecucion(f"Este control no tiene el AUX de {op}.", 404)
-        ruta_aux = ejecuciones_srv.ruta_archivo(ej, indice, aux)
-        ruta_csv = ejecuciones_srv.csv_arca_de(ej, indice, op)
+        rutas = ejecuciones_srv.originales_arca_de(ej, indice, op)
     except ejecuciones_srv.ErrorEjecucion as exc:
         raise _http_error(exc) from exc
 
     cliente = ej.clientes[indice].nombre
-    periodo = datos_del_nombre(aux)[1]
-    tabla = leer_faltantes_de_control(ruta_aux, op)
-    excluir = set(body.excluir)
-    item: dict = {"cliente": cliente, "periodo": periodo, "archivos": [aux], "partidas": {}, "filas": {}, "zips": {}, "excel": None, "avisos": [], "error": None}
-    buscadas = claves_de_faltantes(tabla, op, excluir)
-    if not buscadas:
-        item["partidas"][op] = 0
-        item["avisos"].append(f"{op}: no hay partidas de ARCA para subir (o se destildaron todas).")
-        return {"resultados": [item]}
-    try:
-        contenido, faltan = filtrar_csv_arca(ruta_csv.read_bytes(), op, buscadas)
-    except (CsvArcaIlegible, OSError) as exc:
-        item["error"] = f"No se pudo leer el CSV de ARCA «{ruta_csv.name}»: {exc}"
-        return {"resultados": [item]}
-    if faltan:
-        item["avisos"].append(
-            f"{op}: {len(faltan)} de las partidas no están en el CSV de ARCA y no van ({', '.join(faltan[:5])}"
-            + ("…" if len(faltan) > 5 else "") + "). Cargalas a mano o volvé a correr el control."
+    periodo = datos_del_nombre(aux)[1] if aux else None
+    item: dict = {"cliente": cliente, "periodo": periodo, "archivos": [r.name for r in rutas], "partidas": {}, "filas": {}, "zips": {}, "excel": None, "avisos": [], "error": None}
+    if len(rutas) > 1:
+        item["error"] = (
+            f"ARCA entregó el CSV de {op} en {len(rutas)} partes (el período se pidió en tramos). "
+            "Subilas a Xubio a mano desde la carpeta del control: " + ", ".join(r.name for r in rutas)
         )
-    subidas = len(buscadas) - len(faltan)
-    item["partidas"][op] = subidas
-    if subidas:
-        sufijo = f" - {periodo}" if periodo else ""
-        nombre_csv = f"{PREFIJO_CSV} {op} - {cliente}{sufijo}.csv"
-        item["zips"][op] = {
-            "nombre": f"{PREFIJO_CSV} {op} - {cliente}{sufijo}.zip",
-            "contenido": base64.b64encode(zip_para_xubio(nombre_csv, contenido)).decode("ascii"),
-        }
-        quedan = set(buscadas.values()) - set(faltan)
-        van = [clave_fila(fila, op) in quedan for _, fila in tabla.iterrows()]
-        item["filas"][op] = filas_de_tabla(tabla[van], op)
+        return {"resultados": [item]}
+    ruta = rutas[0]
+    try:
+        contenido = ruta.read_bytes()
+        nombre = importacion_srv.nombre_original(ruta.name, contenido)
+        with zipfile.ZipFile(io.BytesIO(contenido)) as z:
+            (csv_adentro,) = [n for n in z.namelist() if n.lower().endswith(".csv")]
+            comprobantes = sum(1 for linea in z.read(csv_adentro).splitlines()[1:] if linea.strip())
+    except (importacion_srv.ErrorImportacion, zipfile.BadZipFile, ValueError, OSError) as exc:
+        item["error"] = f"No se pudo leer el archivo de ARCA «{ruta.name}»: {getattr(exc, 'mensaje', exc)}"
+        return {"resultados": [item]}
+
+    item["partidas"][op] = comprobantes
+    item["zips"][op] = {"nombre": nombre, "contenido": base64.b64encode(contenido).decode("ascii"), "original": True}
+    if aux:
+        tabla = leer_faltantes_de_control(ejecuciones_srv.ruta_archivo(ej, indice, aux), op)
+        item["filas"][op] = filas_de_tabla(tabla, op)
+        item["avisos"].append(
+            f"{op}: va el archivo de ARCA completo, sin tocar: {comprobantes} comprobante(s) del período "
+            f"({len(tabla)} no están en el Libro IVA)."
+        )
     return {"resultados": [item]}
 
 
