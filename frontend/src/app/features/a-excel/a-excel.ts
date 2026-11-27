@@ -49,6 +49,9 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
       --cf-fondo: #f8fafc; --cf-acento: #1d4ed8; --cf-acento-suave: #eff6ff;
       --cf-error: #b91c1c; --cf-error-fondo: #fef2f2; --cf-aviso: #92400e; --cf-aviso-fondo: #fffbeb; --cf-ok: #15803d; --cf-ok-fondo: #f0fdf4;
       display: flex; flex-direction: column; gap: 16px; flex: 1 0 auto; color: var(--cf-texto); font-size: .92rem;
+      /* Los textos solo para lectores de pantalla (.sr-only, absolutos) quedan adentro del área que
+         se desplaza: sin esto se ubicaban contra la ventana y estiraban la página con un espacio vacío. */
+      position: relative;
     }
     button { font: inherit; }
     :is(button, select, input, [role='button']):focus-visible { outline: 2px solid var(--cf-acento); outline-offset: 2px; }

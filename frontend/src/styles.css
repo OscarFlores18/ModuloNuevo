@@ -288,6 +288,9 @@ input[type='checkbox'] {
   flex-direction: column;
   gap: 16px;
   background: #ffffff;
+  /* Lo absoluto de adentro (los .sr-only de las tablas) se ubica acá y no contra la ventana:
+     si no, estiraba la página y quedaba un espacio vacío al final. */
+  position: relative;
 }
 
 /* La pantalla de cada ruta apila sus bloques (avisos, tarjetas, paneles) con aire entre sí. */
