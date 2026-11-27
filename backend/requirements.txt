@@ -18,6 +18,8 @@ numpy==2.5.4
 # Comprobantes desde PDF, fotos, CSV y .xls (backend/app/extraccion).
 # El OCR usa Tesseract (programa aparte): build_app.ps1 lo mete en el instalador.
 xlrd==2.0.2
+# El Excel para Xubio sale en .xls, como sus modelos de importación.
+xlwt==1.3.0
 pypdfium2==5.15.2
 pillow==13.0.0
 zxing-cpp==3.1.1

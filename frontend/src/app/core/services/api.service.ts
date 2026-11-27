@@ -67,6 +67,24 @@ export class ApiService {
         .pipe(errorLegible('No se pudo preparar para Xubio.')),
     );
   }
+  /** Los productos de Xubio de la empresa ya traídos (Compras y Ventas). */
+  productosXubio(cliente: string): Promise<ProductosXubio> {
+    return firstValueFrom(
+      this.http.get<ProductosXubio>(`${this.url}/a-excel/xubio/productos`, { params: { cliente } }).pipe(errorLegible('No se pudieron ver los productos de Xubio.')),
+    );
+  }
+  /** Abre Xubio en la empresa y trae sus productos (tarda: entra con el bot). */
+  traerProductosXubio(cliente: string): Promise<ProductosXubio> {
+    return firstValueFrom(
+      this.http.post<ProductosXubio>(`${this.url}/a-excel/xubio/productos`, { cliente }).pipe(errorLegible('No se pudieron traer los productos de Xubio.')),
+    );
+  }
+  /** El .xls del Conversor a Xubio: Compras o Ventas > Importar > Desde Excel, y aprieta «Importar». */
+  subirExcelAXubio(cliente: string, operacion: 'Compras' | 'Ventas', nombre: string, contenido: string): Promise<ResultadoCargaXubio> {
+    return firstValueFrom(
+      this.http.post<ResultadoCargaXubio>(`${this.url}/a-excel/xubio/subir`, { cliente, operacion, nombre, contenido }).pipe(errorLegible('No se pudo subir a Xubio.')),
+    );
+  }
   /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */
   extraerComprobantes(archivos: ArchivoSubido[]): Promise<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }> {
     return firstValueFrom(
@@ -229,6 +247,17 @@ export interface ResultadoExportar {
   copiados: string[];
   /** Los que no se pudieron copiar (por ejemplo, abiertos en Excel). */
   fallas: { nombre: string; motivo: string }[];
+}
+
+export interface ProductoXubio {
+  nombre: string;
+  codigo: string;
+}
+
+export interface ProductosXubio {
+  Compras: ProductoXubio[];
+  Ventas: ProductoXubio[];
+  actualizado: string | null;
 }
 
 export interface ResultadoCargaXubio {

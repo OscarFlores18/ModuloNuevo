@@ -18,7 +18,7 @@ from ..modelo import TIPOS, cuit_valido, fecha as fecha_iso, importe, nombre_tip
 from ..texto_factura import _tipo as tipo_del_texto
 from ..texto_factura import cuits as cuits_del_texto
 from .datos import ALICUOTAS, ETIQUETAS_ENCABEZADO, ETIQUETAS_TOTALES, Item, Lectura, TOLERANCIA, TOTALES, Tributo, Verificacion
-from .normalizar import _alicuota_de, _cierra, _fmt, _fmt_alicuota, _variantes, _variantes_importe, cuits_cambiando_0_y_8, totales_efectivos
+from .normalizar import _alicuota_de, _cierra, _fmt, _numero, agrupar_items, _fmt_alicuota, _variantes, _variantes_importe, cuits_cambiando_0_y_8, totales_efectivos
 
 logger = logging.getLogger(__name__)
 
@@ -284,8 +284,42 @@ def _verificar_tributos(tributos: list[Tributo]) -> list[Verificacion]:
 
 
 def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
-    """Lo autocorregido no se avisa: queda marcado en naranja en el detalle."""
-    return _verificar_items_sin_correccion(items, t)
+    """Lo autocorregido se avisa (y queda en naranja en el detalle) para que se revise."""
+    corregidos = [(n + 1, x) for n, x in enumerate(items) if x.leido and x.leido != x.descripcion]
+    aviso = [Verificacion(
+        campo="descripcion", nivel="aviso",
+        mensaje="Estas descripciones se leyeron mal y las corregí solo (en naranja en el detalle): "
+                + "; ".join(f"ítem {n}: «{x.leido}» → «{x.descripcion}»" for n, x in corregidos) + ". Revisalas.",
+        titulo=f"Autocorregí {len(corregidos)} {'descripción' if len(corregidos) == 1 else 'descripciones'}",
+        datos=[f"#{n} {x.descripcion}" for n, x in corregidos[:4]],
+    )] if corregidos else []
+    for n, x in enumerate(items):
+        if x.importe_leido is not None and x.importe is not None and x.importe_leido != x.importe:
+            aviso.append(Verificacion(
+                campo=f"item_{n}", nivel="aviso",
+                mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)} y lo corregí a {_fmt(x.importe)}: "
+                         "con ese valor el detalle suma el neto (en naranja en el detalle). Si no es así, cambialo a mano."),
+                titulo=f"Autocorregí el importe del ítem {n + 1}",
+                datos=[f"Leído {_fmt(x.importe_leido)}", f"Ahora {_fmt(x.importe)}"],
+            ))
+    return aviso + _verificar_items_sin_correccion(items, t)
+
+
+def _verificar_iva_por_alicuota(items: list[Item], t: dict[str, float | None]) -> Verificacion | None:
+    """Xubio calcula el IVA de cada fila (importe x alícuota). Con el detalle agrupado por
+    alícuota, ¿da el IVA de la factura? Unos centavos de diferencia se ajustan al cargar."""
+    if not items or t.get("iva") is None or any(i.importe is None or i.alicuota is None for i in items):
+        return None
+    calculado = round(sum(round(suma * (a or 0) / 100, 2) for a, suma, _ in agrupar_items(items)), 2)
+    dif = round(t["iva"] - calculado, 2)
+    if not dif or abs(dif) > 0.05:
+        return None
+    return Verificacion(
+        campo="iva", nivel="aviso", titulo="Redondeo de IVA",
+        mensaje=(f"Xubio va a calcular un IVA de {_fmt(calculado)} y la factura dice {_fmt(t['iva'])} "
+                 f"(diferencia {_fmt(dif)}): ajustá esos centavos al importar el comprobante."),
+        datos=[f"Xubio {_fmt(calculado)}", f"Factura {_fmt(t['iva'])}", f"Dif. {_fmt(dif)}"],
+    )
 
 
 def _verificar_cantidad_por_precio(items: list[Item]) -> list[Verificacion]:
@@ -320,6 +354,9 @@ def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None
     sin_importe = [i + 1 for i, x in enumerate(items) if x.importe is None]
     if sin_importe:
         v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin importe: {', '.join(map(str, sin_importe))}.", titulo="Ítems sin importe", datos=[f"#{n}" for n in sin_importe[:6]]))
+    mal_cant = [i + 1 for i, x in enumerate(items) if x.cantidad is not None and x.cantidad <= 0]
+    if mal_cant:
+        v.append(Verificacion(campo="items", nivel="error", mensaje=f"Ítems con cantidad 0 o negativa: {', '.join(map(str, mal_cant))}.", titulo="Cantidad mal leída", datos=[f"#{n}" for n in mal_cant[:6]]))
     v += _verificar_cantidad_por_precio(items)
     suma = round(sum(x.importe or 0 for x in items), 2)
     # El detalle suma el neto (factura A) o el total (factura B/C, tiques).
@@ -386,6 +423,45 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
     v += _verificar_desglose(lectura, t)
     v += _verificar_tributos(lectura.tributos)
     v += _verificar_items(lectura.items, t)
+    if (x := _verificar_iva_por_alicuota(lectura.items, t)) is not None:
+        v.append(x)
+    for campo, leido in lectura.corregidos.items():
+        ahora = _fmt(t[campo]) if campo in TOTALES and t.get(campo) is not None else e.get(campo, "")
+        if leido and ahora and leido != ahora:
+            etiqueta = ETIQUETAS_ENCABEZADO.get(campo) or ETIQUETAS_TOTALES.get(campo, campo)
+            articulo = {"percepcion_iibb": "la ", "impuestos_internos": "los ", "otros_tributos": ""}.get(campo, "el ")
+            v.append(Verificacion(campo=campo, nivel="aviso", titulo=f"Autocorregí {articulo}{etiqueta.lower()}",
+                                  mensaje=f"{etiqueta}: se leyó «{leido}» y lo dejé como «{ahora}». Si no es así, cambialo a mano.",
+                                  datos=[f"Leído {leido}", f"Ahora {ahora}"]))
+    # Lo que cada pasada leyó distinto y sigue sin verificarse por otro lado.
+    con_error = {x.campo for x in v if x.nivel != "ok"}
+    verificados = {x.campo for x in v if x.nivel == "ok"}
+    for campo, valores in lectura.dudas.items():
+        if campo not in ETIQUETAS_ENCABEZADO and campo not in TOTALES:
+            continue
+        etiqueta = ETIQUETAS_ENCABEZADO.get(campo) or ETIQUETAS_TOTALES.get(campo, campo)
+        if campo in con_error:
+            # Ya marcado como error: las lecturas distintas pasan a ser los «Usar X».
+            for x in v:
+                if x.campo == campo and x.nivel == "error" and not x.opciones:
+                    x.titulo, x.opciones = f"{etiqueta} mal leído", _ordenar_opciones(lectura, t, campo, valores)[:3]
+                    break
+            continue
+        if (campo in verificados and campo.endswith("_cuit")) or (campo in TOTALES and _cierra(t)):
+            continue
+        v.append(Verificacion(campo=campo, nivel="error", mensaje=f"{etiqueta}: cada lectura dio algo distinto ({' / '.join(valores[:3])}). Elegí el que figura en la imagen.",
+                             titulo=f"{etiqueta} mal leído", opciones=_ordenar_opciones(lectura, t, campo, valores)[:3]))
     # Primero lo que hay que arreglar.
     orden = {"error": 0, "aviso": 1, "ok": 2}
     return sorted(v, key=lambda x: orden[x.nivel])
+
+
+def _ordenar_opciones(lectura: Lectura, t: dict[str, float | None], campo: str, valores: list[str]) -> list[str]:
+    """Primero la recomendada: el importe con el que cierra el total o, si no, el que quedó."""
+    def puntaje(v: str) -> tuple:
+        if campo in TOTALES:
+            n = _numero(v)
+            cierra = n is not None and _cierra({**t, campo: n})
+            return (not cierra, n != t.get(campo))
+        return (False, v != lectura.encabezado.get(campo))
+    return sorted(valores, key=puntaje)

@@ -487,6 +487,58 @@ def preparar_xubio_a_excel(body: XubioAExcelRequest) -> dict:
     }
 
 
+@router.get("/a-excel/xubio/productos")
+def productos_xubio(cliente: str) -> dict:
+    """Los productos de Xubio de la empresa (Compras y Ventas) que ya se trajeron."""
+    from ...services import productos_xubio as productos_srv
+
+    return productos_srv.guardados(cliente)
+
+
+class ClienteXubioRequest(BaseModel):
+    cliente: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/a-excel/xubio/productos")
+def traer_productos_xubio(
+    body: ClienteXubioRequest,
+    clientes: ClientesRepository = Depends(get_clientes),
+    creds: CredencialesXubioRepository = Depends(get_credenciales_xubio),
+) -> dict:
+    """Abre Xubio en la empresa y trae sus listas de Producto/Servicio."""
+    from ...services import productos_xubio as productos_srv
+
+    try:
+        return productos_srv.traer(body.cliente, clientes, creds)
+    except importacion_srv.ErrorImportacion as exc:
+        raise HTTPException(status_code=exc.status, detail={"mensaje": exc.mensaje}) from exc
+
+
+class SubirExcelXubioRequest(BaseModel):
+    cliente: str = Field(min_length=1, max_length=200)
+    operacion: Literal["Compras", "Ventas"]
+    nombre: str = Field(default="", max_length=260)
+    contenido: str = Field(min_length=1)  # base64 del .xls que devolvió /a-excel/generar
+
+
+@router.post("/a-excel/xubio/subir")
+def subir_excel_a_xubio(
+    body: SubirExcelXubioRequest,
+    clientes: ClientesRepository = Depends(get_clientes),
+    creds: CredencialesXubioRepository = Depends(get_credenciales_xubio),
+) -> dict:
+    """Carga el .xls en Compras o Ventas > Acciones > Importar > Desde Excel y
+    aprieta «Importar». La persona confirma antes, en la app."""
+    try:
+        datos = base64.b64decode(body.contenido, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=422, detail={"mensaje": "No se pudo leer el Excel."}) from exc
+    try:
+        return importacion_srv.subir_excel(body.cliente, body.operacion, body.nombre, datos, clientes, creds)
+    except importacion_srv.ErrorImportacion as exc:
+        raise HTTPException(status_code=exc.status, detail={"mensaje": exc.mensaje}) from exc
+
+
 class PrepararRequest(BaseModel):
     comprobantes: list[Comprobante] = Field(min_length=1, max_length=5000)
 

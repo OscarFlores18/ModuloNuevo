@@ -458,6 +458,8 @@ export interface LecturaExcel {
   texto: string;
   /** Lo que cada pasada de OCR leyó distinto. */
   dudas: Record<string, string[]>;
+  /** Lo que se autocorrigió solo: campo -> lo que se había leído. */
+  corregidos?: Record<string, string>;
   avisos: string[];
   verificaciones: Verificacion[];
   /** Solo si el archivo no se pudo leer. */

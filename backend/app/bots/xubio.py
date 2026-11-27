@@ -379,6 +379,141 @@ def importar_arca(
     return salida
 
 
+# «Acciones > Importar > Desde Excel» del listado de comprobantes: un cuadro de
+# Xubio (FAFPopup) con el archivo .xls (formato 2003) y el botón «Importar».
+_LISTADOS = {"Compras": "/NXV/compras/comprobantes-de-compra", "Ventas": "/NXV/ventas/comprobantes-de-venta"}
+_JS_POPUPS = r"""() => {
+  const visible = (el) => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length);
+  const textos = [];
+  for (const el of document.querySelectorAll('.FAFPopup, #overDiv, [class*=Popup], [class*=popup]')) {
+    if (!visible(el)) continue;
+    const t = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (t && t.length < 1500 && !textos.includes(t)) textos.push(t);
+  }
+  return textos;
+}"""
+
+
+def _carteles(page: Page) -> list[str]:
+    textos = _textos_visibles(page)
+    try:
+        for t in page.evaluate(_JS_POPUPS) or []:
+            if t not in textos:
+                textos.append(t)
+    except Exception:
+        pass
+    return textos
+
+
+def abrir_importacion_excel(page: Page, operacion: str, ruta_xls: str, log: Callable[[str], None] = print) -> dict:
+    """Abre «Importar > Desde Excel» de la operación y carga el .xls, sin importar."""
+    if operacion not in _LISTADOS:
+        raise ValueError(f"Operación desconocida: {operacion}")
+    log(f"   -> Xubio: {operacion} > Comprobantes > Acciones > Importar > Desde Excel...")
+    page.goto(urljoin("https://xubio.com", _LISTADOS[operacion]))
+    try:
+        page.get_by_role("button", name="Rechazarlas todas").click(timeout=1500)
+    except Exception:
+        pass
+    acciones = page.locator("button:visible, a:visible", has_text=re.compile(r"^\s*Acciones\s*$"))
+    acciones.first.wait_for(timeout=config.PLAYWRIGHT_ESPERA_MS)
+    acciones.first.click()
+    page.locator("a:visible", has_text=re.compile(r"^\s*Importar\s*$")).first.click(timeout=10000)
+    page.locator("li:visible", has_text=re.compile(r"Desde Excel", re.I)).first.click(timeout=10000)
+    entrada = page.locator("input[name='FILE_importar_xlsFile']").first
+    entrada.wait_for(state="attached", timeout=config.PLAYWRIGHT_ESPERA_MS)
+    entrada.set_input_files(ruta_xls)
+    log(f"      [OK]: Archivo cargado: {os.path.basename(ruta_xls)}")
+    boton = page.locator("a[wdgname='AplicacionImportar']:visible").first
+    return {"archivo_cargado": True, "boton_importar_habilitado": bool(boton.count())}
+
+
+def importar_excel(
+    page: Page,
+    operacion: str,
+    ruta_xls: str,
+    log: Callable[[str], None] = print,
+    espera_ms: int = ESPERA_RESULTADO_MS,
+) -> dict:
+    """Carga el .xls en «Importar desde Excel», aprieta «Importar» y lee la
+    respuesta. Igual que `importar_arca`: ``importado`` True, False o None."""
+    salida = abrir_importacion_excel(page, operacion, ruta_xls, log=log)
+    salida.update(importado=None, mensaje="")
+    if not salida["boton_importar_habilitado"]:
+        salida.update(importado=False, mensaje="Xubio no mostró el botón «Importar».")
+        return salida
+    antes = set(_carteles(page))
+    page.on("dialog", lambda d: d.accept())
+    log("   -> Apretando «Importar» en Xubio...")
+    page.locator("a[wdgname='AplicacionImportar']:visible").first.click(timeout=10000)
+    limite = time.monotonic() + espera_ms / 1000
+    nuevos: list[str] = []
+    confirmado = False
+    while time.monotonic() < limite:
+        page.wait_for_timeout(700)
+        nuevos = [t for t in _carteles(page) if t not in antes]
+        mal = [t for t in nuevos if _RESULTADO_MAL.search(t)]
+        ok = [t for t in nuevos if _RESULTADO_OK.search(t)]
+        if mal:
+            salida.update(importado=False, mensaje=mal[0])
+            break
+        if ok:
+            salida.update(importado=True, mensaje=ok[0])
+            break
+        if not confirmado and _confirmar_si_pide(page, log):
+            confirmado = True
+            antes |= set(nuevos)
+    if salida["importado"] is None:
+        salida["mensaje"] = nuevos[0] if nuevos else "Xubio no mostró ningún mensaje después de «Importar»."
+    _guardar_resultado(page, log)
+    return salida
+
+
+# La lista de «Producto/Servicio» del comprobante nuevo: Xubio la pide a este
+# selector, por operación, para la empresa activa (visto el 2026-11-27).
+_SELECTOR_PRODUCTOS = (
+    "https://core.xubio.com/NXV/selector?widgetID=Producto"
+    "&backend=faf.dynamicform.ui.widgets.impl.selector.WidgetSelectorDiccionarioBackend"
+    "&getData=1&reportSQL=&diccAlias={alias}"
+)
+_ALIAS_PRODUCTOS = {"Compras": "PRODUCTOCOMPRA", "Ventas": "PRODUCTOVENTA"}
+
+
+def leer_productos(xml: str) -> list[dict]:
+    """La respuesta del selector → [{"nombre", "codigo"}]. Los datos vienen como
+    «id,nombre,código,barras;…» con las comas y los % escapados (%2C, %25)."""
+    from urllib.parse import unquote
+
+    m = re.search(r"<data><!\[CDATA\[(.*?)\]\]></data>", xml, re.S)
+    productos: list[dict] = []
+    vistos: set[str] = set()
+    for fila in (m.group(1).split(";") if m else []):
+        partes = fila.split(",")
+        if len(partes) < 2:
+            continue
+        nombre = unquote(partes[1]).strip()
+        codigo = unquote(partes[2]).strip() if len(partes) > 2 else ""
+        if nombre and nombre.lower() not in vistos:
+            vistos.add(nombre.lower())
+            productos.append({"nombre": nombre, "codigo": "" if codigo == nombre else codigo})
+    return productos
+
+
+def productos_de_xubio(page: Page, operacion: str) -> list[dict]:
+    """Los productos que Xubio ofrece en el comprobante de la operación, en la empresa activa."""
+    if operacion not in _ALIAS_PRODUCTOS:
+        raise ValueError(f"Operación desconocida: {operacion}")
+    respuesta = page.request.post(
+        _SELECTOR_PRODUCTOS.format(alias=_ALIAS_PRODUCTOS[operacion]),
+        data="<root><userDataValues/></root>",
+        headers={"Content-Type": "text/xml; charset=UTF-8"},
+        timeout=30000,
+    )
+    if not respuesta.ok:
+        raise RuntimeError(f"Xubio no devolvió los productos de {operacion} (HTTP {respuesta.status}).")
+    return leer_productos(respuesta.text())
+
+
 class SesionXubio:
     """Una sesión de Chrome ya logueada en Xubio.
 
@@ -472,6 +607,18 @@ class SesionXubio:
         if self._page is None:
             raise RuntimeError("La sesión de Xubio no está abierta.")
         return preparar_importacion_arca(self._page, operacion, ruta_zip, log=self.log, captura=captura)
+
+    def productos(self, operacion: str) -> list[dict]:
+        """En la empresa activa: la lista de Producto/Servicio de Compras o Ventas."""
+        if self._page is None:
+            raise RuntimeError("La sesión de Xubio no está abierta.")
+        return productos_de_xubio(self._page, operacion)
+
+    def importar_excel(self, operacion: str, ruta_xls: str) -> dict:
+        """En la empresa activa: «Importar > Desde Excel» con el .xls, aprieta «Importar»."""
+        if self._page is None:
+            raise RuntimeError("La sesión de Xubio no está abierta.")
+        return importar_excel(self._page, operacion, ruta_xls, log=self.log)
 
     def importar_arca(self, operacion: str, ruta_zip: str) -> dict:
         """En la empresa activa: carga el .zip en «Importar desde Mis Comprobantes

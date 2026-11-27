@@ -164,5 +164,7 @@ class Lectura(BaseModel):
     texto: str = Field(default="", max_length=400_000)
     # Lo que cada pasada de OCR leyó distinto: campo -> valores leídos.
     dudas: dict[str, list[str]] = Field(default_factory=dict)
+    # Lo que se autocorrigió solo: campo -> lo que se había leído (se avisa y va en naranja).
+    corregidos: dict[str, str] = Field(default_factory=dict)
     avisos: list[str] = Field(default_factory=list)
     verificaciones: list[Verificacion] = Field(default_factory=list)
