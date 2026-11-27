@@ -1,5 +1,5 @@
 import { Advertencia, FilaConError } from '../../core/models';
-import { abrirMail, armarMail, copiarMail, saludoFinal, tablaMail } from './ventana-errores';
+import { abrirMail, armarMail, copiarMail, saludoFinal, saludoInicial, tablaMail } from './ventana-errores';
 
 const fila = (pares: [string, string | number | null][]) => pares.map(([columna, valor]) => ({ columna, valor }));
 
@@ -23,7 +23,7 @@ describe('Mail «Consultar al cliente»', () => {
   } as unknown as Advertencia;
 
   it('usa la plantilla oficial y una tabla con bordes con las columnas de ARCA (comprobante en una, CUIT con guiones)', () => {
-    const m = armarMail(faltante, { emails: { 'PICCININI y ASOCIADOS S.A': 'a@b.com' }, periodo: '10/2025', hoy: new Date(2026, 10, 16) });
+    const m = armarMail(faltante, { emails: { 'PICCININI y ASOCIADOS S.A': 'a@b.com' }, periodo: '10/2025', hoy: new Date(2026, 10, 16, 10, 30) });
     expect(m.texto).toBe(
       [
         'Estimados buenos días, ¿cómo están?',
@@ -60,6 +60,17 @@ describe('Mail «Consultar al cliente»', () => {
       comprobantes: [{ origen: 'arca', fila: [], mail: fila([['Tipo', '11 - Factura C'], ['Imp. Neto Gravado', null], ['IVA', ''], ['Imp. Total', 105000]]) }],
     } as unknown as Advertencia;
     expect(armarMail(c, { emails: {}, periodo: '10/2025' }).texto).toContain('11 - Factura C | - | - | 105.000,00');
+  });
+
+  it('el saludo de arriba cambia con la hora', () => {
+    expect(saludoInicial(new Date(2026, 10, 16, 5, 0))).toBe('Estimados buenos días, ¿cómo están?');
+    expect(saludoInicial(new Date(2026, 10, 16, 12, 59))).toBe('Estimados buenos días, ¿cómo están?');
+    expect(saludoInicial(new Date(2026, 10, 16, 13, 0))).toBe('Estimados buenas tardes, ¿cómo están?');
+    expect(saludoInicial(new Date(2026, 10, 16, 19, 59))).toBe('Estimados buenas tardes, ¿cómo están?');
+    expect(saludoInicial(new Date(2026, 10, 16, 20, 0))).toBe('Estimados buenas noches, ¿cómo están?');
+    expect(saludoInicial(new Date(2026, 10, 16, 1, 30))).toBe('Estimados buenas noches, ¿cómo están?');
+    const m = armarMail({ tipo: 'faltante_en_xubio', cliente: 'X', operacion: 'Compras', comprobantes: [] } as unknown as Advertencia, { emails: {}, periodo: '10/2025', hoy: new Date(2026, 10, 18, 21, 15) });
+    expect(m.texto.startsWith('Estimados buenas noches, ¿cómo están?')).toBe(true);
   });
 
   it('el saludo final cambia con el día', () => {

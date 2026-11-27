@@ -772,7 +772,7 @@ export interface ContextoVentana {
   cuenta?: string;
   /** Con el backend en esta PC: le pide que apriete Ctrl+V en Gmail cuando se abra. */
   pegarEnGmail?: () => Promise<void>;
-  /** El día con el que se arma el saludo final (por defecto, hoy). */
+  /** El momento con el que se arman los saludos: la hora para el de arriba, el día para el final (por defecto, ahora). */
   hoy?: Date;
   /**
    * «Pedir que las carguen»: descarga el Excel de las partidas de ARCA no encontradas
@@ -789,6 +789,13 @@ export interface ContextoVentana {
  * - `a_cargar`: el cliente las carga él mismo; se le dice cuáles.
  */
 export type AvisoCarga = 'cargadas' | 'a_cargar';
+
+/** El saludo de arriba según la hora: días hasta las 12:59, tardes hasta las 19:59, noches desde las 20 (y de madrugada). */
+export function saludoInicial(ahora: Date = new Date()): string {
+  const hora = ahora.getHours();
+  const momento = hora >= 5 && hora < 13 ? 'buenos días' : hora >= 13 && hora < 20 ? 'buenas tardes' : 'buenas noches';
+  return `Estimados ${momento}, ¿cómo están?`;
+}
 
 /** El saludo final según el día: lunes, comienzo de semana; viernes a domingo, fin de semana. */
 export function saludoFinal(hoy: Date = new Date()): string {
@@ -979,7 +986,7 @@ export function armarMail(e: Advertencia, ctx: ContextoVentana, tabla?: TablaMai
               'Enviamos detalles de facturas que están en Arca y que fueron cargadas a Xubio; falta cargar las percepciones. Por favor enviarlas en cuanto las tengan.',
               'También aclarar en la factura a qué centro de costo imputamos y, en el caso que fueron abonadas, aclarar de qué forma fueron canceladas.',
             ];
-  const saludo = 'Estimados buenos días, ¿cómo están?';
+  const saludo = saludoInicial(ctx.hoy);
   const cierre = ['Quedamos a la espera, muchas gracias.', saludoFinal(ctx.hoy)];
   const { columnas, datos } = tabla ?? tablaMail((e.comprobantes as FilaConError[]).filter((f) => 'fila' in f && !f.motivo));
   const estilos = columnas.map(estiloTd);
