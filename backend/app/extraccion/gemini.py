@@ -203,6 +203,34 @@ def _pedir(cliente, types, errors, jpeg: bytes, plazo_s: float | None = None):
         return _pedir_una_vuelta(cliente, types, errors, jpeg, None)
 
 
+# Modelos que no aceptan «sin pensar» (thinking_budget=0, responde 400): se les pide
+# sin esa opción.
+_sin_presupuesto_cero: set[str] = set()
+
+
+def _generar(cliente, types, errors, m: str, jpeg: bytes, extra: dict):
+    def pedir(sin_pensar: bool):
+        # Sin «pensar»: copiar los datos de una factura no lo necesita y responde
+        # mucho más rápido (las verificaciones atrapan los errores).
+        pensar = {"thinking_config": types.ThinkingConfig(thinking_budget=0)} if sin_pensar else {}
+        return cliente.models.generate_content(
+            model=m,
+            contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), PROMPT],
+            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0, **pensar, **extra),
+        )
+
+    if m in _sin_presupuesto_cero:
+        return pedir(False)
+    try:
+        return pedir(True)
+    except errors.APIError as exc:
+        if exc.code != 400 or re.search(r"api.?key|permission|unauth", str(exc.message or ""), re.I):
+            raise
+        logger.info("Gemini %s no acepta «sin pensar»: se pide sin esa opción.", m)
+        _sin_presupuesto_cero.add(m)
+        return pedir(False)
+
+
 def _pedir_una_vuelta(cliente, types, errors, jpeg: bytes, plazo_s: float | None = None):
     modelos = list(dict.fromkeys([modelo(), *RESPALDOS]))
     if plazo_s:
@@ -220,18 +248,7 @@ def _pedir_una_vuelta(cliente, types, errors, jpeg: bytes, plazo_s: float | None
             # Google no acepta plazos menores a PLAZO_MINIMO_S (responde 400).
             extra = {"http_options": types.HttpOptions(timeout=int(max(restante, PLAZO_MINIMO_S) * 1000))} if restante else {}
             try:
-                return cliente.models.generate_content(
-                    model=m,
-                    contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"), PROMPT],
-                    # Sin «pensar»: copiar los datos de una factura no lo necesita y
-                    # responde mucho más rápido (las verificaciones atrapan los errores).
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0,
-                        thinking_config=types.ThinkingConfig(thinking_budget=0),
-                        **extra,
-                    ),
-                )
+                return _generar(cliente, types, errors, m, jpeg, extra)
             except errors.APIError as exc:
                 if exc.code == 429:
                     # El cupo gratuito es por modelo: sin reintentar, al siguiente. Sin
@@ -242,6 +259,11 @@ def _pedir_una_vuelta(cliente, types, errors, jpeg: bytes, plazo_s: float | None
                     if not isinstance(ultimo, errors.APIError) or ultimo.code != 429 or (_es_por_dia(ultimo) and not _es_por_dia(exc)):
                         ultimo = exc
                     logger.info("Gemini %s sin cupo (429%s).", m, ", del día" if _es_por_dia(exc) else "")
+                    break
+                if exc.code == 400 and not re.search(r"api.?key|permission|unauth", str(exc.message or ""), re.I):
+                    # Algo que este modelo no acepta: al siguiente (la clave mala sí corta).
+                    ultimo = ultimo or exc
+                    logger.info("Gemini %s rechazó el pedido (400): %s", m, exc.message)
                     break
                 if exc.code == 404:
                     # El modelo ya no existe (o no para esta clave): al siguiente.

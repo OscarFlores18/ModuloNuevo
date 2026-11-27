@@ -332,3 +332,58 @@ def test_endpoint_prepara_el_zip_sin_abrir_xubio(entorno, monkeypatch):
     datos = r.json()
     assert datos["listo"] and datos["avisos"] == []
     assert datos["zip"]["nombre"].endswith(".zip") and base64.b64decode(datos["zip"]["contenido"])[:2] == b"PK"
+
+
+# --- Ítems: cantidad × precio = importe ----------------------------------------------
+
+
+def test_item_cuya_cantidad_por_precio_no_da_el_importe_se_avisa():
+    """Caso visto probando: 150 × 279,99 = 41.998,50 pero el importe decía 41.999,95, y
+    como la suma de los ítems daba el neto, la pantalla decía «Todo cuadra»."""
+    items = [a_excel.Item(descripcion="Gaseosa", cantidad=120, precio=349.79, alicuota=21, importe=41974.80),
+             a_excel.Item(descripcion="Agua", cantidad=150, precio=279.99, alicuota=21, importe=41999.95)]
+    v = a_excel._verificar_items(items, {"neto_gravado": 83974.75})
+    malos = [x for x in v if x.nivel != "ok"]
+    assert [x.campo for x in malos] == ["item_1"]
+    assert "41.998,50" in malos[0].mensaje
+
+
+def test_item_con_precio_con_iva_no_se_avisa():
+    """Tiques: el precio ya trae el IVA y el importe es sin IVA (o al revés)."""
+    items = [a_excel.Item(cantidad=2, precio=121.0, alicuota=21, importe=200.0),
+             a_excel.Item(cantidad=1, precio=100.0, alicuota=21, importe=121.0)]
+    assert not [x for x in a_excel._verificar_items(items, {}) if x.nivel != "ok"]
+
+
+def test_modelo_que_no_acepta_sin_pensar_se_pide_sin_esa_opcion(monkeypatch):
+    """Caso real: gemini-3.5-flash-lite responde 400 a thinking_budget=0 y cortaba la
+    cadena antes de probar los demás modelos."""
+    from google.genai import errors, types
+
+    monkeypatch.setattr(gemini, "modelo", lambda: "lite")
+    pedidos = []
+
+    class Modelos:
+        def generate_content(self, model, contents, config):
+            pedidos.append(config.thinking_config is not None)
+            if config.thinking_config is not None:
+                raise errors.ClientError(400, {"error": {"code": 400, "message": "Request contains an invalid argument.", "status": "INVALID_ARGUMENT"}})
+            return "respuesta"
+
+    class Cliente:
+        models = Modelos()
+
+    assert gemini._pedir(Cliente(), types, errors, b"jpeg") == "respuesta"
+    assert gemini._pedir(Cliente(), types, errors, b"jpeg") == "respuesta"
+    assert pedidos == [True, False, False]  # la segunda vez ya no prueba «sin pensar»
+
+
+def test_clave_invalida_corta_sin_probar_otros_modelos(monkeypatch):
+    from google.genai import errors, types
+
+    monkeypatch.setattr(gemini, "modelo", lambda: "primero")
+    mala = errors.ClientError(400, {"error": {"code": 400, "message": "API key not valid. Please pass a valid API key.", "status": "INVALID_ARGUMENT"}})
+    cliente, pedidos = _cliente_con_cupo([mala, "no debería llegar"])
+    with pytest.raises(errors.ClientError):
+        gemini._pedir(cliente, types, errors, b"jpeg")
+    assert pedidos == ["primero"]

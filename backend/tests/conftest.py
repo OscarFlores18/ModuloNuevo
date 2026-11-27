@@ -72,3 +72,10 @@ def _gemini_con_tres_modelos(monkeypatch):
     monkeypatch.setattr(gemini, "RESPALDOS", ("gemini-3.5-flash", "gemini-3.1-flash-lite"))
     monkeypatch.setattr(gemini, "RAPIDO", "gemini-3.1-flash-lite")
     monkeypatch.setattr(gemini, "_sin_cupo_hasta", {})
+
+
+@pytest.fixture(autouse=True)
+def _gemini_sin_memoria_de_opciones(monkeypatch):
+    from backend.app.extraccion import gemini
+
+    monkeypatch.setattr(gemini, "_sin_presupuesto_cero", set())

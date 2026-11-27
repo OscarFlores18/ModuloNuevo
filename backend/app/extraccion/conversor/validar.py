@@ -288,6 +288,31 @@ def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Veri
     return _verificar_items_sin_correccion(items, t)
 
 
+def _verificar_cantidad_por_precio(items: list[Item]) -> list[Verificacion]:
+    """Cada ítem: cantidad × precio = importe. Si casi da pero no (un dígito o un
+    redondeo de diferencia), uno de los tres está mal leído."""
+    v: list[Verificacion] = []
+    for i, x in enumerate(items):
+        if not (x.cantidad and x.precio and x.importe):
+            continue
+        bruto = x.cantidad * x.precio
+        diferencia = abs(bruto - x.importe)
+        # Lo que puede correr el redondeo del precio (medio centavo por unidad).
+        redondeo = abs(x.cantidad) * 0.005 + 0.01
+        # Solo una diferencia chica es un error de lectura: una grande suele ser el IVA,
+        # impuestos internos o un descuento incluidos en el precio (tiques), no un error.
+        if diferencia <= max(TOLERANCIA, redondeo) or diferencia > abs(x.importe) * 0.02:
+            continue
+        cant = f"{x.cantidad:g}".replace(".", ",")
+        v.append(Verificacion(
+            campo=f"item_{i}", nivel="aviso",
+            mensaje=f"Ítem {i + 1}: {cant} × {_fmt(x.precio)} da {_fmt(round(bruto, 2))} y el importe dice {_fmt(x.importe)}. Revisá cantidad, precio o importe.",
+            titulo=f"Ítem {i + 1}: cantidad × precio no da el importe",
+            datos=[f"{cant} × {_fmt(x.precio)} = {_fmt(round(bruto, 2))}", f"Importe {_fmt(x.importe)}"],
+        ))
+    return v
+
+
 def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
     if not items:
         return []
@@ -295,6 +320,7 @@ def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None
     sin_importe = [i + 1 for i, x in enumerate(items) if x.importe is None]
     if sin_importe:
         v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin importe: {', '.join(map(str, sin_importe))}.", titulo="Ítems sin importe", datos=[f"#{n}" for n in sin_importe[:6]]))
+    v += _verificar_cantidad_por_precio(items)
     suma = round(sum(x.importe or 0 for x in items), 2)
     # El detalle suma el neto (factura A) o el total (factura B/C, tiques).
     for campo in ("neto_gravado", "total"):
