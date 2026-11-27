@@ -30,7 +30,7 @@ import {
   registroDeHallazgos,
 } from './ventana-errores';
 import { CorreccionElegida, elegirParaAplicar, estaIncluida, excluidasDe, guardarPrecarga, incluir, paraAplicar } from './seleccion';
-import { GRUPOS, Tarea, guardarHechas, leerHechas, tareasDe } from './tareas';
+import { GRUPOS, Tarea, tareasDe } from './tareas';
 import { ClientesStore } from '../../core/services/clientes.store';
 import { ETIQUETA_ARCHIVO, Etapa, EstadoEtapa, INSIGNIA_CLIENTE, INSIGNIA_EJECUCION, Insignia, TEXTO_ETAPA, avanceDe, etapasDe } from './ejecucion.reglas';
 
@@ -146,7 +146,7 @@ export class EjecucionPantalla {
     const solo = this.filtroCliente();
     return solo ? this.tareas().filter((t) => t.cliente === solo) : this.tareas();
   });
-  protected readonly pendientesVista = computed(() => this.tareasVista().filter((t) => !this.estaHecha(t)).length);
+  protected readonly pendientesVista = computed(() => this.tareasVista().length);
 
   /** Terminado y con algo para hacer o ya corregido: hay pestañas. */
   protected readonly hayTareas = computed(() => !this.activa() && (this.tareas().length > 0 || this.corregidos().length > 0));
@@ -160,7 +160,7 @@ export class EjecucionPantalla {
   }
 
   protected pendientesDe(cliente: string): number {
-    return this.tareas().filter((t) => t.cliente === cliente && !this.estaHecha(t)).length;
+    return this.tareas().filter((t) => t.cliente === cliente).length;
   }
 
   /** El cliente que se está procesando ahora (mientras corre). */
@@ -204,24 +204,14 @@ export class EjecucionPantalla {
 
   /** Los hallazgos y, si la hoja del Excel tiene faltantes sin hallazgo, uno armado desde la hoja. */
   protected readonly tareas = computed(() => (this.activa() ? [] : tareasDe([...(this.ej()?.advertencias ?? []), ...this.faltantesSoloEnHoja()])));
-  /** Tildadas por el usuario (se guardan en este navegador, por control). */
-  protected readonly hechas = signal<ReadonlySet<string>>(new Set());
-  protected readonly pendientes = computed(() => this.tareas().filter((t) => !this.estaHecha(t)).length);
+  /** Las tareas no se tildan a mano: desaparecen cuando el control vuelve a correr y ya no aparecen. */
+  protected readonly pendientes = computed(() => this.tareas().length);
   protected readonly gruposTareas = computed(() => {
     const visibles = this.tareasVista();
     return GRUPOS.map((g) => ({ ...g, tareas: visibles.filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length);
   });
   /** Para el filtro: los clientes que tienen tareas. */
   protected readonly clientesConTareas = computed(() => [...new Set(this.tareas().map((t) => t.cliente))]);
-
-  /**
-   * Hecha a mano (tilde). Las correcciones (letra, tipo, importe, CUIT) no: su checkbox
-   * las elige para «Aplicar cambios» y desaparecen recién cuando el re-chequeo las da por buenas.
-   * Si preferís corregirlas a mano en Xubio, se hacen como cualquier otra tarea.
-   */
-  protected estaHecha(t: Tarea): boolean {
-    return !this.cambiosDe(t.advertencia).length && this.hechas().has(t.clave);
-  }
 
   // --- Aplicar cambios: solo si se pide (elegir con checkbox, corregir con el botón) --
 
@@ -310,16 +300,6 @@ export class EjecucionPantalla {
     contar: () => this.seleccionados().length,
     alAplicar: () => void this.aplicarCambios(),
   };
-
-  protected alternarHecha(t: Tarea): void {
-    const id = this.ej()?.id;
-    if (!id) return;
-    const nuevas = new Set(this.hechas());
-    if (nuevas.has(t.clave)) nuevas.delete(t.clave);
-    else nuevas.add(t.clave);
-    this.hechas.set(nuevas);
-    guardarHechas(id, nuevas);
-  }
 
   /** El destino del botón de la tarea; el empleado no ve los que arman un control nuevo. */
   protected destinoVisible(t: Tarea): Tarea['destino'] {
@@ -724,12 +704,6 @@ export class EjecucionPantalla {
         this.hojas.set({ sinLibro: new Map(), sinArca: new Map() });
         if (id) void this.cargarHojas(id);
       });
-    });
-
-    // Las tildes de cada control se recuperan al abrirlo.
-    effect(() => {
-      const id = this.ej()?.id;
-      untracked(() => this.hechas.set(id ? leerHechas(id) : new Set()));
     });
 
     // Las liquidaciones bancarias (ya están en Xubio en el extracto) arrancan destildadas.

@@ -131,23 +131,3 @@ export function tareasDe(advertencias: readonly Advertencia[]): Tarea[] {
   // Las partidas de ARCA no encontradas en el Libro IVA van siempre arriba (grupo «Prioridad»).
   return tareas.sort((x, y) => orden[x.grupo] - orden[y.grupo]);
 }
-
-// --- Tildadas: quedan guardadas en este navegador, por control -----------------------
-
-const PREFIJO = 'cf-tareas-hechas:';
-
-export function leerHechas(ejecucion: string): Set<string> {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(PREFIJO + ejecucion) ?? '[]') as string[]);
-  } catch {
-    return new Set();
-  }
-}
-
-export function guardarHechas(ejecucion: string, hechas: ReadonlySet<string>): void {
-  try {
-    localStorage.setItem(PREFIJO + ejecucion, JSON.stringify([...hechas]));
-  } catch {
-    // Sin localStorage las tildes duran hasta recargar la página.
-  }
-}

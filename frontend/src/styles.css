@@ -2366,21 +2366,6 @@ details[open] > summary .ej-chevron {
   gap: 12px 16px;
 }
 
-.tr-avance {
-  width: 160px;
-  height: 8px;
-  border-radius: 999px;
-  background: var(--color-borde);
-  overflow: hidden;
-}
-
-.tr-avance > div {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--color-ok);
-  transition: width 0.25s;
-}
-
 .tr-grupo {
   margin-top: 16px;
 }
@@ -2463,6 +2448,9 @@ details[open] > summary .ej-chevron {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+label.tr-texto {
   cursor: pointer;
 }
 
@@ -2487,14 +2475,6 @@ details[open] > summary .ej-chevron {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-}
-
-.tr-hecha {
-  opacity: 0.55;
-}
-
-.tr-hecha .tr-orden {
-  text-decoration: line-through;
 }
 
 /* Aplicar cambios: elegido (todavía no hecho), en curso y confirmado por el servidor */
@@ -2579,10 +2559,6 @@ details[open] > summary .ej-chevron {
     width: 100%;
     justify-content: flex-start;
     padding-left: 32px;
-  }
-
-  .tr-avance {
-    width: 100%;
   }
 }
 
@@ -2795,7 +2771,6 @@ details[open] > summary .ej-chevron {
 }
 
 .tr-falt-tabla {
-  margin-left: 32px;
   border: 1px solid var(--color-borde);
   border-radius: 8px;
   overflow: hidden;

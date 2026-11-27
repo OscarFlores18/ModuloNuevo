@@ -133,28 +133,19 @@
     <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" role="tabpanel" aria-labelledby="tab-tareas" id="t-tareas" [attr.aria-busy]="aplicando()">
       <header class="tr-cab">
         <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientesVista() ? 'Hacelas en este orden' : corregidos().length ? 'Todo hecho · Excel actualizado' : 'Todo hecho' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Las tildes quedan guardadas en este navegador." /></h2>
+          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientesVista() ? 'Hacelas en este orden' : 'Todo hecho · Excel actualizado' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Cada tarea desaparece cuando el próximo control la da por buena." /></h2>
           <p class="mf-sub m-0 mt-0.5" aria-live="polite">
             @if (aplicando()) {
               <span class="tr-aplicando"><span class="ej-spinner" aria-hidden="true"></span> Aplicando cambios y re-chequeando el control...</span>
             } @else if (nSel) {
               <strong class="tr-pendiente-aplicar">{{ nSel }} {{ nSel === 1 ? 'cambio seleccionado listo' : 'cambios seleccionados listos' }} para aplicar</strong>
             } @else if (!pendientesVista()) {
-              {{ corregidos().length ? 'Los cambios aplicados quedaron en el mismo Excel y el control se re-chequeó.' : filtroCliente() ? 'Tildaste todas las tareas de ' + filtroCliente() + '.' : 'Tildaste todas las tareas de este control.' }}
+              Los cambios aplicados quedaron en el mismo Excel y el control se re-chequeó.
             } @else {
-              @if (!perspectiva.canEdit()) {
-                Quedan {{ pendientesVista() }} de {{ tareasVista().length }} por hacer.
-              } @else {
-                Tildá cada una cuando la termines · quedan {{ pendientesVista() }} de {{ tareasVista().length }}.
-              }
+              {{ pendientesVista() === 1 ? '1 tarea' : pendientesVista() + ' tareas' }}, de la más urgente a la que puede esperar.
             }
           </p>
         </div>
-        @if (tareasVista().length) {
-          <div class="tr-avance" role="progressbar" [attr.aria-valuenow]="tareasVista().length - pendientesVista()" aria-valuemin="0" [attr.aria-valuemax]="tareasVista().length" aria-label="Tareas hechas">
-            <div [style.width.%]="((tareasVista().length - pendientesVista()) / tareasVista().length) * 100"></div>
-          </div>
-        }
         @if (cambios().length || aplicando()) {
           <button type="button" class="mf-btn mf-btn-ok inline-flex items-center gap-1.5" (click)="aplicarCambios()"
             [disabled]="!perspectiva.canEdit() || !nSel || aplicando()" [attr.aria-busy]="aplicando()"
@@ -200,20 +191,18 @@
           <h3 class="tr-grupo-titulo"><span class="tr-grupo-num">{{ ng + 1 }}</span>{{ g.titulo }} <small>{{ g.ayuda }}</small></h3>
           <ul class="tr-lista">
             @for (tarea of g.tareas; track tarea.clave; let i = $index) {
-              @let hecha = estaHecha(tarea);
               @let nCambios = cambiosDe(tarea.advertencia).length;
               @let idCheck = 'tr-' + g.id + '-' + i;
               @let faltantes = faltantesDe(tarea.advertencia);
               @let nTildadas = tildadas(tarea.advertencia, faltantes);
               @if (tarea.advertencia.tipo === 'faltante_en_xubio' && faltantes.length) {
                 <!-- Faltantes en IVA: la lista de comprobantes a la vista y «Subir a Xubio» primero -->
-                <li class="tr-tarea tr-faltantes" [class.tr-hecha]="hecha">
+                <li class="tr-tarea tr-faltantes">
                   <div class="tr-falt-cab">
-                    <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()" (change)="alternarHecha(tarea)" />
-                    <label class="tr-texto" [for]="idCheck">
+                    <div class="tr-texto">
                       <span class="tr-orden">Faltantes en IVA {{ tarea.operacion }} <span class="tr-falt-num">({{ faltantes.length }} {{ faltantes.length === 1 ? 'comprobante' : 'comprobantes' }})</span></span>
                       <span class="tr-meta"><strong>{{ tarea.cliente }}</strong> · {{ nTildadas }} de {{ faltantes.length }} {{ nTildadas === 1 ? 'tildado' : 'tildados' }} para subir</span>
-                    </label>
+                    </div>
                     <span class="tr-acciones">
                       @if (puedeSubir(tarea.advertencia)) {
                         <button type="button" class="mf-btn mf-btn-ok" (click)="subirAXubio(tarea.advertencia)"
@@ -272,12 +261,11 @@
                 </span>
               </li>
               } @else {
-              <li class="tr-tarea" [class.tr-hecha]="hecha">
-                <input type="checkbox" class="tr-check" [id]="idCheck" [checked]="hecha" [disabled]="!perspectiva.canEdit()" [attr.title]="perspectiva.motivoBloqueo()" (change)="alternarHecha(tarea)" />
-                <label class="tr-texto" [for]="idCheck">
+              <li class="tr-tarea">
+                <div class="tr-texto">
                   <span class="tr-orden">{{ tarea.orden }}</span>
                   <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ tarea.porque }}</span>
-                </label>
+                </div>
                 <span class="tr-acciones">
                   @if (tarea.advertencia.comprobantes.length) {
                     <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verDetalle(tarea)">Ver comprobantes</button>
