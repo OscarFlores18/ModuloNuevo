@@ -12,7 +12,8 @@ import { VisorImagen } from './visor-imagen';
   imports: [VisorImagen],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styles: `
-    :host { display: block; position: sticky; top: 12px; }
+    :host { display: block; }
+    @media (min-width: 901px) { :host { position: sticky; top: 12px; } }
     /* Un <dialog>: abierto en el lugar; en pantalla completa, modal (por encima del encabezado y de todo). */
     .va { position: static; margin: 0; padding: 0; width: 100%; max-width: none; max-height: none; color: inherit; border: 1px solid var(--color-borde); border-radius: 10px; background: #f1f5f9; overflow: hidden; }
     .va[open] { display: flex; flex-direction: column; }
@@ -24,6 +25,7 @@ import { VisorImagen } from './visor-imagen';
     .va-barra .pct { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; color: #475569; }
     .va-barra .sep { flex: 1; }
     .va-foto { display: block; height: calc(100vh - 180px); min-height: 320px; }
+    @media (max-width: 900px) { .va-foto { height: 60vh; } }
     .va:modal .va-foto { height: auto; flex: 1; }
     iframe { display: block; width: 100%; height: calc(100vh - 200px); border: 0; }
     .va:modal iframe { flex: 1; height: auto; }

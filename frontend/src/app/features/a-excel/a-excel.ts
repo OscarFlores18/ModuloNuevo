@@ -95,7 +95,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     @media (max-width: 900px) { .ax-grilla { grid-template-columns: minmax(0, 1fr); } }
     .ax-ver-cab { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 10px; }
     .ax-ver-cab h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
-    .ax-op { flex: 1 1 320px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 12px; border: 1px solid var(--ax-borde); border-radius: 8px; background: var(--ax-fondo); font-size: .88rem; }
+    .ax-op { flex: 1 1 400px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 12px; border: 1px solid var(--ax-borde); border-radius: 8px; background: var(--ax-fondo); font-size: .88rem; }
     .ax-op.aviso { border-color: #fcd34d; background: #fffbeb; }
     .ax-op-tipo { font-weight: 700; }
     .ax-op-frase { flex: 1 1 240px; color: #334155; }
@@ -112,7 +112,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .ax-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 12px; padding: 10px 12px 12px; }
     .ax-campos label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
     .ax-partes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    .ax-parte { min-width: 0; margin: 0; padding: 10px 12px 12px; border: 0; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px 10px; }
+    .ax-parte { min-width: 0; margin: 0; padding: 10px 12px 12px; border: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
     .ax-parte + .ax-parte { border-left: 1px solid #f1f5f9; }
     .ax-parte legend { float: left; grid-column: 1 / -1; padding: 0; font-size: .8rem; font-weight: 600; color: var(--ax-texto); }
     .ax-parte label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
@@ -124,12 +124,13 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .ax-xubio-res { margin-top: 10px; padding: 8px 10px; border-left: 3px solid #22c55e; background: var(--ax-fondo); border-radius: 0 6px 6px 0; font-size: .84rem; color: var(--ax-ok); }
     .ax-xubio-res.aviso { border-left-color: #f59e0b; color: var(--ax-aviso); }
     .ax-xubio-res p { margin: 0; } .ax-xubio-res p + p { margin-top: 3px; }
+    .ax-detalle-ancho { margin-top: 2px; }
     .ax-renglon { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 12px; font-size: .86rem; }
     .ax-renglon + .ax-renglon { border-top: 1px solid #f1f5f9; }
     .ax-renglon.ax-nuevo-grupo { border-top: 1px solid var(--ax-borde); }
     .ax-renglon .num { font-variant-numeric: tabular-nums; }
     .ax-renglon .ax-in { flex: 0 1 180px; }
-    .ax-fila-imp { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(90px, 1fr) minmax(90px, 1fr) 30px; gap: 2px 8px; align-items: center; padding: 5px 12px; }
+    .ax-fila-imp { display: grid; grid-template-columns: minmax(0, 2fr) minmax(84px, 1fr) minmax(84px, 1fr) 30px; gap: 2px 8px; align-items: center; padding: 5px 12px; }
     .ax-fila-imp + .ax-fila-imp { border-top: 1px solid #f1f5f9; }
     .ax-fila-imp .num { text-align: right; font-variant-numeric: tabular-nums; }
     .ax-cols { padding-bottom: 0; font-size: .75rem; color: var(--ax-tenue); }
@@ -334,7 +335,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                 @for (v of aMirar(); track $index) {
                   @let c = corta(v);
                   <li [class]="v.nivel">
-                    <p [title]="v.mensaje">{{ c.titulo || c.mensaje }}@if (v.nivel === 'error' && c.datos?.length) { · {{ c.datos!.join(' · ') }} }</p>
+                    <p [title]="v.mensaje">{{ c.titulo || c.mensaje }}@if (c.datos?.length) { · {{ c.datos!.join(' · ') }} }</p>
                     @for (o of c.opciones ?? []; track o) {
                       <button type="button" class="ax-mas" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">{{ o }}</button>
                     }
@@ -429,7 +430,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                     <div class="ax-fila-imp" role="group" [attr.aria-label]="t.descripcion || 'Tributo ' + (i + 1)">
                       <div class="ax-concepto">
                         <input class="ax-in ax-cod" [attr.aria-label]="'Código del tributo ' + (i + 1)" placeholder="Cód." [value]="t.codigo" (change)="cambiarTributo(i, 'codigo', $any($event.target).value)" />
-                        <input class="ax-in" [attr.aria-label]="'Descripción del tributo ' + (i + 1)" placeholder="Ej.: Percepción IIBB Bs. As." [value]="t.descripcion" (change)="cambiarTributo(i, 'descripcion', $any($event.target).value)" />
+                        <input class="ax-in" [attr.aria-label]="'Descripción del tributo ' + (i + 1)" placeholder="Ej.: Percepción IIBB Bs. As." [attr.title]="t.descripcion || null" [value]="t.descripcion" (change)="cambiarTributo(i, 'descripcion', $any($event.target).value)" />
                       </div>
                       <input class="ax-in num" inputmode="decimal" [attr.aria-label]="'Base imponible de ' + (t.descripcion || 'el tributo ' + (i + 1))" [value]="texto(t.base)" (change)="cambiarTributo(i, 'base', $any($event.target).value)" />
                       <input class="ax-in num" inputmode="decimal" [class]="estado === 'ok' ? '' : (estado ?? '')" [attr.aria-label]="'Importe de ' + (t.descripcion || 'el tributo ' + (i + 1))" [attr.title]="explicar('tributo_' + i, estado)" [value]="texto(t.importe)" (change)="cambiarTributo(i, 'importe', $any($event.target).value)" />
@@ -469,40 +470,6 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                   </p>
                 </section>
 
-                <section class="ax-bloque" aria-labelledby="ax-det-t">
-                  <header><h3 id="ax-det-t">Detalle</h3><span>{{ l.items.length }} {{ l.items.length === 1 ? 'ítem' : 'ítems' }}</span></header>
-                  <div class="ax-caja">
-                    <table class="ax-tabla" aria-labelledby="ax-det-t">
-                      <thead><tr><th>Código</th><th>Descripción</th><th>Producto</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">IVA %</th><th class="num">Importe</th><th><span class="sr-only">Quitar</span></th></tr></thead>
-                      <tbody>
-                        @for (x of l.items; track $index; let i = $index) {
-                          <tr>
-                            <td style="width: 80px"><input class="ax-in" [value]="x.codigo" (change)="cambiarItem(i, 'codigo', $any($event.target).value)" aria-label="Código" /></td>
-                            <td><input class="ax-in" [class.aviso]="!!x.leido && x.leido !== x.descripcion" [attr.title]="x.leido && x.leido !== x.descripcion ? 'Corregido solo: decía «' + x.leido + '»' : null" [value]="x.descripcion" (change)="cambiarItem(i, 'descripcion', $any($event.target).value)" aria-label="Descripción" /></td>
-                            <td style="width: 140px"><input class="ax-in" [value]="x.producto ?? ''" [attr.list]="'ax-productos'" (change)="cambiarItem(i, 'producto', $any($event.target).value)" aria-label="Producto" /></td>
-                            <td style="width: 64px"><input class="ax-in num" [value]="texto(x.cantidad)" (change)="cambiarItem(i, 'cantidad', $any($event.target).value)" aria-label="Cantidad" /></td>
-                            <td style="width: 100px"><input class="ax-in num" [value]="texto(x.precio)" (change)="cambiarItem(i, 'precio', $any($event.target).value)" aria-label="Precio" /></td>
-                            <td style="width: 60px"><input class="ax-in num" [value]="x.alicuota ?? ''" (change)="cambiarItem(i, 'alicuota', $any($event.target).value)" aria-label="IVA %" /></td>
-                            <td style="width: 110px"><input class="ax-in num" [class.aviso]="importeCorregido(x)" [attr.title]="importeCorregido(x) ? 'Corregido solo: se leyó ' + texto(x.importe_leido) : null" [value]="texto(x.importe)" (change)="cambiarItem(i, 'importe', $any($event.target).value)" aria-label="Importe" /></td>
-                            <td style="width: 34px">
-                              <button type="button" class="ax-quitar" (click)="sacarItem(i)" aria-label="Sacar el ítem">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                              </button>
-                            </td>
-                          </tr>
-                        }
-                      </tbody>
-                      <tfoot>
-                        <tr>
-                          <td colspan="3"><button type="button" class="ax-mas" (click)="agregarItem()">+ Ítem</button></td>
-                          <td colspan="3" class="num">Suma del detalle</td>
-                          <td class="num">{{ texto(suma()) }}</td><td></td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                  <datalist id="ax-productos">@for (p of productos; track p) { <option [value]="p"></option> }</datalist>
-                </section>
               } @else {
                 @for (h of l.hojas; track h.nombre) {
                   <section class="ax-bloque">
@@ -530,6 +497,44 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
               }
             </div>
           </div>
+          @if (l.tipo === 'comprobante') {
+            <div class="ax-detalle-ancho">
+                <section class="ax-bloque" aria-labelledby="ax-det-t">
+                  <header><h3 id="ax-det-t">Detalle</h3><span>{{ l.items.length }} {{ l.items.length === 1 ? 'ítem' : 'ítems' }}</span></header>
+                  <div class="ax-caja">
+                    <table class="ax-tabla" aria-labelledby="ax-det-t">
+                      <thead><tr><th>Código</th><th>Descripción</th><th>Producto</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">IVA %</th><th class="num">Importe</th><th><span class="sr-only">Quitar</span></th></tr></thead>
+                      <tbody>
+                        @for (x of l.items; track $index; let i = $index) {
+                          <tr>
+                            <td style="width: 80px"><input class="ax-in" [value]="x.codigo" (change)="cambiarItem(i, 'codigo', $any($event.target).value)" aria-label="Código" /></td>
+                            <td><input class="ax-in" [class.aviso]="!!x.leido && x.leido !== x.descripcion" [attr.title]="x.leido && x.leido !== x.descripcion ? 'Corregido solo: decía «' + x.leido + '»' : null" [value]="x.descripcion" (change)="cambiarItem(i, 'descripcion', $any($event.target).value)" aria-label="Descripción" /></td>
+                            <td style="width: 210px"><input class="ax-in" [attr.title]="x.producto || null" [value]="x.producto ?? ''" [attr.list]="'ax-productos'" (change)="cambiarItem(i, 'producto', $any($event.target).value)" aria-label="Producto" /></td>
+                            <td style="width: 64px"><input class="ax-in num" [value]="cantidadTexto(x.cantidad)" (change)="cambiarItem(i, 'cantidad', $any($event.target).value)" aria-label="Cantidad" /></td>
+                            <td style="width: 100px"><input class="ax-in num" [value]="texto(x.precio)" (change)="cambiarItem(i, 'precio', $any($event.target).value)" aria-label="Precio" /></td>
+                            <td style="width: 60px"><input class="ax-in num" [value]="x.alicuota ?? ''" (change)="cambiarItem(i, 'alicuota', $any($event.target).value)" aria-label="IVA %" /></td>
+                            <td style="width: 110px"><input class="ax-in num" [class.aviso]="importeCorregido(x) || nivel('item_' + i) === 'aviso'" [attr.title]="importeCorregido(x) ? 'Corregido solo: se leyó ' + texto(x.importe_leido) : explicar('item_' + i, estadoCampo('item_' + i, x.importe))" [value]="texto(x.importe)" (change)="cambiarItem(i, 'importe', $any($event.target).value)" aria-label="Importe" /></td>
+                            <td style="width: 34px">
+                              <button type="button" class="ax-quitar" (click)="sacarItem(i)" aria-label="Sacar el ítem">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                              </button>
+                            </td>
+                          </tr>
+                        }
+                      </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colspan="3"><button type="button" class="ax-mas" (click)="agregarItem()">+ Ítem</button></td>
+                          <td colspan="3" class="num">Suma del detalle</td>
+                          <td class="num">{{ texto(suma()) }}</td><td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                  <datalist id="ax-productos">@for (p of productos; track p) { <option [value]="p"></option> }</datalist>
+                </section>
+            </div>
+          }
         </section>
       }
     }
@@ -639,6 +644,10 @@ export class PasarAExcel implements OnDestroy {
     return l.metodo === 'pdf' ? 'texto del PDF' : '';
   }
   protected readonly texto = aTexto;
+  /** 120 → «120», 1.5 → «1,5» (sin decimales de más). */
+  protected cantidadTexto(n: number | null | undefined): string {
+    return n === null || n === undefined ? '' : n.toLocaleString('es-AR', { maximumFractionDigits: 3 });
+  }
 
   // --- Para el estudio: de qué empresa es y si es compra o venta ---
   /** Los clientes del estudio con sus CUIT; vacío si Clientes está bloqueado o no hay. */

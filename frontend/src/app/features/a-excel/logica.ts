@@ -20,7 +20,7 @@ export const CAMPOS_ENCABEZADO: { id: string; etiqueta: string; ancho: number; a
   { id: 'receptor', etiqueta: 'Receptor', ancho: 2 },
   { id: 'receptor_cuit', etiqueta: 'CUIT del receptor', ancho: 1 },
   { id: 'tipo', etiqueta: 'Tipo de comprobante', ancho: 2 },
-  { id: 'numero', etiqueta: 'Número (PV-Nro)', ancho: 2, ayuda: '00001-00000001' },
+  { id: 'numero', etiqueta: 'Número', ancho: 2, ayuda: '00001-00000001' },
   { id: 'fecha', etiqueta: 'Fecha', ancho: 2, ayuda: 'DD/MM/AAAA' },
 ];
 
