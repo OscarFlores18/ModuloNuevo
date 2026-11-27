@@ -1,9 +1,15 @@
 import { ChangeDetectionStrategy, Component, ElementRef, afterNextRender, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { DomSanitizer } from '@angular/platform-browser';
+import { VisorImagen } from './visor-imagen';
 
-/** El archivo original (foto o PDF) al lado de lo leído, con zoom y pantalla completa. */
+/**
+ * El archivo original (foto o PDF) al lado de lo leído, con zoom y pantalla completa.
+ * El PDF va con el visor del navegador; las fotos, con el visor de zoom (rueda hacia el
+ * mouse, arrastre y teclado: + − flechas 0 R).
+ */
 @Component({
   selector: 'app-vista-archivo',
+  imports: [VisorImagen],
   changeDetection: ChangeDetectionStrategy.OnPush,
   styles: `
     :host { display: block; position: sticky; top: 12px; }
@@ -17,39 +23,31 @@ import { DomSanitizer } from '@angular/platform-browser';
     .va-barra button:hover { background: #f1f5f9; }
     .va-barra .pct { min-width: 46px; text-align: center; font-variant-numeric: tabular-nums; color: #475569; }
     .va-barra .sep { flex: 1; }
-    .va-lienzo { overflow: auto; max-height: calc(100vh - 180px); cursor: zoom-in; }
-    .va:modal .va-lienzo { max-height: none; flex: 1; }
-    .va-lienzo.arrastrando { cursor: grabbing; }
-    .va-lienzo img { display: block; height: auto; max-width: none; user-select: none; }
-    .va-lienzo img.entera { width: auto !important; max-width: 100%; max-height: calc(100vh - 190px); margin: 0 auto; }
-    .va:modal .va-lienzo img.entera { max-height: calc(100vh - 90px); }
+    .va-foto { display: block; height: calc(100vh - 180px); min-height: 320px; }
+    .va:modal .va-foto { height: auto; flex: 1; }
     iframe { display: block; width: 100%; height: calc(100vh - 200px); border: 0; }
     .va:modal iframe { flex: 1; height: auto; }
   `,
   template: `
     <dialog #dlg class="va" [attr.aria-label]="'El archivo original: ' + nombre()" (close)="alCerrar()" (click)="fuera($event)">
       <div class="va-barra">
-        <button type="button" (click)="cambiar(-25)" [disabled]="zoom() <= 25" aria-label="Alejar">−</button>
-        <span class="pct" aria-live="polite">{{ zoom() }}%</span>
-        <button type="button" (click)="cambiar(25)" [disabled]="zoom() >= 400" aria-label="Acercar">+</button>
-        <button type="button" (click)="zoom.set(100)" title="La hoja entera a la vista">Ajustar</button>
+        @if (foto(); as f) {
+          <button type="button" (click)="f.alejar()" [disabled]="f.zoom() <= f.zoomMin" aria-label="Alejar" title="Alejar (−)">−</button>
+          <span class="pct" aria-live="polite">{{ f.porcentaje() }}</span>
+          <button type="button" (click)="f.acercar()" [disabled]="f.zoom() >= f.zoomMax" aria-label="Acercar" title="Acercar (+)">+</button>
+          <button type="button" (click)="f.restablecer()" title="La foto entera a la vista (0)">Ajustar</button>
+          <button type="button" (click)="f.rotar()" aria-label="Rotar 90 grados" title="Rotar 90° (R)">⟳ 90°</button>
+        } @else {
+          <button type="button" (click)="cambiar(-25)" [disabled]="zoom() <= 25" aria-label="Alejar">−</button>
+          <span class="pct" aria-live="polite">{{ zoom() }}%</span>
+          <button type="button" (click)="cambiar(25)" [disabled]="zoom() >= 400" aria-label="Acercar">+</button>
+          <button type="button" (click)="zoom.set(100)" title="La hoja entera a la vista">Ajustar</button>
+        }
         <span class="sep"></span>
         <button type="button" (click)="grande.set(!grande())" [attr.aria-pressed]="grande()">{{ grande() ? 'Cerrar' : 'Pantalla completa' }}</button>
       </div>
       @if (tipo() === 'imagen') {
-        <div
-          class="va-lienzo"
-          [class.arrastrando]="arrastre !== null"
-          (wheel)="rueda($event)"
-          (dblclick)="zoom.set(zoom() === 100 ? 200 : 100)"
-          (pointerdown)="empezar($event)"
-          (pointermove)="mover($event)"
-          (pointerup)="arrastre = null"
-          (pointerleave)="arrastre = null"
-          title="Doble clic o Ctrl + rueda para hacer zoom; arrastrá para moverte"
-        >
-          <img [src]="url()" [alt]="nombre()" [class.entera]="zoom() === 100" [style.width.%]="zoom()" draggable="false" />
-        </div>
+        <app-visor-imagen class="va-foto" [src]="url()" [alt]="nombre()" />
       } @else {
         <iframe [src]="pdf()" [title]="nombre()"></iframe>
       }
@@ -64,7 +62,7 @@ export class VistaArchivo {
 
   protected readonly zoom = signal(100);
   protected readonly grande = signal(false);
-  protected arrastre: { x: number; y: number; izq: number; arriba: number } | null = null;
+  protected readonly foto = viewChild(VisorImagen);
 
   /** El visor de PDF del navegador toma el zoom del «#zoom=». */
   protected readonly pdf = computed(() => this.sanitizer.bypassSecurityTrustResourceUrl(`${this.url()}#zoom=${this.zoom() === 100 ? 'page-width' : this.zoom()}`));
@@ -75,7 +73,7 @@ export class VistaArchivo {
       const grande = this.grande();
       if (this.dlg().nativeElement.isConnected) this.abrir(grande);
     });
-    // Archivo nuevo: vuelve al ancho del panel.
+    // Archivo nuevo: vuelve al ancho del panel (la foto la reinicia su visor).
     effect(() => {
       this.url();
       this.zoom.set(100);
@@ -108,24 +106,5 @@ export class VistaArchivo {
 
   protected cambiar(paso: number): void {
     this.zoom.update((z) => Math.min(400, Math.max(25, z + paso)));
-  }
-
-  protected rueda(ev: WheelEvent): void {
-    if (!ev.ctrlKey) return;
-    ev.preventDefault();
-    this.cambiar(ev.deltaY < 0 ? 25 : -25);
-  }
-
-  protected empezar(ev: PointerEvent): void {
-    const el = ev.currentTarget as HTMLElement;
-    if (this.zoom() <= 100) return;
-    this.arrastre = { x: ev.clientX, y: ev.clientY, izq: el.scrollLeft, arriba: el.scrollTop };
-  }
-
-  protected mover(ev: PointerEvent): void {
-    if (!this.arrastre) return;
-    const el = ev.currentTarget as HTMLElement;
-    el.scrollLeft = this.arrastre.izq - (ev.clientX - this.arrastre.x);
-    el.scrollTop = this.arrastre.arriba - (ev.clientY - this.arrastre.y);
   }
 }

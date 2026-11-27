@@ -118,3 +118,32 @@ def test_endpoints(cliente_demo):
     assert r.status_code == 200
     assert r.json()["nombre"] == "datos.xlsx"
     load_workbook(io.BytesIO(base64.b64decode(r.json()["contenido"])))
+
+
+def test_cuit_con_varios_ceros_leidos_como_ocho():
+    assert a_excel.cuits_cambiando_0_y_8("30789864813") == ["30709864013"]
+    assert "30709864013" in a_excel.cuits_parecidos("30789864813")
+    assert a_excel._mejor_parecido("30789864813", "") == "30709864013"
+
+
+def test_desglose_de_iva_mal_y_sin_los_items():
+    l = Lectura(
+        tipo="comprobante",
+        totales={"neto_gravado": 1100.0, "iva": None, "total": 1320.5},
+        iva_alicuotas=[
+            a_excel.AlicuotaIva(alicuota=21, base=1000, importe=201),  # 21% de 1000 es 210
+            a_excel.AlicuotaIva(alicuota=10.5, base=100, importe=10.5),
+        ],
+        items=[Item(descripcion="A", alicuota=21, importe=1000), Item(descripcion="B", alicuota=27, importe=100)],
+    )
+    v = a_excel.verificar(l)
+    fila = next(x for x in v if x.campo == "iva_0" and x.nivel == "error")
+    assert fila.sugerencia == 210.0
+    assert any(x.campo == "iva_1" and "ítems" in x.mensaje for x in v)  # no hay ítems al 10,5%
+    assert any(x.campo == "iva" and "27%" in x.mensaje for x in v)  # ítems al 27% sin fila
+
+
+def test_sin_desglose_se_arma_con_el_iva_leido():
+    l = _lectura_del_tique()
+    a_excel.completar_desglose(l)
+    assert len(l.iva_alicuotas) == 1 and l.iva_alicuotas[0].importe == 17634.71

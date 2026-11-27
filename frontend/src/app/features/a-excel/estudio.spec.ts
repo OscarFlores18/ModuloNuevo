@@ -1,5 +1,4 @@
-import { LecturaExcel } from '../../core/models';
-import { adaptar, aplicarContrapartes, cuitConGuiones, detectarEmpresa, mismoNombre, recordarContraparte, sinCae } from './logica';
+import { adaptar, cuitConGuiones, detectarEmpresa, mismoNombre, sinCae } from './logica';
 import { corta } from './verificaciones';
 
 const empresas = [
@@ -37,15 +36,17 @@ describe('Conversor: para el estudio', () => {
 describe('Conversor: productos de cada empresa', () => {
   beforeEach(() => localStorage.clear());
 
-  it('primero los que usó la empresa, después los de siempre de la operación', async () => {
-    const { productosSugeridos, recordarProducto } = await import('./logica');
-    expect(productosSugeridos('', 'Ventas')[0]).toBe('Servicios profesionales');
-    recordarProducto('Logys', 'Gastos de limpieza', 'Compras');
-    recordarProducto('Logys', 'Refrigerio', 'Compras');
+  it('primero los que usó la empresa, después todos los productos de Xubio', async () => {
+    const { PRODUCTOS_XUBIO, productosSugeridos, recordarProducto } = await import('./logica');
+    expect(productosSugeridos('', 'Ventas')).toEqual(PRODUCTOS_XUBIO);
+    expect(PRODUCTOS_XUBIO).toContain('Producto al 21% (PROD21)');
+    recordarProducto('Logys', 'Publicidad', 'Compras');
+    recordarProducto('Logys', 'COMBUSTIBLE', 'Compras');
     const p = productosSugeridos('Logys', 'Compras');
-    expect(p.slice(0, 2)).toEqual(['Refrigerio', 'Gastos de limpieza']);
-    expect(p.filter((x) => x === 'Refrigerio')).toHaveLength(1);
-    expect(productosSugeridos('Otra', 'Compras')[0]).toBe('Mercaderías');
+    expect(p.slice(0, 2)).toEqual(['COMBUSTIBLE', 'Publicidad']);
+    expect(p.filter((x) => x === 'COMBUSTIBLE')).toHaveLength(1);
+    expect(p).toHaveLength(PRODUCTOS_XUBIO.length);
+    expect(productosSugeridos('Otra', 'Compras')[0]).toBe(PRODUCTOS_XUBIO[0]);
   });
 });
 
@@ -77,42 +78,12 @@ describe('avisos cortos con un backend anterior', () => {
 
   it('las lecturas distintas quedan para elegir', () => {
     const a = v('Emisor: cada lectura dio algo distinto (FOC FUELS MARKETING $ / FOC FUELS MARKETING SA). Compará con la imagen.');
-    expect([a.titulo, a.opciones]).toEqual(['Emisor mal leído', ['FOC FUELS MARKETING $', 'FOC FUELS MARKETING SA']]);
+    expect([a.titulo, a.opciones]).toEqual(['Emisor: ¿cuál es?', ['FOC FUELS MARKETING $', 'FOC FUELS MARKETING SA']]);
   });
 
   it('lo verificado queda en pocas palabras', () => {
     expect(v('CUIT del emisor: el dígito verificador da bien.').titulo).toBe('CUIT del emisor');
     expect(v('Neto + IVA + otros tributos = total (108.417,98).').titulo).toBe('El total cierra');
     expect(v('El IVA es el 21% del neto gravado.').titulo).toBe('IVA 21%');
-  });
-});
-
-describe('proveedor corregido a mano', () => {
-  it('se recuerda por CUIT y por nombre leído, con el CUIT corregido', () => {
-    localStorage.clear();
-    // Primero corrige el nombre y después el CUIT.
-    recordarContraparte('FOC FUELS MARKETING SA', '30-11111111-1', 'FGC FUELS MARKETING SA', '30-11111111-1');
-    recordarContraparte('FGC FUELS MARKETING SA', '30-11111111-1', 'FGC FUELS MARKETING SA', '30-71234567-8');
-    const leida = { archivo: 'a', tipo: 'comprobante', metodo: 'ocr', items: [], totales: {}, hojas: [], texto: '', dudas: {}, avisos: [],
-      encabezado: { emisor: 'FOC FUELS MARKETING SA', emisor_cuit: '30111111111' }, verificaciones: [] } as unknown as LecturaExcel;
-    const l = aplicarContrapartes(leida);
-    expect([l.encabezado['emisor'], l.encabezado['emisor_cuit']]).toEqual(['FGC FUELS MARKETING SA', '30712345678']);
-    expect(l.corregidos?.['emisor']).toBe('FOC FUELS MARKETING SA');
-    expect(l.verificaciones[0].nivel).toBe('aviso');
-  });
-});
-
-describe('emisor y receptor son clientes del estudio', () => {
-  const dos = [{ nombre: 'Piccinini', cuits: ['30710809883'] }, { nombre: 'Fiscales San Martin', cuits: ['30717538826'] }];
-  const e = { emisor: 'PICCININI y ASOCIADOS S.A.', emisor_cuit: '30710809883', receptor: 'FISCALES SAN MARTIN S.A.', receptor_cuit: '30717538826' };
-
-  it('el nombre del archivo dice venta: es venta del emisor', () => {
-    const f = detectarEmpresa(e, dos, { archivo: 'Xubio - Comprobantes de Venta.pdf' });
-    expect([f?.empresa, f?.operacion, f?.ambigua]).toEqual(['Piccinini', 'Ventas', true]);
-  });
-
-  it('sin pista en el archivo, manda la empresa con la que se trabaja', () => {
-    expect(detectarEmpresa(e, dos, { archivo: 'factura.pdf', trabajo: 'Piccinini' })?.operacion).toBe('Ventas');
-    expect(detectarEmpresa(e, dos, { archivo: 'factura.pdf', trabajo: 'Fiscales San Martin' })?.operacion).toBe('Compras');
   });
 });

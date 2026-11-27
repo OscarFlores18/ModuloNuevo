@@ -18,12 +18,15 @@ numpy==2.5.4
 # Comprobantes desde PDF, fotos, CSV y .xls (backend/app/extraccion).
 # El OCR usa Tesseract (programa aparte): build_app.ps1 lo mete en el instalador.
 xlrd==2.0.2
-xlwt==1.3.0
 pypdfium2==5.15.2
 pillow==13.0.0
 zxing-cpp==3.1.1
 pytesseract==0.3.13
+# Preprocesado de fotos y tiques térmicos antes de Tesseract (extraccion/tesseract.py).
+opencv-python-headless==5.1.0.95
 
 # Conversor De Facturas: las imágenes se leen con Gemini si hay GEMINI_API_KEY
-# (backend/app/extraccion/gemini.py); sin clave, con Tesseract.
+# (backend/app/extraccion/gemini.py); sin clave o si falla, con el OCR local.
 google-genai==3.6.1
+# Respaldo local opcional, más preciso que Tesseract, con Python 3.9–3.13
+# (paddlepaddle no tiene ruedas para 3.14): pip install paddleocr paddlepaddle

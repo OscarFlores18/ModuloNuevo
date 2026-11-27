@@ -23,6 +23,8 @@ dependencies = [
     "pytesseract>=0.3.10",
     # Conversor De Facturas: imágenes leídas con Gemini si hay GEMINI_API_KEY.
     "google-genai>=1.0.0",
+    # Preprocesado de imágenes antes del OCR local (extraccion/tesseract.py y paddle.py).
+    "opencv-python-headless>=4.10",
 ]
 
 [dependency-groups]

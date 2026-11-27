@@ -403,6 +403,21 @@ export interface ItemLeido {
   importe_leido?: number | null;
 }
 
+/** Una fila del desglose de IVA: alícuota (21, 10.5…), base imponible e IVA. */
+export interface AlicuotaIva {
+  alicuota: number | null;
+  base: number | null;
+  importe: number | null;
+}
+
+/** Una fila de «otros tributos»: percepción, impuesto interno, tasa… */
+export interface TributoLeido {
+  codigo: string;
+  descripcion: string;
+  base: number | null;
+  importe: number | null;
+}
+
 export interface HojaLeida {
   nombre: string;
   filas: (string | number | null)[][];
@@ -428,15 +443,21 @@ export interface LecturaExcel {
   tipo: 'comprobante' | 'tabla';
   /** «ia»: imagen leída con Gemini. */
   metodo: 'planilla' | 'pdf' | 'ocr' | 'ia';
+  /** Qué leyó la imagen: «gemini», «paddleocr_local», «tesseract_local» (con «qr+» si se usó el QR de ARCA). */
+  motor?: string;
+  /** Cuánto tardó la lectura de la imagen. */
+  duracion_ms?: number | null;
   encabezado: Record<string, string>;
   items: ItemLeido[];
   totales: Record<string, number | null>;
+  /** El IVA por alícuota; `totales.iva` es la suma de los importes. */
+  iva_alicuotas: AlicuotaIva[];
+  /** Otros tributos uno por uno; con filas, `totales.otros_tributos` es su suma. */
+  tributos: TributoLeido[];
   hojas: HojaLeida[];
   texto: string;
   /** Lo que cada pasada de OCR leyó distinto. */
   dudas: Record<string, string[]>;
-  /** Lo que se autocorrigió del encabezado: campo -> lo que se había leído. */
-  corregidos?: Record<string, string>;
   avisos: string[];
   verificaciones: Verificacion[];
   /** Solo si el archivo no se pudo leer. */

@@ -1,20 +1,31 @@
-import { Component, HostListener, OnDestroy, computed, effect, inject, signal } from '@angular/core';
+import { Component, HostListener, OnDestroy, computed, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { descargarBlob } from '../../core/descargar';
-import { ItemLeido, LecturaExcel, Verificacion, mensajeDeError } from '../../core/models';
+import { AlicuotaIva, ItemLeido, LecturaExcel, NivelVerificacion, TributoLeido, Verificacion, mensajeDeError } from '../../core/models';
 import { ApiService } from '../../core/services/api.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
-import { Extras, Factura } from './factura';
 import { VistaArchivo } from './vista-archivo';
-import { borrar, borrarTodo, conDemora, guardar, recuperar } from './guardado';
-import { Verificaciones } from './verificaciones';
+import { corta } from './verificaciones';
 import { ToastService } from '../../core/ui/toast';
 import {
-  ACEPTA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
-  cuitConGuiones, detectarEmpresa, empresaDeTrabajo, recordarEmpresaDeTrabajo, aplicarContrapartes, recordarContraparte, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
+  ACEPTA, ALICUOTAS_IVA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
+  cuitConGuiones, detectarEmpresa, empresaDeTrabajo, recordarEmpresaDeTrabajo, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
+  alicuotaLibre, conDesglose, conTributos, grupoTributo, nombreAlicuota, productosSugeridos, revisarDesglose,
 } from './logica';
+
+/** Los totales que salen de las filas de «Otros tributos». */
+const TRIBUTOS = ['impuestos_internos', 'percepcion_iibb', 'otros_tributos'];
+const COLUMNA_TRIBUTO: Record<string, string> = {
+  impuestos_internos: 'Impuestos internos',
+  percepcion_iibb: 'Percepción IIBB Bs. As.',
+  otros_tributos: 'Otros tributos',
+};
+const redondear2 = (n: number) => Math.round(n * 100) / 100;
+
+/** Lo que no puede quedar vacío en el encabezado y los importes. */
+const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha', 'total']);
 
 /**
  * «Conversor De Facturas» (antes «Pasar a Excel»): cualquier archivo (foto,
@@ -31,293 +42,246 @@ import {
  */
 @Component({
   selector: 'app-a-excel',
-  imports: [Encabezado, Alerta, Ayuda, Factura, VistaArchivo, Verificaciones],
+  imports: [Encabezado, Alerta, Ayuda, VistaArchivo],
   styles: `
-    :host { display: flex; flex-direction: column; gap: 14px; }
-    .zona { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 28px 16px; border: 2px dashed #cbd5e1; border-radius: 12px; background: #f8fafc; text-align: center; transition: border-color .15s, background .15s; }
-    .zona.encima { border-color: var(--color-acento); background: #eff6ff; }
-    .zona.con-archivos { align-items: stretch; justify-content: space-between; padding: 12px; gap: 12px; }
-    .fx-elegidos { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
-    .fx-elegidos li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--color-borde); border-radius: 8px; background: #fff; cursor: pointer; }
-    .fx-elegidos li.activo { border-color: var(--color-acento); background: #eff6ff; box-shadow: inset 3px 0 0 var(--color-acento); }
-    .fx-agregar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
-    .fx-agregar-mas, .fx-agregar-acciones { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-    .op { display: inline-block; min-width: 76px; padding: 0 8px; border-radius: 4px; font-size: .74rem; font-weight: 800; text-transform: uppercase; text-align: center; }
-    .op-factura { background: #e0f2fe; color: #075985; }
-    .op-tabla { background: #fef3c7; color: #92400e; }
-    .op-error { background: #fee2e2; color: #991b1b; }
-    .fx-cab-der { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; padding-bottom: 14px; border-bottom: 1px solid var(--color-borde); }
-    .fx-res-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 14px; font-size: 1rem; }
-    .fx-res-cab .op { padding: 3px 8px; min-width: 0; }
-    .fx-pasos { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
-    .fx-paso { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; }
-    .fx-num { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 999px; background: #eff6ff; color: var(--color-acento); font-weight: 800; font-size: .9rem; }
-    .fx-paso h3 { display: flex; align-items: center; gap: 4px; margin: 4px 0 8px; font-size: .98rem; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--color-texto, #0f172a); }
-    .fx-cargando { display: flex; align-items: center; gap: 10px; padding: 40px 0; justify-content: center; color: var(--color-tenue); font-weight: 600; }
-    .fx-subir { padding: 10px 18px; font-size: .95rem; }
-    .fx-estado { display: flex; flex-wrap: wrap; gap: 6px; }
-    .fx-estado span { padding: 4px 10px; border-radius: 999px; font-size: .82rem; font-weight: 700; }
-    .fx-estado .e-error { background: #fef2f2; color: #991b1b; }
-    .fx-estado .e-aviso { background: #fffbeb; color: #92400e; }
-    .fx-estado .e-ok { background: #f0fdf4; color: #166534; }
-    .fx-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--color-borde); }
-    .fx-link { border: 0; background: none; padding: 0; color: var(--color-tenue); font-size: .85rem; text-decoration: underline; cursor: pointer; }
-    .fx-link:hover { color: var(--color-acento); }
-    .ax-punto { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #16a34a; }
+    :host {
+      --ax-texto: #0f172a; --ax-tenue: #64748b; --ax-borde: #e2e8f0; --ax-borde-in: #cbd5e1; --ax-fondo: #f8fafc;
+      --ax-acento: #1d4ed8; --ax-error: #b91c1c; --ax-aviso: #b45309; --ax-ok: #15803d;
+      display: flex; flex-direction: column; gap: 14px; flex: 1 0 auto; color: var(--ax-texto);
+    }
+    /* Sin archivos */
+    .ax-inicio { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; max-width: 640px; margin: auto; padding: 40px 24px; background: #fff; border: 1px dashed var(--ax-borde-in); border-radius: 8px; text-align: center; cursor: pointer; }
+    .ax-inicio:hover, .ax-inicio.encima { border-color: var(--ax-acento); }
+    .ax-inicio-i { width: 28px; height: 28px; margin-bottom: 4px; color: var(--ax-tenue); }
+    .ax-inicio-t { font-size: 1rem; font-weight: 600; }
+    .ax-inicio-err { width: 100%; max-width: 640px; margin: 0 auto auto; }
+
+    /* Arriba: archivos y el elegido */
+    .ax-top { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; align-items: start; }
+    @media (max-width: 860px) { .ax-top { grid-template-columns: minmax(0, 1fr); } }
+    .ax-tarjeta { min-width: 0; padding: 14px 16px; background: #fff; border: 1px solid var(--ax-borde); border-radius: 8px; }
+    .ax-tarjeta.encima { border-color: var(--ax-acento); }
+    .ax-cab, .ax-barra { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .ax-cab { margin-bottom: 10px; }
+    .ax-cab h2, .ax-titulo { margin: 0; font-size: .95rem; font-weight: 600; }
+    .ax-titulo { display: flex; flex-direction: column; min-width: 0; }
+    .ax-meta { font-size: .8rem; font-weight: 400; color: var(--ax-tenue); }
+    .ax-lista { margin: 0; padding: 0; list-style: none; border: 1px solid var(--ax-borde); border-radius: 6px; }
+    .ax-lista li { display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; }
+    .ax-lista li + li { border-top: 1px solid var(--ax-borde); }
+    .ax-lista li.activo { background: var(--ax-fondo); box-shadow: inset 2px 0 0 var(--ax-acento); }
+    .ax-fila { flex: 1; min-width: 0; padding: 7px 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
+    .ax-nombre { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; font-weight: 600; }
+    .ax-x { flex: none; width: 28px; height: 28px; border: 0; border-radius: 4px; background: none; color: var(--ax-tenue); font-size: 1.1rem; line-height: 1; cursor: pointer; }
+    .ax-x:hover { background: var(--ax-fondo); color: var(--ax-error); }
+    .ax-leyendo { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; }
+    .ax-link { border: 0; background: none; padding: 0; color: var(--ax-acento); font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; }
+    .ax-link:hover { text-decoration: underline; }
+    .ax-limpiar { display: block; margin: 10px 0 0 auto; color: var(--ax-tenue); }
+    .ax-pend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 10px 0 0; font-size: .85rem; color: var(--ax-error); }
+    .ax-descargar { flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; }
+    .ax-inicio:focus-visible, .ax-fila:focus-visible, .ax-x:focus-visible, .ax-link:focus-visible, .ax-seg button:focus-visible, .ax-quitar:focus-visible, .ax-mas:focus-visible { outline: 2px solid var(--ax-acento); outline-offset: 2px; }
+    .ax-punto { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ax-borde-in); }
     .ax-punto.aviso { background: #f59e0b; } .ax-punto.error { background: #dc2626; }
+    .ax-empresa { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ax-borde); font-size: .85rem; }
+    .ax-empresa label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .ax-empresa select { width: auto; min-width: 220px; }
+    .ax-empresa p { flex-basis: 100%; margin: 0; color: var(--ax-tenue); }
+    .ax-empresa p.aviso { color: var(--ax-aviso); }
+
+    /* Abajo: el archivo y lo leído */
     .ax-grilla { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
     .ax-grilla.sin-vista { grid-template-columns: minmax(0, 1fr); }
     @media (max-width: 900px) { .ax-grilla { grid-template-columns: minmax(0, 1fr); } }
-    .ax-sub { margin: 16px 0 6px; font-size: .8rem; font-weight: 800; color: var(--color-tenue); text-transform: uppercase; letter-spacing: .03em; }
-    .ax-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 12px; }
-    .ax-campos label { display: flex; flex-direction: column; gap: 2px; font-size: .74rem; font-weight: 700; color: #64748b; }
-    .ax-in { width: 100%; min-width: 0; padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 6px; font: inherit; font-size: .85rem; background: #fff; }
-    .ax-in:focus { outline: 2px solid var(--color-acento); outline-offset: -1px; }
+    .ax-ver-cab { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 10px; }
+    .ax-ver-cab h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
+    .ax-seg { display: inline-flex; border: 1px solid var(--ax-borde-in); border-radius: 6px; overflow: hidden; }
+    .ax-seg button { border: 0; background: #fff; padding: 5px 14px; font: inherit; font-size: .85rem; font-weight: 600; color: var(--ax-tenue); cursor: pointer; }
+    .ax-seg button + button { border-left: 1px solid var(--ax-borde-in); }
+    .ax-seg button[aria-pressed="true"] { background: var(--ax-texto); color: #fff; }
+    .ax-seg button:disabled { cursor: not-allowed; opacity: .5; }
+    .ax-ver { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+    .ax-ver li { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 6px 10px; border-left: 3px solid var(--ax-borde-in); background: var(--ax-fondo); border-radius: 0 6px 6px 0; font-size: .84rem; line-height: 1.35; }
+    .ax-ver li.error { border-left-color: #dc2626; } .ax-ver li.aviso { border-left-color: #f59e0b; } .ax-ver li.ok { border-left-color: #22c55e; color: var(--ax-ok); }
+    .ax-ver li p { margin: 0; flex: 1 1 200px; }
+
+    /* Cada bloque: encabezado, importes, IVA, tributos, total, detalle */
+    .ax-bloque { margin-top: 14px; border: 1px solid var(--ax-borde); border-radius: 8px; background: #fff; overflow: hidden; }
+    .ax-bloque > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 8px 12px; border-bottom: 1px solid var(--ax-borde); }
+    .ax-bloque > header h3 { margin: 0; font-size: .875rem; font-weight: 600; }
+    .ax-bloque > header span { font-size: .78rem; color: var(--ax-tenue); }
+    .ax-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 12px; padding: 10px 12px 12px; }
+    .ax-campos label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
+    .ax-renglon { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 12px; font-size: .86rem; }
+    .ax-renglon + .ax-renglon { border-top: 1px solid #f1f5f9; }
+    .ax-renglon .ax-in { flex: 0 1 180px; }
+    .ax-fila-imp { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(90px, 1fr) minmax(90px, 1fr) 30px; gap: 2px 8px; align-items: center; padding: 5px 12px; }
+    .ax-fila-imp + .ax-fila-imp { border-top: 1px solid #f1f5f9; }
+    .ax-fila-imp .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ax-cols { padding-bottom: 0; font-size: .75rem; color: var(--ax-tenue); }
+    .ax-nota { grid-column: 1 / -1; margin: 0; font-size: .76rem; line-height: 1.3; color: var(--ax-tenue); }
+    .ax-nota.error { color: var(--ax-error); } .ax-nota.aviso { color: var(--ax-aviso); }
+    .ax-suma { border-top: 1px solid var(--ax-borde) !important; background: var(--ax-fondo); font-size: .86rem; font-weight: 600; }
+    .ax-suma .num { padding-right: 7px; }
+    .ax-concepto { display: flex; gap: 6px; min-width: 0; }
+    .ax-concepto .ax-cod { flex: 0 0 52px; text-align: center; }
+    @media (max-width: 560px) { .ax-fila-imp { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px; } .ax-fila-imp > :first-child { grid-column: 1 / -1; } .ax-cols { display: none; } }
+    .ax-vacio { margin: 0; padding: 10px 12px; font-size: .84rem; color: var(--ax-tenue); }
+    .ax-pie { padding: 8px 12px; border-top: 1px solid var(--ax-borde); }
+    .ax-mas { padding: 4px 10px; border: 1px solid var(--ax-borde-in); border-radius: 6px; background: #fff; color: var(--ax-texto); font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; }
+    .ax-mas:hover:not(:disabled) { background: var(--ax-fondo); }
+    .ax-mas:disabled { opacity: .5; cursor: not-allowed; }
+    .ax-quitar { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; }
+    .ax-quitar:hover { background: #fef2f2; color: var(--ax-error); }
+    .ax-quitar svg { width: 14px; height: 14px; }
+    .ax-total { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--ax-borde); background: var(--ax-fondo); font-weight: 600; }
+    .ax-total .ax-in { flex: 0 1 180px; font-weight: 600; }
+    .ax-cuadre-msj { margin: 0; padding: 6px 12px 8px; font-size: .8rem; color: var(--ax-tenue); background: var(--ax-fondo); }
+    .ax-cuadre-msj.ok { color: var(--ax-ok); } .ax-cuadre-msj.error { color: var(--ax-error); }
+
+    /* Campos */
+    .ax-in { width: 100%; min-width: 0; padding: 4px 7px; border: 1px solid var(--ax-borde-in); border-radius: 6px; font: inherit; font-size: .86rem; color: var(--ax-texto); background: #fff; }
+    .ax-in:focus { outline: 2px solid var(--ax-acento); outline-offset: -1px; }
     .ax-in.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ax-in.error { border-color: #dc2626; background: #fef2f2; }
-    .ax-in.aviso { border-color: #f59e0b; background: #fffbeb; }
-    .ax-in.ok { border-color: #86efac; }
-    .ax-caja { border: 1px solid var(--color-borde); border-radius: 10px; overflow-x: auto; background: #fff; }
-    .ax-tabla { width: 100%; border-collapse: collapse; font-size: .8rem; }
-    .ax-tabla th { text-align: left; font-size: .72rem; font-weight: 700; color: #64748b; padding: 6px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; white-space: nowrap; }
-    .ax-tabla td { padding: 3px 5px; border-bottom: 1px solid #f1f5f9; }
-    .ax-tabla tfoot td { font-weight: 700; padding: 6px; }
-    .ax-texto { white-space: pre-wrap; font-family: ui-monospace, monospace; font-size: .75rem; background: #f8fafc; padding: 10px; border-radius: 8px; max-height: 320px; overflow: auto; }
-    /* Para el estudio */
-    .fx-estudio { margin-top: 10px; padding: 10px 14px; border: 1px solid #c7d2fe; border-radius: 12px; background: #f8f9ff; }
-    .fx-estudio h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: .98rem; font-weight: 800; color: #312e81; }
-    .fx-est-fila { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
-    .fx-est-fila label { display: flex; flex-direction: column; gap: 3px; flex: 1 1 200px; font-size: .74rem; font-weight: 700; color: #64748b; }
-    .fx-seg { display: inline-flex; border: 1px solid #c7d2fe; border-radius: 8px; overflow: hidden; }
-    .fx-seg button { border: 0; background: #fff; padding: 6px 14px; font-weight: 700; font-size: .85rem; color: #475569; cursor: pointer; }
-    .fx-seg button + button { border-left: 1px solid #c7d2fe; }
-    .fx-seg button[aria-pressed="true"] { background: #4338ca; color: #fff; }
-    .fx-seg button:disabled { cursor: not-allowed; opacity: .55; }
-    .fx-detec { margin: 6px 0 0; padding: 7px 10px; border-radius: 8px; font-size: .84rem; line-height: 1.35; }
-    .fx-detec.ok { background: #f0fdf4; color: #166534; }
-    .fx-detec.aviso { background: #fffbeb; color: #92400e; }
-    .fx-mas { margin-top: 8px; font-size: .84rem; } .fx-mas summary { cursor: pointer; font-weight: 700; color: #4338ca; }
-    .fx-bloque { margin-top: 10px; padding-top: 10px; border-top: 1px dashed #c7d2fe; }
-    .fx-bloque-cab { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; }
-    .fx-bloque-cab strong { font-size: .9rem; }
-    .fx-chip { padding: 2px 9px; border-radius: 999px; font-size: .74rem; font-weight: 800; }
-    .fx-chip.gris { background: #f1f5f9; color: #475569; }
-    .fx-chip.pronto { background: #ede9fe; color: #5b21b6; }
-    .fx-arca { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: .84rem; color: #475569; }
-    .fx-arca ul { margin: 0; padding-left: 18px; }
-    .fx-opciones { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
-    .fx-opcion { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1.5px solid var(--color-borde); border-radius: 10px; background: #fff; text-align: left; cursor: pointer; font: inherit; }
-    .fx-opcion[aria-pressed="true"] { border-color: #4338ca; background: #eef2ff; box-shadow: inset 0 0 0 1px #4338ca; }
-    .fx-opcion:disabled { cursor: not-allowed; opacity: .55; }
-    .fx-opcion strong { font-size: .88rem; color: #1e1b4b; }
-    .fx-opcion span { font-size: .78rem; color: #64748b; line-height: 1.3; }
-    .fx-xubio-pie { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 10px; }
+    .ax-in.error { border-color: #dc2626; }
+    .ax-in.aviso { border-color: #f59e0b; }
+
+    /* Detalle y hojas */
+    .ax-caja { overflow-x: auto; }
+    .ax-tabla { width: 100%; border-collapse: collapse; font-size: .86rem; }
+    .ax-tabla th { text-align: left; font-size: .75rem; font-weight: 500; color: var(--ax-tenue); padding: 6px; border-bottom: 1px solid var(--ax-borde); }
+    .ax-tabla th.num, .ax-tabla td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .ax-tabla td { padding: 3px 4px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
+    .ax-tabla tfoot td { padding: 8px 6px; border-bottom: 0; border-top: 1px solid var(--ax-borde); background: var(--ax-fondo); font-weight: 600; }
+    .ax-mas-filas { margin: 0; padding: 6px 12px; font-size: .78rem; color: var(--ax-tenue); }
+    .ax-texto-leido { margin-top: 14px; font-size: .84rem; }
+    .ax-texto-leido summary { cursor: pointer; color: var(--ax-tenue); }
+    .ax-texto { margin-top: 8px; white-space: pre-wrap; font: .75rem ui-monospace, monospace; background: var(--ax-fondo); padding: 10px; border-radius: 6px; max-height: 320px; overflow: auto; }
   `,
   template: `
     <app-encabezado
       titulo="Conversor De Facturas"
-      bajada="Fotos, capturas, PDF, CSV o Excel viejo (.xls) a un Excel. Antes de armarlo te muestro lo que leí para que lo verifiques."
+      bajada="Subí fotos, PDF, CSV o Excel: los leo, los revisás y descargás el Excel."
     />
 
-    <!-- Izquierda: elegir los archivos. Derecha: el archivo elegido, paso a paso. Abajo: corregir lo leído -->
-    <div class="fx-grilla">
-      <section class="mf-panel" aria-labelledby="t-elegir" data-tour="ax-archivos">
-        <div class="fx-cab">
-          <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Se leen apenas los soltás. Las fotos y capturas las lee la IA (Gemini) y, si no está disponible, el OCR; de los PDF digitales se lee su texto; de CSV y planillas, las celdas. Una captura también la podés pegar con Ctrl+V." /></h2>
-          <p class="mf-sub m-0 mt-1">Facturas o tablas: fotos o capturas (JPG, PNG), PDF (digital o escaneado), CSV, XLS o XLSX. Hasta 20 por vez.</p>
-        </div>
+    <input #entrada type="file" multiple class="sr-only" tabindex="-1" aria-hidden="true" [attr.accept]="acepta" (change)="elegir($event)" />
 
-        <div class="fx-cuerpo">
-          <div
-            class="zona"
-            [class.con-archivos]="lecturas().length"
-            [class.encima]="encima()"
-            (dragover)="$event.preventDefault(); encima.set(true)"
-            (dragleave)="encima.set(false)"
-            (drop)="soltar($event)"
-          >
-            @if (lecturas().length) {
-              <ul class="fx-elegidos" aria-label="Archivos leídos">
-                @for (l of lecturas(); track l.archivo; let i = $index) {
-                  <li [class.activo]="i === indice()" (click)="indice.set(i)" [attr.aria-current]="i === indice() ? 'true' : null">
-                    <span [class]="'op ' + claseTipo(l)">{{ nombreTipo(l) }}</span>
-                    <span class="min-w-0 flex-1 text-left">
-                      <strong class="block truncate" [title]="l.archivo">{{ l.archivo }}</strong>
-                      <span class="mf-tenue block truncate text-sm">{{ resumen(l) }}</span>
-                    </span>
-                    <span class="ax-punto" [class.error]="l.error || errores(l)" [class.aviso]="!l.error && !errores(l) && avisos(l)" aria-hidden="true"></span>
-                    <button type="button" class="mf-icono-btn" (click)="quitar(i); $event.stopPropagation()" [attr.aria-label]="'Quitar ' + l.archivo" [disabled]="leyendo()">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" class="h-3.5 w-3.5" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                    </button>
-                  </li>
-                }
-              </ul>
-              <div class="fx-agregar">
-                <span class="fx-agregar-mas">
-                  @if (leyendo()) {
-                    <span class="inline-flex items-center gap-2 text-sm font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</span>
-                  } @else {
-                    <span class="mf-tenue text-sm">Arrastrá más acá o</span>
-                    <label class="mf-btn mf-btn-suave mf-btn-chico cursor-pointer">
-                      Agregar
-                      <input type="file" multiple class="sr-only" [attr.accept]="acepta" (change)="elegir($event)" />
-                    </label>
-                  }
-                </span>
-                <span class="fx-agregar-acciones">
-                  <button type="button" class="mf-btn mf-btn-suave" (click)="limpiar()" [disabled]="leyendo()">Sacar todos</button>
-                </span>
-              </div>
-            } @else if (leyendo()) {
-              <span class="inline-flex items-center gap-2 font-semibold"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</span>
-              <span class="mf-tenue text-sm">Las fotos tardan unos segundos.</span>
-            } @else {
-              <span class="font-semibold">Arrastrá los archivos acá</span>
-              <span class="mf-tenue text-sm">Fotos, capturas, PDF, CSV o planillas · una captura, pegala con Ctrl+V</span>
-              <span class="mf-tenue text-sm">o</span>
-              <label class="mf-btn mf-btn-suave cursor-pointer">
-                Elegir archivos
-                <input type="file" multiple class="sr-only" [attr.accept]="acepta" (change)="elegir($event)" />
-              </label>
+    @if (!lecturas().length) {
+      <div
+        class="ax-inicio"
+        [class.encima]="encima()"
+        role="button"
+        tabindex="0"
+        aria-describedby="ax-inicio-sub"
+        [attr.aria-busy]="leyendo()"
+        [attr.aria-disabled]="leyendo()"
+        data-tour="ax-archivos"
+        (click)="abrirSelector(entrada)"
+        (keydown.enter)="$event.preventDefault(); abrirSelector(entrada)"
+        (keydown.space)="$event.preventDefault(); abrirSelector(entrada)"
+        (dragover)="$event.preventDefault(); encima.set(true)"
+        (dragleave)="encima.set(false)"
+        (drop)="soltar($event)"
+      >
+        @if (leyendo()) {
+          <span class="ej-spinner" aria-hidden="true"></span>
+          <strong class="ax-inicio-t">Leyendo los archivos…</strong>
+          <span class="ax-meta">Las fotos tardan unos segundos.</span>
+        } @else {
+          <svg class="ax-inicio-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
+          <strong class="ax-inicio-t">Arrastrá los archivos o hacé clic para elegir</strong>
+          <span id="ax-inicio-sub" class="ax-meta">PDF, JPG, PNG, CSV, XLS o XLSX, hasta 20. También podés pegar una captura con Ctrl + V.</span>
+        }
+      </div>
+      @if (error(); as err) { <app-alerta class="ax-inicio-err" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
+    } @else {
+      <div class="ax-top">
+        <section
+          class="ax-tarjeta"
+          [class.encima]="encima()"
+          aria-labelledby="t-elegir"
+          data-tour="ax-archivos"
+          (dragover)="$event.preventDefault(); encima.set(true)"
+          (dragleave)="encima.set(false)"
+          (drop)="soltar($event)"
+        >
+          <div class="ax-cab">
+            <h2 id="t-elegir">Archivos <span class="ax-meta">({{ lecturas().length }})</span></h2>
+            <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="abrirSelector(entrada)" [disabled]="leyendo()">+ Agregar</button>
+          </div>
+          <ul class="ax-lista" aria-label="Archivos leídos">
+            @for (l of lecturas(); track l.archivo; let i = $index) {
+              <li [class.activo]="i === indice()">
+                <span class="ax-punto" [class.error]="l.error || errores(l)" [class.aviso]="!l.error && !errores(l) && avisos(l)" aria-hidden="true"></span>
+                <button type="button" class="ax-fila" (click)="indice.set(i)" [attr.aria-current]="i === indice() ? 'true' : null">
+                  <span class="ax-nombre" [title]="l.archivo">{{ l.archivo }}</span>
+                  <span class="ax-meta">{{ nombreTipo(l) }}@if (pendientes(l); as p) { · {{ p }} para revisar }</span>
+                </button>
+                <button type="button" class="ax-x" (click)="quitar(i)" [attr.aria-label]="'Quitar ' + l.archivo" [disabled]="leyendo()">×</button>
+              </li>
             }
-          </div>
+          </ul>
+          @if (leyendo()) { <p class="ax-meta ax-leyendo" aria-live="polite"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</p> }
+          @if (lecturas().length > 1) {
+            <button type="button" class="ax-link ax-limpiar" (click)="limpiar()" [disabled]="leyendo()">Quitar todos</button>
+          }
           @if (error(); as err) { <app-alerta class="mt-3" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
-        </div>
-      </section>
+        </section>
 
-      <section class="mf-panel" aria-labelledby="t-resultado">
-        <div class="fx-cab-der">
-          <div class="min-w-0 flex-1">
-            <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Pasalos a Excel<app-ayuda texto="Lo rojo seguro está mal (por ejemplo un CUIT que no pasa el dígito verificador o importes que no suman el total). Lo amarillo conviene compararlo con el archivo." /></h2>
-            <p class="mf-sub m-0 mt-1">Revisá lo que leí y generá el Excel de cada archivo.</p>
-          </div>
-        </div>
-
-        <div class="fx-cuerpo">
-          @if (leyendo() && !actual()) {
-            <div class="fx-cargando" aria-live="polite">
-              <span class="inline-block h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-slate-300 border-t-[var(--color-acento)]" aria-hidden="true"></span>
-              Leyendo los archivos…
-            </div>
-          } @else if (actual(); as l) {
-            <div class="fx-res-cab">
-              <span [class]="'op ' + claseTipo(l)">{{ nombreTipo(l) }}</span>
-              <strong class="min-w-0 flex-1 truncate" [title]="l.archivo">{{ l.archivo }}</strong>
+        <section class="ax-tarjeta" aria-labelledby="t-resultado">
+          @if (actual(); as l) {
+            <div class="ax-barra">
+              <h2 id="t-resultado" class="ax-titulo">
+                <span class="ax-nombre" [title]="l.archivo">{{ l.archivo }}</span>
+                <span class="ax-meta">{{ nombreTipo(l) }}</span>
+              </h2>
+              @if (!l.error) {
+                <button type="button" class="mf-btn ax-descargar" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
+                  @if (generando()) {
+                    <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
+                    Armando…
+                  } @else {
+                    Descargar Excel
+                  }
+                </button>
+              }
             </div>
             @if (l.error) {
-              <app-alerta class="mt-4" nivel="error" [mensajes]="[l.error]" />
+              <app-alerta class="mt-3" nivel="error" [mensajes]="[l.error]" />
             } @else {
+              @if (pendientes(l); as p) {
+                <p class="ax-pend" role="status">
+                  {{ p }} {{ p === 1 ? 'campo para revisar' : 'campos para revisar' }}
+                  <button type="button" class="ax-link" (click)="irARevision()">Ir a corregir ↓</button>
+                </p>
+              }
               @if (l.tipo === 'comprobante') {
-                <section class="fx-estudio" aria-labelledby="fx-estudio-t" data-tour="ax-estudio">
-                  <h3 id="fx-estudio-t">Para el estudio<app-ayuda texto="Busca las CUIT de la factura entre los clientes cargados: si la empresa es el receptor es una compra; si es el emisor, una venta. Podés cambiar la empresa o la operación a mano." /></h3>
-                  <div class="fx-est-fila">
-                    <label>
-                      Empresa del estudio
-                      <select class="ax-in" (change)="elegirEmpresa($any($event.target).value)" [disabled]="!empresas().length">
-                        <option value="" [selected]="!estudio()">{{ empresas().length ? '— Elegí la empresa —' : 'Sin clientes para elegir' }}</option>
-                        @for (e of empresas(); track e.nombre) { <option [value]="e.nombre" [selected]="estudio()?.empresa === e.nombre">{{ e.nombre }}</option> }
-                      </select>
-                    </label>
-                    <div class="fx-seg" role="group" aria-label="Operación">
-                      <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Compras'" [disabled]="!estudio()" (click)="elegirOperacion('Compras')">Compra</button>
-                      <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Ventas'" [disabled]="!estudio()" (click)="elegirOperacion('Ventas')">Venta</button>
-                    </div>
-                  </div>
-
+                <div class="ax-empresa" data-tour="ax-estudio">
+                  <label>
+                    Empresa
+                    <select class="ax-in" (change)="elegirEmpresa($any($event.target).value)" [disabled]="!empresas().length">
+                      <option value="" [selected]="!estudio()">{{ empresas().length ? 'Elegí la empresa' : 'Sin clientes para elegir' }}</option>
+                      @for (e of empresas(); track e.nombre) { <option [value]="e.nombre" [selected]="estudio()?.empresa === e.nombre">{{ e.nombre }}</option> }
+                    </select>
+                  </label>
                   @if (estudio(); as f) {
                     @if (f.origen === 'receptor' || f.origen === 'emisor') {
-                      <p class="fx-detec ok">✓ Detectada: <b>{{ f.empresa }}</b> es el {{ f.origen }} de la factura, así que es {{ f.operacion === 'Compras' ? 'una compra' : 'una venta' }}.</p>
-                      @if (f.ambigua) {
-                        <p class="fx-detec aviso">El {{ f.origen === 'emisor' ? 'receptor' : 'emisor' }} también es cliente del estudio.
-                          <button type="button" class="fx-link" (click)="invertir()">Es {{ f.operacion === 'Compras' ? 'una venta' : 'una compra' }} →</button></p>
-                      }
+                      <p>Es el {{ f.origen }} de la factura, así que es {{ f.operacion === 'Compras' ? 'una compra' : 'una venta' }}.</p>
                     } @else if (f.origen === 'trabajo') {
-                      <p class="fx-detec aviso">La factura no nombra a ningún cliente del estudio: la tomé para <b>{{ f.empresa }}</b>, la empresa con la que venís trabajando, como compra. Cambiala arriba si no es así.</p>
+                      <p class="aviso">La factura no nombra a ningún cliente: la tomé como compra de {{ f.empresa }}.</p>
                     } @else {
-                      <p class="fx-detec aviso">{{ avisoManual() }}</p>
+                      <p class="aviso">{{ avisoManual() }}</p>
                     }
                   } @else {
-                    <p class="fx-detec aviso">
-                      @if (!empresas().length) { No se pudieron ver los clientes del estudio (cargalos o desbloqueá «Clientes»). }
-                      @else { Ninguna CUIT de la factura es de un cliente del estudio. Elegí la empresa arriba si corresponde. }
-                    </p>
+                    <p class="aviso">{{ empresas().length ? 'Ninguna CUIT es de un cliente: elegí la empresa si corresponde.' : 'No se pudieron ver los clientes del estudio.' }}</p>
                   }
-
-                  <details class="fx-mas" data-tour="ax-xubio">
-                  <summary>ARCA y Xubio <span class="fx-chip pronto">Próximamente</span></summary>
-                  <div class="fx-bloque" data-tour="ax-arca">
-                    <div class="fx-bloque-cab"><strong>En ARCA</strong><span class="fx-chip gris">Sin consultar</span><span class="fx-chip pronto">Próximamente</span></div>
-                    <div class="fx-arca">
-                      <span>Se va a buscar en «Mis Comprobantes» {{ estudio() ? 'de ' + estudio()!.empresa : 'de la empresa' }} por:</span>
-                      <ul><li>CUIT {{ estudio()?.operacion === 'Ventas' ? 'del receptor' : 'del emisor' }}, punto de venta y número</li><li>fecha y total</li></ul>
-                      <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" disabled title="Todavía no está conectado">Buscar en ARCA</button>
-                    </div>
-                  </div>
-
-                  <div class="fx-bloque">
-                    <div class="fx-bloque-cab"><strong>En Xubio</strong><span class="fx-chip pronto">Próximamente</span></div>
-                    <div class="fx-opciones" role="group" aria-label="Qué hacer en Xubio">
-                      @for (o of opcionesXubio(); track o.id) {
-                        <button type="button" class="fx-opcion" [attr.aria-pressed]="opcionXubio() === o.id" [disabled]="!estudio()" (click)="elegirXubio(o.id)">
-                          <strong>{{ o.titulo }}</strong><span>{{ o.texto }}</span>
-                        </button>
-                      }
-                    </div>
-                    <div class="fx-xubio-pie">
-                      <button type="button" class="mf-btn" disabled title="Todavía no está conectado">{{ textoXubio() }}</button>
-                      <span class="mf-tenue">Por ahora: generá el Excel abajo y cargalo a mano en Xubio.</span>
-                    </div>
-                  </div>
-                  </details>
-                </section>
+                </div>
               }
-              <ol class="fx-pasos">
-                <li class="fx-paso">
-                  <span class="fx-num" aria-hidden="true">1</span>
-                  <div class="min-w-0">
-                    <h3>Revisá lo que leí</h3>
-                    <p class="mf-sub m-0 mb-2">
-                      Leído {{ l.metodo === 'ia' ? 'con IA (Gemini) de la imagen' : l.metodo === 'ocr' ? 'con OCR (de la imagen)' : l.metodo === 'pdf' ? 'del texto del PDF' : 'de la planilla' }}
-                      @if (verificando()) { · <span class="ej-spinner" aria-hidden="true"></span> verificando… }
-                    </p>
-                    <div class="fx-estado">
-                      @if (errores(l)) { <span class="e-error">{{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }}</span> }
-                      @if (avisos(l)) { <span class="e-aviso">{{ avisos(l) }} para mirar</span> }
-                      @if (bien().length) { <span class="e-ok">{{ bien().length }} bien</span> }
-                    </div>
-                    <button type="button" class="fx-link mt-2" (click)="irARevision()">Ver y corregir abajo ↓</button>
-                  </div>
-                </li>
-                <li class="fx-paso">
-                  <span class="fx-num" aria-hidden="true">2</span>
-                  <div class="min-w-0">
-                    <h3>Generá el Excel</h3>
-                    <button type="button" class="mf-btn fx-subir inline-flex items-center gap-2" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
-                      @if (generando()) {
-                        <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
-                        Armando…
-                      } @else {
-                        ⬇ {{ errores(l) ? 'Generar el Excel igual' : 'Generar Excel' }}
-                      }
-                    </button>
-                    @if (errores(l)) { <p class="m-0 mt-2 text-sm font-semibold text-red-700">Quedan {{ errores(l) }} {{ errores(l) === 1 ? 'error' : 'errores' }} sin corregir.</p> }
-                  </div>
-                </li>
-              </ol>
             }
-            <div class="fx-pie">
-              <span class="mf-tenue text-sm">{{ lecturas().length }} {{ lecturas().length === 1 ? 'archivo leído' : 'archivos leídos' }}</span>
-              <button type="button" class="fx-link ml-auto" (click)="quitar(indice())" [disabled]="leyendo()">Sacar este archivo</button>
-            </div>
-          } @else {
-            <div class="fx-vacio">
-              <strong>Acá aparece lo que leí</strong>
-              <span class="text-sm">Elegí los archivos en el paso 1: se leen solos.</span>
-            </div>
           }
-        </div>
-      </section>
-    </div>
+        </section>
+      </div>
+    }
 
     @if (actual(); as l) {
       @if (!l.error) {
@@ -327,51 +291,200 @@ import {
               <app-vista-archivo [url]="v.url" [tipo]="v.tipo" [nombre]="l.archivo" />
             }
             <div class="min-w-0">
-              <h2 id="ax-titulo" class="m-0 text-lg font-bold">
-                Verificá lo que leí
-                <app-ayuda texto="Lo rojo seguro está mal (por ejemplo un CUIT que no pasa el dígito verificador o importes que no suman el total). Lo amarillo conviene compararlo con el archivo. Si las cuentas dan el valor correcto, aparece «Usar»." />
-              </h2>
-              <p class="mf-sub mt-1">{{ l.archivo }}</p>
+              <div class="ax-ver-cab">
+                <h2 id="ax-titulo">
+                  Verificá lo que leí
+                  <app-ayuda texto="Rojo: seguro está mal (un CUIT que no pasa el dígito verificador, importes que no suman el total). Amarillo: conviene compararlo con el archivo. Si las cuentas dan el valor correcto, aparece «Usar»." />
+                </h2>
+                @if (l.tipo === 'comprobante') {
+                  <div class="ax-seg" role="group" aria-label="¿Es compra o venta?" [attr.title]="estudio() ? null : 'Elegí primero la empresa'">
+                    <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Compras'" [disabled]="!estudio()" (click)="elegirOperacion('Compras')">Compra</button>
+                    <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Ventas'" [disabled]="!estudio()" (click)="elegirOperacion('Ventas')">Venta</button>
+                  </div>
+                }
+              </div>
               @if (l.avisos.length) { <app-alerta class="mb-2 block" nivel="aviso" [mensajes]="l.avisos" /> }
 
-              <app-verificaciones [lista]="verificaciones()" (usar)="usar($event)" (elegir)="elegirLectura($event[0], $event[1])" />
+              <ul class="ax-ver" aria-live="polite">
+                @for (v of aMirar(); track $index) {
+                  @let c = corta(v);
+                  <li [class]="v.nivel">
+                    <p [title]="v.mensaje">{{ c.titulo || c.mensaje }}@if (v.nivel === 'error' && c.datos?.length) { · {{ c.datos!.join(' · ') }} }</p>
+                    @for (o of c.opciones ?? []; track o) {
+                      <button type="button" class="ax-mas" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">{{ o }}</button>
+                    }
+                    @if (v.sugerencia !== null && v.sugerencia !== undefined) {
+                      <button type="button" class="mf-btn mf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
+                    }
+                  </li>
+                }
+                @if (!aMirar().length) {
+                  <li class="ok" [title]="resumenBien()"><p>✓ Todo cuadra</p></li>
+                }
+              </ul>
 
               @if (l.tipo === 'comprobante') {
-                <app-factura
-                  [lectura]="l"
-                  [estudio]="estudio()"
-                  [sesion]="sesion()"
-                  [nivel]="nivelFn"
-                  [ocupado]="generando() || verificando()"
-                  (encabezado)="cambiarEncabezado($event[0], $event[1])"
-                  (total)="cambiarTotal($event[0], $event[1])"
-                  (item)="cambiarItem($event[0], $event[1], $event[2])"
-                  (agregar)="agregarItem()"
-                  (sacar)="sacarItem($event)"
-                  (guardar)="generar($event)"
-                  (eliminar)="quitar(indice())"
-                  (cancelar)="volverArriba()"
-                />
-              } @else {
-                @for (h of l.hojas; track h.nombre) {
-                  <h3 class="ax-sub">{{ h.nombre }} · {{ h.filas.length }} filas</h3>
+                <section class="ax-bloque" aria-labelledby="ax-enc-t">
+                  <header><h3 id="ax-enc-t">Encabezado</h3></header>
+                  <div class="ax-campos">
+                    @for (c of camposEncabezado; track c.id) {
+                      <label>{{ c.etiqueta }}
+                        <input class="ax-in" [class]="nivel(c.id)" [attr.title]="explicar(c.id, estadoCampo(c.id, l.encabezado[c.id]))" [placeholder]="c.ayuda ?? ''" [value]="l.encabezado[c.id] ?? ''" (change)="cambiarEncabezado(c.id, $any($event.target).value)" />
+                      </label>
+                    }
+                  </div>
+                </section>
+
+                <section class="ax-bloque" aria-labelledby="ax-importes-t">
+                  <header><h3 id="ax-importes-t">Importes sin IVA</h3></header>
+                  @for (c of camposImportes(); track c.id) {
+                    <label class="ax-renglon">
+                      <span>{{ c.etiqueta }}</span>
+                      <input class="ax-in num" [class]="nivel(c.id)" [attr.title]="explicar(c.id, estadoCampo(c.id, l.totales[c.id]))" [value]="texto(l.totales[c.id])" (change)="cambiarTotal(c.id, $any($event.target).value)" />
+                    </label>
+                  }
+                </section>
+
+                <section class="ax-bloque" aria-labelledby="ax-iva-titulo">
+                  <header><h3 id="ax-iva-titulo">IVA</h3></header>
+                  @if (desglose().length) {
+                    <div class="ax-fila-imp ax-cols" aria-hidden="true">
+                      <span>Alícuota</span><span class="num">Base imponible</span><span class="num">Importe</span><span></span>
+                    </div>
+                  }
+                  @for (f of desglose(); track $index; let i = $index) {
+                    <div class="ax-fila-imp" role="group" [attr.aria-label]="nombreAlicuota(f.alicuota)">
+                      <select class="ax-in" [attr.aria-label]="'Alícuota de la fila ' + (i + 1)" (change)="cambiarAlicuota(i, $any($event.target).value)">
+                        @if (f.alicuota === null) { <option value="" selected>Elegí…</option> }
+                        @for (a of alicuotasDe(f.alicuota); track a) {
+                          <option [value]="a" [selected]="a === f.alicuota">{{ nombreAlicuota(a) }}</option>
+                        }
+                      </select>
+                      <input class="ax-in num" inputmode="decimal" [attr.aria-label]="'Base imponible ' + nombreAlicuota(f.alicuota)" [value]="texto(f.base)" (change)="cambiarFilaIva(i, 'base', $any($event.target).value)" />
+                      <input class="ax-in num" inputmode="decimal" [class]="f.estado === 'ok' ? '' : f.estado" [attr.aria-label]="'Importe ' + nombreAlicuota(f.alicuota)" [attr.aria-invalid]="f.estado === 'error' ? 'true' : null" [attr.title]="f.motivo" [value]="texto(f.importe)" (change)="cambiarFilaIva(i, 'importe', $any($event.target).value)" />
+                      <button type="button" class="ax-quitar" (click)="sacarAlicuota(i)" [attr.aria-label]="'Quitar ' + nombreAlicuota(f.alicuota)">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                      </button>
+                      @if (f.estado !== 'ok') { <p class="ax-nota" [class]="f.estado">{{ f.motivo }}</p> }
+                    </div>
+                  } @empty {
+                    <p class="ax-vacio">Sin IVA discriminado (factura B/C o tique a consumidor final).</p>
+                  }
+                  <div class="ax-fila-imp ax-suma">
+                    <span>Total IVA</span>
+                    <span class="num">{{ desglose().length ? texto(sumaBases()) : '' }}</span>
+                    <span class="num">{{ texto(l.totales['iva']) || '—' }}</span>
+                    <span></span>
+                  </div>
+                  <div class="ax-pie"><button type="button" class="ax-mas" (click)="agregarAlicuota()" [disabled]="!puedeAgregarAlicuota()">+ Alícuota</button></div>
+                </section>
+
+                <section class="ax-bloque" aria-labelledby="ax-trib-titulo">
+                  <header><h3 id="ax-trib-titulo">Otros tributos</h3><span>Percepciones, impuestos internos, tasas</span></header>
+                  @if ((l.tributos ?? []).length) {
+                    <div class="ax-fila-imp ax-cols" aria-hidden="true">
+                      <span>Concepto</span><span class="num">Base imponible</span><span class="num">Importe</span><span></span>
+                    </div>
+                  }
+                  @for (t of l.tributos ?? []; track $index; let i = $index) {
+                    @let estado = estadoCampo('tributo_' + i, t.importe);
+                    <div class="ax-fila-imp" role="group" [attr.aria-label]="t.descripcion || 'Tributo ' + (i + 1)">
+                      <div class="ax-concepto">
+                        <input class="ax-in ax-cod" [attr.aria-label]="'Código del tributo ' + (i + 1)" placeholder="Cód." [value]="t.codigo" (change)="cambiarTributo(i, 'codigo', $any($event.target).value)" />
+                        <input class="ax-in" [attr.aria-label]="'Descripción del tributo ' + (i + 1)" placeholder="Ej.: Percepción IIBB Bs. As." [value]="t.descripcion" (change)="cambiarTributo(i, 'descripcion', $any($event.target).value)" />
+                      </div>
+                      <input class="ax-in num" inputmode="decimal" [attr.aria-label]="'Base imponible de ' + (t.descripcion || 'el tributo ' + (i + 1))" [value]="texto(t.base)" (change)="cambiarTributo(i, 'base', $any($event.target).value)" />
+                      <input class="ax-in num" inputmode="decimal" [class]="estado === 'ok' ? '' : (estado ?? '')" [attr.aria-label]="'Importe de ' + (t.descripcion || 'el tributo ' + (i + 1))" [attr.title]="explicar('tributo_' + i, estado)" [value]="texto(t.importe)" (change)="cambiarTributo(i, 'importe', $any($event.target).value)" />
+                      <button type="button" class="ax-quitar" (click)="sacarTributo(i)" [attr.aria-label]="'Quitar ' + (t.descripcion || 'el tributo ' + (i + 1))">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                      </button>
+                      <p class="ax-nota">Va a «{{ columnaTributo(t) }}»@if (porcentaje(t); as p) { · {{ p }} de la base }</p>
+                    </div>
+                  } @empty {
+                    <p class="ax-vacio">Sin otros tributos.</p>
+                  }
+                  @if ((l.tributos ?? []).length || totalTributos()) {
+                    <div class="ax-fila-imp ax-suma">
+                      <span>Total otros tributos</span>
+                      <span></span>
+                      <span class="num">{{ texto(totalTributos()) || '—' }}</span>
+                      <span></span>
+                    </div>
+                  }
+                  <div class="ax-pie"><button type="button" class="ax-mas" (click)="agregarTributo()">+ Tributo</button></div>
+                </section>
+
+                <section class="ax-bloque" aria-labelledby="ax-cuadre-t">
+                  <header><h3 id="ax-cuadre-t">Total</h3></header>
+                  @for (p of cuadre().partes; track p.nombre) {
+                    <div class="ax-renglon"><span>{{ p.nombre }}</span><span class="num">{{ texto(p.valor) }}</span></div>
+                  }
+                  <label class="ax-total">Total de la factura
+                    <input class="ax-in num" [class]="nivel('total')" [attr.title]="explicar('total', estadoCampo('total', l.totales['total']))" [value]="texto(l.totales['total'])" (change)="cambiarTotal('total', $any($event.target).value)" />
+                  </label>
+                  <p class="ax-cuadre-msj" [class]="cuadre().estado" role="status">
+                    @if (cuadre().estado === 'ok') { ✓ La suma da el total. }
+                    @else if (cuadre().estado === 'error') { La suma da {{ texto(cuadre().suma) }}: difiere en {{ texto(cuadre().diferencia) }}. }
+                    @else { Falta el total. }
+                  </p>
+                </section>
+
+                <section class="ax-bloque" aria-labelledby="ax-det-t">
+                  <header><h3 id="ax-det-t">Detalle</h3><span>{{ l.items.length }} {{ l.items.length === 1 ? 'ítem' : 'ítems' }}</span></header>
                   <div class="ax-caja">
-                    <table class="ax-tabla">
+                    <table class="ax-tabla" aria-labelledby="ax-det-t">
+                      <thead><tr><th>Código</th><th>Descripción</th><th>Producto</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">IVA %</th><th class="num">Importe</th><th><span class="sr-only">Quitar</span></th></tr></thead>
                       <tbody>
-                        @for (f of h.filas.slice(0, 60); track $index) {
-                          <tr>@for (c of f; track $index) { <td>{{ c }}</td> }</tr>
+                        @for (x of l.items; track $index; let i = $index) {
+                          <tr>
+                            <td style="width: 80px"><input class="ax-in" [value]="x.codigo" (change)="cambiarItem(i, 'codigo', $any($event.target).value)" aria-label="Código" /></td>
+                            <td><input class="ax-in" [class.aviso]="!!x.leido && x.leido !== x.descripcion" [attr.title]="x.leido && x.leido !== x.descripcion ? 'Corregido solo: decía «' + x.leido + '»' : null" [value]="x.descripcion" (change)="cambiarItem(i, 'descripcion', $any($event.target).value)" aria-label="Descripción" /></td>
+                            <td style="width: 140px"><input class="ax-in" [value]="x.producto ?? ''" [attr.list]="'ax-productos'" (change)="cambiarItem(i, 'producto', $any($event.target).value)" aria-label="Producto" /></td>
+                            <td style="width: 64px"><input class="ax-in num" [value]="texto(x.cantidad)" (change)="cambiarItem(i, 'cantidad', $any($event.target).value)" aria-label="Cantidad" /></td>
+                            <td style="width: 100px"><input class="ax-in num" [value]="texto(x.precio)" (change)="cambiarItem(i, 'precio', $any($event.target).value)" aria-label="Precio" /></td>
+                            <td style="width: 60px"><input class="ax-in num" [value]="x.alicuota ?? ''" (change)="cambiarItem(i, 'alicuota', $any($event.target).value)" aria-label="IVA %" /></td>
+                            <td style="width: 110px"><input class="ax-in num" [class.aviso]="importeCorregido(x)" [attr.title]="importeCorregido(x) ? 'Corregido solo: se leyó ' + texto(x.importe_leido) : null" [value]="texto(x.importe)" (change)="cambiarItem(i, 'importe', $any($event.target).value)" aria-label="Importe" /></td>
+                            <td style="width: 34px">
+                              <button type="button" class="ax-quitar" (click)="sacarItem(i)" aria-label="Sacar el ítem">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+                              </button>
+                            </td>
+                          </tr>
                         }
                       </tbody>
+                      <tfoot>
+                        <tr>
+                          <td colspan="3"><button type="button" class="ax-mas" (click)="agregarItem()">+ Ítem</button></td>
+                          <td colspan="3" class="num">Suma del detalle</td>
+                          <td class="num">{{ texto(suma()) }}</td><td></td>
+                        </tr>
+                      </tfoot>
                     </table>
                   </div>
-                  @if (h.filas.length > 60) { <p class="mf-sub mt-1">Se muestran 60 de {{ h.filas.length }} filas: el Excel las lleva todas.</p> }
+                  <datalist id="ax-productos">@for (p of productos; track p) { <option [value]="p"></option> }</datalist>
+                </section>
+              } @else {
+                @for (h of l.hojas; track h.nombre) {
+                  <section class="ax-bloque">
+                    <header><h3>{{ h.nombre }}</h3><span>{{ h.filas.length }} filas</span></header>
+                    <div class="ax-caja">
+                      <table class="ax-tabla">
+                        <tbody>
+                          @for (f of h.filas.slice(0, 60); track $index) {
+                            <tr>@for (c of f; track $index) { <td>{{ c }}</td> }</tr>
+                          }
+                        </tbody>
+                      </table>
+                    </div>
+                    @if (h.filas.length > 60) { <p class="ax-mas-filas">Se muestran 60 de {{ h.filas.length }} filas; el Excel las lleva todas.</p> }
+                  </section>
                 }
               }
 
               @if (l.texto) {
-                <details class="mt-4">
-                  <summary class="cursor-pointer text-sm font-semibold">Ver el texto que se leyó</summary>
-                  <div class="ax-texto mt-2">{{ textoSinCae(l.texto) }}</div>
+                <details class="ax-texto-leido">
+                  <summary>Ver el texto que se leyó</summary>
+                  <div class="ax-texto">{{ textoSinCae(l.texto) }}</div>
                 </details>
               }
             </div>
@@ -411,28 +524,72 @@ export class PasarAExcel implements OnDestroy {
   protected readonly aMirar = computed(() => this.verificaciones().filter((v) => v.nivel !== 'ok'));
   protected readonly bien = computed(() => this.verificaciones().filter((v) => v.nivel === 'ok'));
   protected readonly suma = computed(() => sumaItems(this.actual()?.items ?? []));
+  /** El desglose de IVA con sus cuentas, al instante (sin esperar al backend). */
+  protected readonly desglose = computed(() => {
+    const l = this.actual();
+    return l ? revisarDesglose({ ...l, iva_alicuotas: l.iva_alicuotas ?? [] }) : [];
+  });
+  protected readonly sumaBases = computed(() => Math.round(this.desglose().reduce((s, f) => s + (f.base ?? 0), 0) * 100) / 100);
+  /** Todas las filas de tributos (internos, percepciones y el resto). */
+  protected readonly sumaTributos = computed(() => Math.round((this.actual()?.tributos ?? []).reduce((s, f) => s + (f.importe ?? 0), 0) * 100) / 100);
+  /** Lo que dice «Otros tributos»: la suma de las filas o, sin filas, los totales leídos. */
+  protected readonly totalTributos = computed(() => {
+    const l = this.actual();
+    if (!l) return null;
+    if ((l.tributos ?? []).length) return this.sumaTributos();
+    const t = TRIBUTOS.map((c) => l.totales[c]).filter((v): v is number => typeof v === 'number');
+    return t.length ? redondear2(t.reduce((s, v) => s + v, 0)) : null;
+  });
+  /** Los importes sueltos: los tributos se cargan abajo, renglón por renglón, y el total va en el cuadre. */
+  protected readonly camposImportes = computed(() => {
+    const conFilas = (this.actual()?.tributos ?? []).length > 0;
+    return CAMPOS_TOTALES.filter((c) => c.id !== 'total' && !(conFilas && TRIBUTOS.includes(c.id)));
+  });
+  /** Neto + no gravado + exento + IVA + otros tributos contra el total de la factura. */
+  protected readonly cuadre = computed(() => {
+    const l = this.actual();
+    const tot = l?.totales ?? {};
+    const num = (v: unknown) => (typeof v === 'number' ? v : null);
+    const partes = [
+      { nombre: 'Neto gravado', valor: num(tot['neto_gravado']) },
+      { nombre: 'No gravado', valor: num(tot['no_gravado']) },
+      { nombre: 'Exento', valor: num(tot['exento']) },
+      { nombre: 'IVA', valor: num(tot['iva']) },
+      { nombre: 'Otros tributos', valor: this.totalTributos() },
+    ].filter((p) => p.valor);
+    const suma = redondear2(partes.reduce((s, p) => s + (p.valor ?? 0), 0));
+    const total = num(tot['total']);
+    const diferencia = total === null ? null : redondear2(Math.abs(total - suma));
+    const estado: NivelVerificacion = diferencia === null ? 'aviso' : diferencia <= 0.05 ? 'ok' : 'error';
+    return { partes, suma, diferencia, estado };
+  });
+  protected readonly puedeAgregarAlicuota = computed(() => alicuotaLibre(this.actual()?.iva_alicuotas ?? []) !== null);
+  protected readonly nombreAlicuota = nombreAlicuota;
 
   protected readonly errores = (l: LecturaExcel) => contar(l, 'error');
   protected readonly avisos = (l: LecturaExcel) => contar(l, 'aviso');
   protected readonly texto = aTexto;
 
-  // --- Para el estudio (solo pantalla: ARCA y Xubio todavía no están conectados) ---
+  // --- Para el estudio: de qué empresa es y si es compra o venta ---
   /** Los clientes del estudio con sus CUIT; vacío si Clientes está bloqueado o no hay. */
   protected readonly empresas = signal<EmpresaEstudio[]>([]);
   /** Lo que se eligió a mano por archivo (manda sobre lo detectado). */
   private readonly elegido = signal<Record<string, { empresa: string; operacion: Operacion | null }>>({});
-  private readonly xubioElegido = signal<Record<string, string>>({});
   protected readonly cuit = cuitConGuiones;
-  /** El usuario de Xubio guardado: el estudio que está trabajando. */
-  protected readonly sesion = signal('');
   protected readonly nivelFn = (campo: string) => this.nivel(campo);
+  /** Los productos para elegir en el detalle (los de la empresa del estudio). */
+  protected get productos(): string[] {
+    const f = this.estudio();
+    return productosSugeridos(f?.empresa ?? '', f?.operacion ?? 'Compras');
+  }
   protected readonly textoSinCae = sinCae;
+  protected readonly corta = corta;
 
   /** La factura vista desde la empresa del estudio (detectada o elegida). */
   protected readonly estudio = computed<FacturaDelEstudio | null>(() => {
     const l = this.actual();
     if (!l || l.tipo !== 'comprobante') return null;
-    const detectada = detectarEmpresa(l.encabezado, this.empresas(), { archivo: l.archivo, trabajo: empresaDeTrabajo() });
+    const detectada = detectarEmpresa(l.encabezado, this.empresas());
     const manual = this.elegido()[l.archivo];
     if (!manual) {
       if (detectada) return detectada;
@@ -440,10 +597,9 @@ export class PasarAExcel implements OnDestroy {
       return trabajo ? adaptar(l.encabezado, trabajo.nombre, 'Compras', 'trabajo') : null;
     }
     if (!manual.empresa) return null;
-    // Elegida a mano: compra o venta según de qué lado de la factura está esa empresa.
-    const propia = detectarEmpresa(l.encabezado, this.empresas().filter((e) => e.nombre === manual.empresa));
-    const operacion = manual.operacion ?? propia?.operacion ?? 'Compras';
-    const origen = propia && operacion === propia.operacion ? propia.origen : 'manual';
+    const mismaEmpresa = detectada?.empresa === manual.empresa;
+    const operacion = manual.operacion ?? (mismaEmpresa ? detectada!.operacion : 'Compras');
+    const origen = mismaEmpresa && operacion === detectada!.operacion ? detectada!.origen : 'manual';
     return adaptar(l.encabezado, manual.empresa, operacion, origen);
   });
 
@@ -458,67 +614,12 @@ export class PasarAExcel implements OnDestroy {
     return `Ojo: ${f.empresa} es el ${detectada.origen} de la factura, así que es ${es}. La marcaste como ${f.operacion === 'Compras' ? 'compra' : 'venta'}.`;
   });
 
-  protected readonly opcionesXubio = computed(() => {
-    const compra = this.estudio()?.operacion !== 'Ventas';
-    return [
-      { id: 'cargar', titulo: compra ? 'Cargar como compra' : 'Cargar como venta', texto: compra ? 'Factura de proveedor con sus importes y alícuotas.' : 'Factura de venta con sus importes y alícuotas.' },
-      { id: 'detalle', titulo: 'Con el detalle', texto: 'Cada ítem de la factura como una línea en Xubio.' },
-      { id: 'arca', titulo: 'Desde Mis Comprobantes', texto: 'Importarla con el archivo de ARCA, como en «Subir a Xubio».' },
-    ];
-  });
-  protected readonly opcionXubio = computed(() => {
-    const l = this.actual();
-    return l ? (this.xubioElegido()[l.archivo] ?? 'cargar') : 'cargar';
-  });
-  protected readonly textoXubio = computed(() => {
-    const f = this.estudio();
-    const o = this.opcionesXubio().find((x) => x.id === this.opcionXubio());
-    return f && o ? `${o.titulo} en Xubio · ${f.empresa}` : 'Elegí la empresa para cargarla en Xubio';
-  });
-
   constructor() {
-    this.api.ajustes().then((a) => this.sesion.set(a.xubio?.usuario ?? ''), () => undefined);
     // Si Clientes está bloqueado, el panel avisa y se elige a mano después.
     this.api.clientes().then(
       (cs) => this.empresas.set(cs.map((c) => ({ nombre: c.nombre, cuits: [c.arca.cuit_representado, c.arca.cuit_login].filter(Boolean) }))),
       () => this.empresas.set([]),
     );
-    void this.restaurar();
-    // Cada cambio queda guardado en el navegador: recargar la página no borra nada.
-    const guardarEstado = conDemora(() =>
-      void guardar('estado', { lecturas: this.lecturas(), indice: this.indice(), elegido: this.elegido(), xubio: this.xubioElegido() }),
-    );
-    effect(() => {
-      this.lecturas(); this.indice(); this.elegido(); this.xubioElegido();
-      if (this.restaurado()) guardarEstado();
-    });
-  }
-
-  /** Hasta recuperar lo guardado no se guarda nada (si no, se pisaría con la página vacía). */
-  private readonly restaurado = signal(false);
-
-  private async restaurar(): Promise<void> {
-    type Estado = { lecturas: LecturaExcel[]; indice: number; elegido: Record<string, { empresa: string; operacion: Operacion | null }>; xubio: Record<string, string> };
-    const e = await recuperar<Estado>('estado');
-    if (e?.lecturas?.length && !this.lecturas().length) {
-      const vistas: Record<string, { url: string; seguro: SafeResourceUrl; tipo: 'imagen' | 'pdf' }> = {};
-      for (const l of e.lecturas) {
-        const a = await recuperar<{ blob: Blob; tipo: 'imagen' | 'pdf' }>('archivo:' + l.archivo);
-        if (a?.blob) vistas[l.archivo] = this.vistaDe(a.blob, a.tipo);
-      }
-      this.vistas.set(vistas);
-      this.lecturas.set(e.lecturas);
-      this.indice.set(Math.min(e.indice ?? 0, e.lecturas.length - 1));
-      this.elegido.set(e.elegido ?? {});
-      this.xubioElegido.set(e.xubio ?? {});
-    }
-    this.restaurado.set(true);
-  }
-
-  private vistaDe(blob: Blob, tipo: 'imagen' | 'pdf') {
-    const url = URL.createObjectURL(blob);
-    // El PDF va en un iframe: Angular pide marcar la URL (es un blob: de esta misma página).
-    return { url, seguro: this.sanitizer.bypassSecurityTrustResourceUrl(url), tipo };
   }
 
   protected elegirEmpresa(nombre: string): void {
@@ -527,25 +628,10 @@ export class PasarAExcel implements OnDestroy {
     recordarEmpresaDeTrabajo(nombre);
   }
 
-  /** Emisor y receptor son clientes: mirarla desde el otro lado (compra <-> venta). */
-  protected invertir(): void {
-    const l = this.actual();
-    const f = this.estudio();
-    if (!l || !f) return;
-    const lado = f.operacion === 'Compras' ? 'emisor' : 'receptor';
-    const otra = detectarEmpresa({ [lado]: l.encabezado[lado] ?? '', [`${lado}_cuit`]: l.encabezado[`${lado}_cuit`] ?? '' }, this.empresas());
-    if (otra) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: otra.empresa, operacion: otra.operacion } }));
-  }
-
   protected elegirOperacion(operacion: Operacion): void {
     const l = this.actual();
     const f = this.estudio();
     if (l && f) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: f.empresa, operacion } }));
-  }
-
-  protected elegirXubio(id: string): void {
-    const l = this.actual();
-    if (l) this.xubioElegido.update((m) => ({ ...m, [l.archivo]: id }));
   }
 
   /** Ctrl+V con una captura (o una imagen copiada) en cualquier lugar de la pantalla. */
@@ -569,8 +655,36 @@ export class PasarAExcel implements OnDestroy {
     Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));
   }
 
+  protected resumenBien(): string {
+    return this.bien().map((v) => v.mensaje.replace(/\.$/, '')).join(' · ');
+  }
+
+  protected importeCorregido(x: ItemLeido): boolean {
+    return x.importe_leido !== null && x.importe_leido !== undefined && x.importe_leido !== x.importe;
+  }
+
   protected nivel(campo: string): string {
     return nivelDe(this.actual()?.verificaciones ?? [], campo) ?? '';
+  }
+
+  /** El estado de un campo: el de sus verificaciones o, si está vacío y no puede, «para mirar». */
+  protected estadoCampo(campo: string, valor: string | number | null | undefined): NivelVerificacion | null {
+    const nivel = nivelDe(this.actual()?.verificaciones ?? [], campo);
+    if (nivel) return nivel;
+    return OBLIGATORIOS.has(campo) && (valor === null || valor === undefined || valor === '') ? 'aviso' : null;
+  }
+
+  /** Por qué el campo está como está (para el title y los lectores de pantalla). */
+  protected explicar(campo: string, estado: NivelVerificacion | null): string | null {
+    if (!estado) return null;
+    const mensajes = (this.actual()?.verificaciones ?? []).filter((v) => v.campo === campo && v.nivel === estado).map((v) => v.mensaje);
+    if (mensajes.length) return mensajes.join(' ');
+    return estado === 'aviso' ? 'Vacío: completalo mirando el comprobante.' : null;
+  }
+
+  /** Las alícuotas para elegir (más la actual si no es una de las habituales). */
+  protected alicuotasDe(actual: number | null): number[] {
+    return actual === null || ALICUOTAS_IVA.includes(actual) ? ALICUOTAS_IVA : [actual, ...ALICUOTAS_IVA];
   }
 
   protected formatear(v: string | number): string {
@@ -582,18 +696,16 @@ export class PasarAExcel implements OnDestroy {
     return l.error ? 'No se leyó' : l.tipo === 'comprobante' ? 'Factura' : 'Tabla';
   }
 
-  protected claseTipo(l: LecturaExcel): string {
-    return l.error ? 'op-error' : l.tipo === 'comprobante' ? 'op-factura' : 'op-tabla';
+  /** Lo que queda por revisar del archivo: errores y avisos. */
+  protected pendientes(l: LecturaExcel): number {
+    return l.error ? 0 : this.errores(l) + this.avisos(l);
   }
 
-  /** Debajo del nombre: cómo quedó la verificación. */
-  protected resumen(l: LecturaExcel): string {
-    if (l.error) return 'No se pudo leer';
-    const e = this.errores(l);
-    const a = this.avisos(l);
-    if (e) return `${e} ${e === 1 ? 'error' : 'errores'}${a ? ` · ${a} para mirar` : ''}`;
-    if (a) return `${a} para mirar`;
-    return 'Todo verificado';
+  /** La tarjeta del inicio y «+ Agregar» abren el mismo selector de archivos. */
+  protected abrirSelector(entrada: HTMLInputElement): void {
+    if (this.leyendo()) return;
+    entrada.value = '';
+    entrada.click();
   }
 
   protected volverArriba(): void {
@@ -613,7 +725,6 @@ export class PasarAExcel implements OnDestroy {
       const { [l.archivo]: _, ...resto } = this.vistas();
       this.vistas.set(resto);
     }
-    void borrar('archivo:' + l.archivo);
     this.lecturas.update((ls) => ls.filter((_, j) => j !== i));
     const n = this.lecturas().length;
     if (this.indice() >= n) this.indice.set(Math.max(0, n - 1));
@@ -622,7 +733,6 @@ export class PasarAExcel implements OnDestroy {
   protected limpiar(): void {
     Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));
     this.vistas.set({});
-    void borrarTodo();
     this.lecturas.set([]);
     this.indice.set(0);
     this.error.set(null);
@@ -657,14 +767,15 @@ export class PasarAExcel implements OnDestroy {
         const tipo = /\.pdf$/i.test(a.name) ? 'pdf' : /\.(jpe?g|png|webp|bmp)$/i.test(a.name) ? 'imagen' : null;
         if (!tipo) continue;
         if (vistas[a.name]) URL.revokeObjectURL(vistas[a.name].url);
-        vistas[a.name] = this.vistaDe(a, tipo);
-        void guardar('archivo:' + a.name, { blob: a, tipo });
+        const url = URL.createObjectURL(a);
+        // El PDF va en un iframe: Angular pide marcar la URL (es un blob: de esta misma página).
+        vistas[a.name] = { url, seguro: this.sanitizer.bypassSecurityTrustResourceUrl(url), tipo };
       }
       this.vistas.set(vistas);
       // Los nuevos reemplazan a los del mismo nombre; el primero nuevo queda a la vista.
       const nombres = new Set(lecturas.map((l) => l.archivo));
       const resto = this.lecturas().filter((l) => !nombres.has(l.archivo));
-      this.lecturas.set([...resto, ...lecturas.map(aplicarContrapartes)]);
+      this.lecturas.set([...resto, ...lecturas]);
       this.indice.set(resto.length);
     } catch (err) {
       this.error.set(mensajeDeError(err, 'No se pudieron leer los archivos.'));
@@ -707,16 +818,7 @@ export class PasarAExcel implements OnDestroy {
 
   protected cambiarEncabezado(campo: string, valor: string): void {
     const l = this.actual();
-    if (!l) return;
-    // Proveedor o cliente corregido a mano: se recuerda para las próximas facturas.
-    const lado = campo.replace(/_cuit$/, '');
-    if (lado === 'emisor' || lado === 'receptor') {
-      const e = { ...l.encabezado, [campo]: valor.trim() };
-      const leido = l.corregidos?.[lado] ?? l.encabezado[lado] ?? '';
-      const leidoCuit = l.corregidos?.[`${lado}_cuit`] ?? l.encabezado[`${lado}_cuit`] ?? '';
-      recordarContraparte(leido, leidoCuit, e[lado] ?? '', e[`${lado}_cuit`] ?? '');
-    }
-    this.reemplazar(sinDuda({ ...l, encabezado: { ...l.encabezado, [campo]: valor.trim() } }, campo));
+    if (l) this.reemplazar(sinDuda({ ...l, encabezado: { ...l.encabezado, [campo]: valor.trim() } }, campo));
   }
 
   /** Entre lo que dieron las lecturas, el valor que eligió el usuario. */
@@ -733,10 +835,75 @@ export class PasarAExcel implements OnDestroy {
   protected cambiarItem(i: number, campo: keyof ItemLeido, valor: string): void {
     const l = this.actual();
     if (!l) return;
-    const nuevo = campo === 'codigo' || campo === 'descripcion' ? valor : aNumero(valor);
+    const nuevo = campo === 'codigo' || campo === 'descripcion' || campo === 'producto' ? valor : aNumero(valor);
     // Si corrige la descripción a mano, deja de figurar como autocorregida.
     const extra = campo === 'descripcion' ? { leido: '' } : campo === 'importe' ? { importe_leido: null } : {};
     this.reemplazar({ ...l, items: l.items.map((x, j) => (j === i ? { ...x, [campo]: nuevo, ...extra } : x)) });
+  }
+
+  private cambiarDesglose(cambio: (filas: AlicuotaIva[]) => AlicuotaIva[]): void {
+    const l = this.actual();
+    if (l) this.reemplazar(conDesglose(l, cambio(l.iva_alicuotas ?? [])));
+  }
+
+  protected cambiarAlicuota(i: number, valor: string): void {
+    const alicuota = valor === '' ? null : Number(valor);
+    this.cambiarDesglose((filas) => filas.map((f, j) => (j === i ? { ...f, alicuota } : f)));
+  }
+
+  /** Con la base nueva y el IVA vacío, el IVA sale de la cuenta (base × alícuota). */
+  protected cambiarFilaIva(i: number, campo: 'base' | 'importe', valor: string): void {
+    const n = aNumero(valor);
+    this.cambiarDesglose((filas) =>
+      filas.map((f, j) => {
+        if (j !== i) return f;
+        const nueva = { ...f, [campo]: n };
+        if (campo === 'base' && n !== null && f.importe === null && f.alicuota !== null) {
+          nueva.importe = Math.round(n * f.alicuota) / 100;
+        }
+        return nueva;
+      }),
+    );
+  }
+
+  private cambiarTributos(cambio: (filas: TributoLeido[]) => TributoLeido[]): void {
+    const l = this.actual();
+    if (l) this.reemplazar(conTributos(l, cambio(l.tributos ?? [])));
+  }
+
+  protected cambiarTributo(i: number, campo: keyof TributoLeido, valor: string): void {
+    const nuevo = campo === 'codigo' || campo === 'descripcion' ? valor.trim() : aNumero(valor);
+    this.cambiarTributos((filas) => filas.map((f, j) => (j === i ? { ...f, [campo]: nuevo } : f)));
+  }
+
+  /** La primera fila nueva arranca con lo que ya decía «Otros tributos». */
+  protected agregarTributo(): void {
+    const otros = this.actual()?.totales['otros_tributos'] ?? null;
+    this.cambiarTributos((filas) => [...filas, { codigo: '', descripcion: '', base: null, importe: filas.length ? null : otros || null }]);
+  }
+
+  /** La columna del Excel donde suma ese tributo. */
+  protected columnaTributo(t: TributoLeido): string {
+    return COLUMNA_TRIBUTO[grupoTributo(t)];
+  }
+
+  /** 6717,98 sobre 83974,76 → «8%». Null si no hay con qué calcularlo. */
+  protected porcentaje(t: TributoLeido): string | null {
+    if (t.base === null || t.importe === null || !t.base) return null;
+    const p = Math.round((t.importe / t.base) * 10000) / 100;
+    return `${String(p).replace('.', ',')}%`;
+  }
+
+  protected sacarTributo(i: number): void {
+    this.cambiarTributos((filas) => filas.filter((_, j) => j !== i));
+  }
+
+  protected agregarAlicuota(): void {
+    this.cambiarDesglose((filas) => [...filas, { alicuota: alicuotaLibre(filas), base: null, importe: null }]);
+  }
+
+  protected sacarAlicuota(i: number): void {
+    this.cambiarDesglose((filas) => filas.filter((_, j) => j !== i));
   }
 
   protected agregarItem(): void {
@@ -751,17 +918,17 @@ export class PasarAExcel implements OnDestroy {
 
   // --- Generar ------------------------------------------------------------------------
 
-  protected async generar(extras?: Extras): Promise<void> {
+  protected async generar(): Promise<void> {
     const l = this.actual();
     if (!l) return;
     this.generando.set(true);
     try {
       const est = this.estudio();
+      // Los productos del detalle van al Excel para Xubio.
+      const extras = { condicion: 'Cuenta Corriente', vencimiento: '', productos: l.items.map((x) => x.producto ?? ''), centros: [], dto: [] };
       const r = await this.api.generarAExcel(l, est ? { operacion: est.operacion, empresa: est.empresa, extras } : {});
       const bytes = Uint8Array.from(atob(r.contenido), (c) => c.charCodeAt(0));
-      // El modelo de Xubio es .xls (Excel 97-2003); lo demás, .xlsx.
-      const tipo = /\.xls$/i.test(r.nombre) ? 'application/vnd.ms-excel' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-      descargarBlob(r.nombre, new Blob([bytes], { type: tipo }));
+      descargarBlob(r.nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
       this.toast.ok('Excel listo', r.nombre);
     } catch (err) {
       this.toast.error('No se pudo armar el Excel', mensajeDeError(err, ''));

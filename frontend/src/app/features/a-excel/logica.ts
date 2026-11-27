@@ -3,33 +3,45 @@
  * Las cuentas de verdad (qué está mal y qué sugerir) las hace el backend:
  * backend/app/extraccion/a_excel.py → `verificar`.
  */
-import { ItemLeido, LecturaExcel, NivelVerificacion, Verificacion } from '../../core/models';
+import { AlicuotaIva, ItemLeido, TributoLeido, LecturaExcel, NivelVerificacion, Verificacion } from '../../core/models';
 
 /** Lo que se acepta subir (lo mismo que `FORMATOS` en a_excel.py). */
 export const FORMATOS_A_EXCEL = /\.(xlsx|xlsm|xls|csv|txt|pdf|jpe?g|png|webp|bmp|tiff?)$/i;
 export const ACEPTA = '.xlsx,.xlsm,.xls,.csv,.txt,.pdf,.jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff';
 
-/** Lo editable del encabezado. El CAE no va: no se muestra ni se modifica (queda el leído). */
-export const CAMPOS_ENCABEZADO: { id: string; etiqueta: string }[] = [
-  { id: 'emisor', etiqueta: 'Emisor' },
-  { id: 'emisor_cuit', etiqueta: 'CUIT del emisor' },
-  { id: 'receptor', etiqueta: 'Receptor' },
-  { id: 'receptor_cuit', etiqueta: 'CUIT del receptor' },
-  { id: 'tipo', etiqueta: 'Tipo' },
-  { id: 'numero', etiqueta: 'Número' },
-  { id: 'fecha', etiqueta: 'Fecha (DD/MM/AAAA)' },
+/**
+ * El encabezado, en una grilla de 6 columnas (`ancho`: cuántas ocupa). Fila 1:
+ * emisor, su CUIT, receptor, su CUIT; fila 2: tipo, número y fecha. Sin CAE: los
+ * tiques de controlador fiscal no lo llevan.
+ */
+export const CAMPOS_ENCABEZADO: { id: string; etiqueta: string; ancho: number; ayuda?: string }[] = [
+  { id: 'emisor', etiqueta: 'Emisor', ancho: 2 },
+  { id: 'emisor_cuit', etiqueta: 'CUIT del emisor', ancho: 1 },
+  { id: 'receptor', etiqueta: 'Receptor', ancho: 2 },
+  { id: 'receptor_cuit', etiqueta: 'CUIT del receptor', ancho: 1 },
+  { id: 'tipo', etiqueta: 'Tipo de comprobante', ancho: 2 },
+  { id: 'numero', etiqueta: 'Número (PV-Nro)', ancho: 2, ayuda: '00001-00000001' },
+  { id: 'fecha', etiqueta: 'Fecha', ancho: 2, ayuda: 'DD/MM/AAAA' },
 ];
 
+/** Bases y totales (el IVA va aparte, por alícuota). */
 export const CAMPOS_TOTALES: { id: string; etiqueta: string }[] = [
   { id: 'neto_gravado', etiqueta: 'Neto gravado' },
   { id: 'no_gravado', etiqueta: 'No gravado' },
   { id: 'exento', etiqueta: 'Exento' },
-  { id: 'iva', etiqueta: 'IVA' },
   { id: 'impuestos_internos', etiqueta: 'Impuestos internos' },
   { id: 'percepcion_iibb', etiqueta: 'Percepción IIBB Bs. As.' },
   { id: 'otros_tributos', etiqueta: 'Otros tributos' },
   { id: 'total', etiqueta: 'Total' },
 ];
+
+/** Todos los importes de `totales` (para «Usar»). */
+const TOTALES = ['neto_gravado', 'no_gravado', 'exento', 'iva', 'impuestos_internos', 'percepcion_iibb', 'otros_tributos', 'total'];
+
+/** Las alícuotas de IVA que se pueden elegir. */
+export const ALICUOTAS_IVA = [21, 10.5, 27, 5, 2.5, 0];
+
+const TOLERANCIA = 0.05;
 
 /** «83.974,75», «83974.75», «$ 1.210» o vacío (null). */
 export function aNumero(texto: string): number | null {
@@ -67,19 +79,24 @@ export function contar(lectura: LecturaExcel, nivel: NivelVerificacion): number 
 
 /** Sin la duda de un campo: una vez que la persona lo corrigió, ya está mirado. */
 export function sinDuda(lectura: LecturaExcel, campo: string): LecturaExcel {
-  // Lo que el usuario puso a mano deja de figurar como duda o como autocorregido.
-  if (!(campo in lectura.dudas) && !(campo in (lectura.corregidos ?? {}))) return lectura;
+  if (!(campo in lectura.dudas)) return lectura;
   const dudas = { ...lectura.dudas };
-  const corregidos = { ...lectura.corregidos };
   delete dudas[campo];
-  delete corregidos[campo];
-  return { ...lectura, dudas, corregidos };
+  return { ...lectura, dudas };
 }
 
 /** Aplica la sugerencia de una verificación al campo que corresponde. */
 export function usarSugerencia(lectura: LecturaExcel, v: Verificacion): LecturaExcel {
   if (v.sugerencia === null || v.sugerencia === undefined) return lectura;
-  if (CAMPOS_TOTALES.some((c) => c.id === v.campo)) {
+  // «iva_N»: el IVA de la fila N del desglose. «iva» con una sola fila (o ninguna): esa fila.
+  const fila = /^iva_(\d+)$/.exec(v.campo)?.[1];
+  const desglose = lectura.iva_alicuotas ?? [];
+  if (fila !== undefined || (v.campo === 'iva' && desglose.length <= 1)) {
+    const i = fila !== undefined ? Number(fila) : 0;
+    const filas = desglose.length ? desglose : [{ alicuota: null, base: lectura.totales['neto_gravado'] ?? null, importe: null }];
+    return conDesglose(lectura, filas.map((f, j) => (j === i ? { ...f, importe: Number(v.sugerencia) } : f)));
+  }
+  if (TOTALES.includes(v.campo)) {
     return sinDuda({ ...lectura, totales: { ...lectura.totales, [v.campo]: Number(v.sugerencia) } }, v.campo);
   }
   return sinDuda({ ...lectura, encabezado: { ...lectura.encabezado, [v.campo]: String(v.sugerencia) } }, v.campo);
@@ -91,6 +108,115 @@ export function itemVacio(): ItemLeido {
 
 export function sumaItems(items: ItemLeido[]): number {
   return Math.round(items.reduce((s, x) => s + (x.importe ?? 0), 0) * 100) / 100;
+}
+
+/** El desglose de IVA nuevo, con `totales.iva` igual a su suma. */
+export function conDesglose(lectura: LecturaExcel, filas: AlicuotaIva[]): LecturaExcel {
+  const iva = filas.length ? redondear(filas.reduce((s, f) => s + (f.importe ?? 0), 0)) : null;
+  return sinDuda({ ...lectura, iva_alicuotas: filas, totales: { ...lectura.totales, iva } }, 'iva');
+}
+
+type GrupoTributo = 'impuestos_internos' | 'percepcion_iibb' | 'otros_tributos';
+
+/**
+ * A qué total va una fila de otros tributos (lo mismo que `grupo_tributo` en
+ * a_excel.py): impuestos internos, percepción IIBB Bs. As. o el resto.
+ */
+export function grupoTributo(t: TributoLeido): GrupoTributo {
+  const d = t.descripcion.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (/\bimp(?:uestos?|\.)?\s*int(?:ernos?|\.)?\b/.test(d)) return 'impuestos_internos';
+  if (/\bperc\w*\.?.*\b(?:i[il1t]bb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos|arba)\b/.test(d) && !/\b(?:caba|ciudad|agip|capital)\b/.test(d)) {
+    return 'percepcion_iibb';
+  }
+  return 'otros_tributos';
+}
+
+/**
+ * Los otros tributos nuevos. Con filas, cada una suma una sola vez en su total
+ * (impuestos internos, percepción IIBB Bs. As. u otros tributos): si no, la
+ * percepción contaría dos veces en el total de la factura.
+ */
+export function conTributos(lectura: LecturaExcel, filas: TributoLeido[]): LecturaExcel {
+  const totales = { ...lectura.totales };
+  if (filas.length) {
+    const grupos = new Map<GrupoTributo, number>();
+    for (const f of filas) grupos.set(grupoTributo(f), (grupos.get(grupoTributo(f)) ?? 0) + (f.importe ?? 0));
+    for (const g of ['impuestos_internos', 'percepcion_iibb'] as const) {
+      if (grupos.has(g)) totales[g] = redondear(grupos.get(g)!);
+    }
+    totales['otros_tributos'] = grupos.has('otros_tributos') ? redondear(grupos.get('otros_tributos')!) : null;
+  }
+  return sinDuda({ ...lectura, tributos: filas, totales }, 'otros_tributos');
+}
+
+/** 21 → «IVA 21%», 10.5 → «IVA 10,5%». */
+export function nombreAlicuota(a: number | null): string {
+  return a === null ? 'IVA' : `IVA ${String(a).replace('.', ',')}%`;
+}
+
+/** Una alícuota que no esté ya en el desglose (para «+ Agregar alícuota»). */
+export function alicuotaLibre(filas: AlicuotaIva[]): number | null {
+  return ALICUOTAS_IVA.find((a) => !filas.some((f) => f.alicuota === a)) ?? null;
+}
+
+/**
+ * El IVA que dan los ítems en cada alícuota (lo mismo que `iva_de_items` en
+ * a_excel.py). Si el detalle suma el neto, los importes son sin IVA; si suma el
+ * total (tiques, factura B), lo incluyen.
+ */
+export function ivaDeItems(items: ItemLeido[], totales: Record<string, number | null>): Map<number, number> {
+  const suma = items.reduce((s, x) => s + (x.importe ?? 0), 0);
+  const neto = totales['neto_gravado'] ?? null;
+  const total = totales['total'] ?? null;
+  const conIva = total !== null && (neto === null || Math.abs(suma - total) < Math.abs(suma - neto));
+  const salida = new Map<number, number>();
+  for (const x of items) {
+    if (x.alicuota === null || x.importe === null) continue;
+    const iva = conIva ? x.importe - x.importe / (1 + x.alicuota / 100) : (x.importe * x.alicuota) / 100;
+    salida.set(x.alicuota, (salida.get(x.alicuota) ?? 0) + iva);
+  }
+  for (const [a, v] of salida) salida.set(a, redondear(v));
+  return salida;
+}
+
+export interface FilaDesglose extends AlicuotaIva {
+  /** base × alícuota. */
+  calculado: number | null;
+  /** El IVA de los ítems de esa alícuota (null si el detalle no alcanza para calcularlo). */
+  deItems: number | null;
+  estado: NivelVerificacion;
+  motivo: string;
+}
+
+/** Cada fila del desglose con lo que dan las cuentas, al instante (sin esperar al backend). */
+export function revisarDesglose(lectura: LecturaExcel): FilaDesglose[] {
+  const items = lectura.items;
+  const calculable = items.length > 0 && items.every((x) => x.alicuota !== null && x.importe !== null);
+  const porAlicuota = calculable ? ivaDeItems(items, lectura.totales) : null;
+  const tolItems = Math.max(TOLERANCIA, 0.01 * items.length);
+  return (lectura.iva_alicuotas ?? []).map((f) => {
+    const calculado = f.base !== null && f.alicuota !== null ? redondear((f.base * f.alicuota) / 100) : null;
+    const deItems = porAlicuota && f.alicuota !== null ? (porAlicuota.get(f.alicuota) ?? 0) : null;
+    let estado: NivelVerificacion = 'ok';
+    let motivo = 'Da con la base y con los ítems.';
+    if (f.alicuota === null || f.importe === null) {
+      estado = 'aviso';
+      motivo = f.alicuota === null ? 'Falta la alícuota.' : 'Falta el importe del IVA.';
+    } else if (calculado !== null && Math.abs(calculado - f.importe) > Math.max(TOLERANCIA, Math.abs(f.importe) * 0.0005)) {
+      estado = 'error';
+      motivo = `El ${String(f.alicuota).replace('.', ',')}% de la base es ${aTexto(calculado)}.`;
+    } else if (deItems !== null && Math.abs(deItems - f.importe) > tolItems) {
+      estado = 'aviso';
+      motivo = `Los ítems de esta alícuota dan ${aTexto(deItems)} de IVA.`;
+    } else if (deItems === null) {
+      motivo = 'Da con la base (los ítems no alcanzan para comparar).';
+    }
+    return { ...f, calculado, deItems, estado, motivo };
+  });
+}
+
+function redondear(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 // --- Para el estudio: de qué empresa es la factura y cómo queda desde su lado ---------
@@ -108,8 +234,6 @@ export interface FacturaDelEstudio {
   empresa: string;
   operacion: Operacion;
   /** Cómo se detectó: por la CUIT del receptor, del emisor, o elegida a mano. */
-  /** El emisor y el receptor son clientes del estudio: se eligió uno (se puede cambiar). */
-  ambigua?: boolean;
   origen: 'receptor' | 'emisor' | 'manual' | 'trabajo';
   /** Proveedor (compra) o cliente (venta). */
   contraparte: { nombre: string; cuit: string };
@@ -121,28 +245,8 @@ export const soloDigitos = (s: string | undefined | null) => (s ?? '').replace(/
  * La empresa del estudio de esta factura: si es el receptor, es una compra; si es
  * el emisor, una venta. Primero el receptor (lo más común: facturas de proveedores).
  */
-export function detectarEmpresa(
-  encabezado: Record<string, string>, empresas: EmpresaEstudio[], pista: { archivo?: string; trabajo?: string } = {},
-): FacturaDelEstudio | null {
+export function detectarEmpresa(encabezado: Record<string, string>, empresas: EmpresaEstudio[]): FacturaDelEstudio | null {
   const lados: ['receptor' | 'emisor', Operacion][] = [['receptor', 'Compras'], ['emisor', 'Ventas']];
-  // El emisor y el receptor son los dos clientes del estudio: ¿desde cuál se mira?
-  // 1) el nombre del archivo («Comprobantes de Venta»); 2) la empresa con la que se viene
-  // trabajando; 3) si no, como siempre (compra).
-  const deCadaLado = lados.map(([lado, operacion]) => {
-    const cuit = soloDigitos(encabezado[`${lado}_cuit`]);
-    const nombre = encabezado[lado] ?? '';
-    const e = empresas.find((x) => cuit.length === 11 && x.cuits.some((c) => digitosDistintos(soloDigitos(c), cuit) <= 2))
-      ?? empresas.find((x) => mismoNombre(x.nombre, nombre));
-    return e ? adaptar(encabezado, e.nombre, operacion, lado) : null;
-  });
-  const [compra, venta] = deCadaLado;
-  if (compra && venta && compra.empresa !== venta.empresa) {
-    const archivo = (pista.archivo ?? '').toLowerCase();
-    if (/\bventas?\b/.test(archivo) && !/\bcompras?\b/.test(archivo)) return { ...venta, ambigua: true };
-    if (/\bcompras?\b/.test(archivo) && !/\bventas?\b/.test(archivo)) return { ...compra, ambigua: true };
-    if (pista.trabajo === venta.empresa) return { ...venta, ambigua: true };
-    return { ...compra, ambigua: true };
-  }
   // 1) La CUIT tal cual; 2) la CUIT con 1 o 2 dígitos mal leídos (OCR); 3) el nombre.
   const pruebas: ((e: EmpresaEstudio, cuit: string, nombre: string) => boolean)[] = [
     (e, cuit) => cuit.length === 11 && e.cuits.map(soloDigitos).includes(cuit),
@@ -182,56 +286,6 @@ export function recordarEmpresaDeTrabajo(nombre: string): void {
   try { if (nombre) localStorage.setItem(CLAVE_TRABAJO, nombre); } catch { /* sin almacenamiento */ }
 }
 
-// --- Proveedores (y clientes) corregidos a mano ---------------------------------------
-// «FOC FUELS MARKETING SA» con un CUIT mal leído -> «FGC FUELS MARKETING SA» y su CUIT: lo
-// que se corrige una vez queda para las próximas facturas (por CUIT y por nombre leído).
-const CLAVE_CONTRAPARTES = 'cf-contrapartes-v1';
-type Contraparte = { nombre: string; cuit: string };
-
-const claveNombre = (n: string) => 'n:' + n.normalize('NFD').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-const claveCuit = (c: string) => 'c:' + soloDigitos(c);
-
-function contrapartes(): Record<string, Contraparte> {
-  try { return JSON.parse(localStorage.getItem(CLAVE_CONTRAPARTES) ?? '{}') ?? {}; } catch { return {}; }
-}
-
-/** Guarda la corrección: lo leído (nombre y CUIT) -> lo correcto. */
-export function recordarContraparte(leidoNombre: string, leidoCuit: string, nombre: string, cuit: string): void {
-  if (!nombre.trim()) return;
-  const m = contrapartes();
-  const valor = { nombre: nombre.trim(), cuit: soloDigitos(cuit) };
-  for (const k of [leidoNombre && claveNombre(leidoNombre), soloDigitos(leidoCuit).length === 11 && claveCuit(leidoCuit),
-    claveNombre(nombre), valor.cuit.length === 11 && claveCuit(valor.cuit)]) if (k) m[k] = valor;
-  // Lo anterior que llevaba a este mismo nombre queda con el CUIT nuevo.
-  for (const k of Object.keys(m)) if (m[k].nombre === valor.nombre) m[k] = valor;
-  try { localStorage.setItem(CLAVE_CONTRAPARTES, JSON.stringify(m)); } catch { /* sin almacenamiento */ }
-}
-
-/** Aplica lo recordado al emisor y al receptor; lo cambiado queda como autocorregido (naranja y aviso). */
-export function aplicarContrapartes(l: LecturaExcel): LecturaExcel {
-  const m = contrapartes();
-  let e = l.encabezado;
-  const corregidos = { ...l.corregidos };
-  const avisos: Verificacion[] = [];
-  for (const lado of ['emisor', 'receptor']) {
-    const nombre = e[lado] ?? '';
-    const cuit = e[`${lado}_cuit`] ?? '';
-    const r = (soloDigitos(cuit).length === 11 ? m[claveCuit(cuit)] : undefined) ?? (nombre ? m[claveNombre(nombre)] : undefined);
-    if (!r || (r.nombre === nombre && (!r.cuit || r.cuit === soloDigitos(cuit)))) continue;
-    e = { ...e, [lado]: r.nombre, ...(r.cuit ? { [`${lado}_cuit`]: r.cuit } : {}) };
-    if (r.nombre !== nombre && nombre) corregidos[lado] = nombre;
-    if (r.cuit && r.cuit !== soloDigitos(cuit) && cuit) corregidos[`${lado}_cuit`] = cuit;
-    avisos.push({
-      campo: lado, nivel: 'aviso', sugerencia: null, titulo: `Autocorregí el ${lado} (como lo corregiste antes)`,
-      mensaje: `Se leyó «${nombre}${cuit ? ' · ' + cuit : ''}» y lo dejé como lo corregiste la otra vez.`,
-      datos: [`Leído ${nombre}`, `Ahora ${r.nombre}`],
-    });
-  }
-  if (!avisos.length) return l;
-  const campos = new Set(avisos.map((v) => v.campo));
-  return { ...l, encabezado: e, corregidos, verificaciones: [...avisos, ...l.verificaciones.filter((v) => !campos.has(v.campo) || v.nivel === 'ok')] };
-}
-
 /** La factura desde el lado de la empresa: en una compra la contraparte es el emisor; en una venta, el receptor. */
 export function adaptar(encabezado: Record<string, string>, empresa: string, operacion: Operacion, origen: FacturaDelEstudio['origen']): FacturaDelEstudio {
   const lado = operacion === 'Compras' ? 'emisor' : 'receptor';
@@ -253,11 +307,64 @@ export function sinCae(texto: string): string {
 
 const CLAVE_PRODUCTOS = 'cf-productos-por-empresa';
 
+/** Los productos/servicios cargados en Xubio (los mismos para compras y ventas). */
+export const PRODUCTOS_XUBIO: string[] = [
+  'Campañas Publicitarias',
+  'Campañas Publicitarias 10.5%',
+  'COMBUSTIBLE',
+  'Combustible al 27%',
+  'Combustible exento',
+  'Equipos de Computación',
+  'Equipos de Computacion 10,5',
+  'GASTOS BANCARIOS',
+  'GASTOS BANCARIOS 10.5',
+  'Gastos de asesoramiento',
+  'Gastos de capacitación',
+  'Gastos de certificaciones y legalizaciones',
+  'Gastos de certificaciones y legalizaciones 21%',
+  'Gastos de Libreria',
+  'Gastos de limpieza, libreria y refrigerio',
+  'Gastos de Mantenimiento',
+  'Gastos de movilidad y viáticos',
+  'Gastos de Organización',
+  'Gastos de Seguridad',
+  'GASTOS DE SEGUROS',
+  'Gastos de sistemas',
+  'Gastos de sistemas (Exento)',
+  'GASTOS VARIOS',
+  'Gastos Varios al 10,5%',
+  'Gastos varios de admnistracion exento',
+  'Herramientas',
+  'HONORARIOS PROFESIONALES',
+  'Honorarios profesionales (exento)',
+  'IMPUESTO A LOS CR BANCARIOS',
+  'IMPUESTO A LOS DB BANCARIOS',
+  'Impuesto país',
+  'Instalaciones',
+  'INSTALACIONES 10,50%',
+  'Intereses financieros',
+  'Luz, Gas, Telefono e internet 21%',
+  'Luz, Gas, Telefono e internet 27%',
+  'Luz, Gas, Telefono e internet exento',
+  'Mejoras en inmuebles de terceros',
+  'Muebles y Utiles',
+  'Muebles y Utiles 10,5%',
+  'Muebles y útiles exento',
+  'Pagina web, redes, facebook, Instagram, etc',
+  'Préstamo BBVA',
+  'Producto al 10.5%',
+  'Producto al 21% (PROD21)',
+  'Producto Exento (Compra de Servicios)',
+  'Publicidad',
+  'ROPA DE TRABAJO',
+  'Servicio de consultoria y procesamiento de datos',
+  'Servidores - Emails',
+  'SOFTWARE',
+  'Software exento',
+];
+
 /** Los de siempre, según la operación, para arrancar. */
-export const PRODUCTOS_BASE: Record<Operacion, string[]> = {
-  Compras: ['Mercaderías', 'Servicios', 'Gastos de limpieza', 'Refrigerio', 'Combustible', 'Honorarios', 'Alquiler'],
-  Ventas: ['Servicios profesionales', 'Honorarios', 'Venta de mercaderías', 'Abono mensual'],
-};
+export const PRODUCTOS_BASE: Record<Operacion, string[]> = { Compras: PRODUCTOS_XUBIO, Ventas: PRODUCTOS_XUBIO };
 
 function leerProductos(): Record<string, string[]> {
   try {
@@ -268,12 +375,12 @@ function leerProductos(): Record<string, string[]> {
   }
 }
 
-/** Primero los que ya usó esa empresa (el último arriba), después los de siempre. */
+/** Primero los que ya usó esa empresa (el último arriba), después todos los de Xubio. */
 export function productosSugeridos(empresa: string, operacion: Operacion): string[] {
   const usados = empresa ? (leerProductos()[`${empresa}|${operacion}`] ?? []) : [];
   const clave = (x: string) => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   const vistos = new Set<string>();
-  return [...usados, ...PRODUCTOS_BASE[operacion]].filter((x) => !vistos.has(clave(x)) && !!vistos.add(clave(x))).slice(0, 10);
+  return [...usados, ...PRODUCTOS_BASE[operacion]].filter((x) => !vistos.has(clave(x)) && !!vistos.add(clave(x)));
 }
 
 /** Lo que el usuario eligió para una descripción: la próxima vez se sugiere eso. */

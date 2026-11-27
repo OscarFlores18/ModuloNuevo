@@ -18,6 +18,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
@@ -410,6 +411,8 @@ def extraer_comprobantes(body: ExtraerRequest, clientes: ClientesRepository = De
 
 class LeerAExcelRequest(BaseModel):
     archivos: list[ArchivoComprobantes] = Field(min_length=1, max_length=20)
+    # Para probar un motor solo con las imágenes (si no, OCR_MODE / FORCE_TESSERACT).
+    motor: Literal["auto", "gemini", "paddle", "tesseract"] | None = None
 
 
 @router.post("/a-excel/leer")
@@ -428,7 +431,7 @@ def leer_a_excel(body: LeerAExcelRequest) -> dict:
             lecturas.append({"archivo": nombre, "error": f"«{nombre}» es demasiado grande (más de 25 MB)."})
             continue
         try:
-            lecturas.append(a_excel.leer(nombre, datos).model_dump())
+            lecturas.append(a_excel.leer(nombre, datos, body.motor).model_dump())
         except ValueError as exc:
             lecturas.append({"archivo": nombre, "error": str(exc)})
         except Exception as exc:  # que un archivo raro no corte los demás

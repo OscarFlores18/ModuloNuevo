@@ -3,14 +3,19 @@ con una verificación de lo leído antes de armarlo.
 
 1. `leer`: saca los datos del archivo.
    - Planillas y CSV: las hojas tal cual (los números y fechas como tales).
-   - Fotos, capturas y PDF escaneados: OCR en varias pasadas (`PASADAS`). Lo que
-     cada pasada lee distinto queda marcado y, entre las lecturas, se elige la que
-     cierra con las cuentas (neto + IVA + otros tributos = total).
+   - Fotos y capturas, en cascada (`_leer_imagen`): el QR de ARCA si tiene (exacto)
+     y, según OCR_MODE, Gemini (gemini.py) y/o el OCR local: PaddleOCR (paddle.py,
+     opcional) o Tesseract con OpenCV (tesseract.py). Tesseract
+     lee varias pasadas si la primera no cierra: lo que cada una lee distinto queda
+     marcado y se elige la que cierra con las cuentas (neto + IVA + otros = total).
+   - PDF escaneados: Tesseract, igual que las fotos.
    - PDF digitales: el texto del PDF (sin OCR).
    Si el texto parece un comprobante, se arman encabezado, detalle y totales; si
    no, el texto queda como tabla (columnas separadas por espacios).
 2. `verificar`: lo que conviene mirar antes de armar el Excel: CUIT con dígito
-   verificador mal, totales que no cierran, detalle que no suma el neto, fecha
+   verificador mal (y la corrección 0↔8 de las ticketeadoras), totales que no
+   cierran, IVA de cada alícuota que no da con su base o con los ítems, detalle
+   que no suma el neto, fecha
    imposible, datos leídos distinto en cada pasada. Con sugerencia cuando la
    cuenta la da (p. ej. el neto que falta para llegar al total).
 3. `generar`: el .xlsx (encabezado, detalle con fórmulas, verificación y el
@@ -24,12 +29,13 @@ import io
 import itertools
 import logging
 import re
+import time
 from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .modelo import TIPOS, cuit_valido, fecha as fecha_iso, importe, nombre_tipo, norm
 from .texto_factura import _tipo as tipo_del_texto
@@ -41,9 +47,6 @@ PLANILLAS = {".xlsx", ".xlsm", ".xls", ".csv", ".txt"}
 IMAGENES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 FORMATOS = PLANILLAS | IMAGENES | {".pdf"}
 
-# (lado mayor en px, modo de página de Tesseract). Probado con fotos de tiques
-# térmicos: 4000 px en modo 6 es la que mejor lee; las otras sirven para comparar.
-PASADAS = ((4000, 6), (3200, 6), (2600, 6))
 MAX_FILAS = 20000
 MAX_PAGINAS = 20
 TOLERANCIA = 0.05
@@ -68,10 +71,17 @@ ETIQUETAS_ENCABEZADO = {
     "tipo": "Tipo de comprobante",
     "numero": "Número",
     "fecha": "Fecha",
-    "cae": "CAE",
 }
 
 Nivel = Literal["ok", "aviso", "error"]
+
+
+def _cortar(valor, campo):
+    """El texto, sin pasar del max_length del campo."""
+    if not isinstance(valor, str):
+        return valor
+    largo = next((m.max_length for m in campo.metadata if getattr(m, "max_length", None)), None)
+    return valor[:largo].rstrip() if largo and len(valor) > largo else valor
 
 
 class Item(BaseModel):
@@ -88,6 +98,34 @@ class Item(BaseModel):
     leido: str = Field(default="", max_length=300)
     # El importe que se leyó antes de autocorregirlo (None si no se tocó).
     importe_leido: float | None = None
+
+    @field_validator("codigo", "descripcion", "producto", "leido", mode="before")
+    @classmethod
+    def _recortar(cls, v, info):
+        # Un OCR que leyó basura de corrido no hace fallar toda la lectura: se corta.
+        return _cortar(v, cls.model_fields[info.field_name])
+
+
+class AlicuotaIva(BaseModel):
+    """Una fila del desglose de IVA: la alícuota (21, 10.5…), su base imponible y el IVA."""
+
+    alicuota: float | None = None
+    base: float | None = None
+    importe: float | None = None
+
+
+class Tributo(BaseModel):
+    """Una fila de «otros tributos»: percepción, impuesto interno, tasa…"""
+
+    codigo: str = Field(default="", max_length=10)
+    descripcion: str = Field(default="", max_length=120)
+    base: float | None = None
+    importe: float | None = None
+
+    @field_validator("codigo", "descripcion", mode="before")
+    @classmethod
+    def _recortar(cls, v, info):
+        return _cortar(v, cls.model_fields[info.field_name])
 
 
 class Hoja(BaseModel):
@@ -114,15 +152,22 @@ class Lectura(BaseModel):
     tipo: Literal["comprobante", "tabla"] = "tabla"
     # «ia»: imagen leída con Gemini (ver gemini.py).
     metodo: Literal["planilla", "pdf", "ocr", "ia"] = "planilla"
+    # Qué leyó la imagen: «gemini», «paddleocr_local», «tesseract_local»,
+    # con «qr+» adelante si se usó el QR de ARCA.
+    motor: str = Field(default="", max_length=40)
+    # Cuánto tardó la lectura de la imagen (para comparar motores).
+    duracion_ms: int | None = None
     encabezado: dict[str, str] = Field(default_factory=dict)
     items: list[Item] = Field(default_factory=list, max_length=2000)
     totales: dict[str, float | None] = Field(default_factory=dict)
+    # El IVA por alícuota; totales["iva"] es siempre la suma de los importes.
+    iva_alicuotas: list[AlicuotaIva] = Field(default_factory=list, max_length=20)
+    # Otros tributos uno por uno; con filas, totales["otros_tributos"] es su suma.
+    tributos: list[Tributo] = Field(default_factory=list, max_length=30)
     hojas: list[Hoja] = Field(default_factory=list, max_length=60)
     texto: str = Field(default="", max_length=400_000)
     # Lo que cada pasada de OCR leyó distinto: campo -> valores leídos.
     dudas: dict[str, list[str]] = Field(default_factory=dict)
-    # Lo que se autocorrigió del encabezado: campo -> lo que se había leído.
-    corregidos: dict[str, str] = Field(default_factory=dict)
     avisos: list[str] = Field(default_factory=list)
     verificaciones: list[Verificacion] = Field(default_factory=list)
 
@@ -193,8 +238,7 @@ def _totales(lineas: list[str]) -> dict[str, float | None]:
             t.setdefault("exento", v)
         elif re.search(r"\bimp(?:uestos?|\.)?\s*int(?:ernos?|\.)?\b", norm(linea)):
             t["impuestos_internos"] = round((t.get("impuestos_internos") or 0) + v, 2)
-        elif re.search(r"\bperc\w*\.?\s*(?:de\s+)?(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos)", norm(linea)) \
-                or re.search(r"\b(?:p\.?\s*)?(?:iibb|ii\.?\s*bb)\s*(?:bs\.?\s*as|buenos\s+aires|arba|pba)\b", norm(linea)):
+        elif re.search(r"\bperc\w*\.?\s*(?:de\s+)?(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos)", norm(linea)):
             # Bs. As. (ARBA) aparte; las de otras jurisdicciones (CABA…) van a otros tributos.
             clave = "otros_tributos_det" if re.search(r"\b(caba|ciudad|agip|capital)\b", norm(linea)) else "percepcion_iibb"
             t[clave] = round((t.get(clave) or 0) + v, 2)
@@ -299,8 +343,6 @@ def _encabezado(texto: str, lineas: list[str]) -> dict[str, str]:
     if m := re.search(r"Fecha[^\d\n]{0,25}(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})", texto, re.IGNORECASE) or re.search(r"\b(\d{2}/\d{2}/\d{4})\b", texto):
         iso = fecha_iso(m.group(1))
         e["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else m.group(1)
-    if m := re.search(r"C\.?\s?A\.?\s?E\.?\s*(?:N[°º.*o]?)?\s*:?\s*(\d{14})\b", texto, re.IGNORECASE):
-        e["cae"] = m.group(1)
     return e
 
 
@@ -495,23 +537,22 @@ def hoja_de_texto(texto: str, nombre: str = "Texto") -> Hoja:
     return Hoja(nombre=nombre, filas=filas[:MAX_FILAS])
 
 
-def _imagen_a_lectura(nombre: str, imagen, lectura: Lectura) -> Lectura:
-    from .ocr import OCRNoDisponible, texto_de_imagen_variante
+def _imagen_a_lectura(nombre: str, imagen, lectura: Lectura, pasadas_extra: bool = True) -> Lectura:
+    """La imagen leída con Tesseract (tesseract.extract_with_tesseract)."""
+    from .ocr import OCRNoDisponible
+    from .tesseract import extract_with_tesseract
 
     lectura.metodo = "ocr"
-    pasadas = []
-    for lado, psm in PASADAS:
-        try:
-            pasadas.append(texto_de_imagen_variante(imagen, lado, psm))
-        except OCRNoDisponible as exc:
-            lectura.avisos.append(str(exc))
-            break
-        except Exception as exc:
-            logger.warning("OCR falló en %s (%s px, psm %s): %s", nombre, lado, psm, exc)
-    if not pasadas:
-        lectura.avisos.append("No se pudo leer el texto de la imagen.")
+    try:
+        datos = extract_with_tesseract(imagen, pasadas_extra=pasadas_extra)
+    except OCRNoDisponible as exc:
+        lectura.avisos.append(str(exc))
         return lectura
-    return _desde_texto(lectura, pasadas)
+    except Exception as exc:
+        logger.warning("OCR falló en %s: %s", nombre, exc)
+        lectura.avisos.append(f"Tesseract no pudo leer el texto de la imagen ({str(exc)[:160] or type(exc).__name__}).")
+        return lectura
+    return _desde_json(lectura, datos, "ocr")
 
 
 def _numero(v) -> float | None:
@@ -527,11 +568,37 @@ def _entero(v) -> int | None:
     return int(digitos) if digitos else None
 
 
-def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
-    """El JSON de Gemini (ver gemini.PROMPT) a una Lectura, con los mismos formatos
-    que la lectura por OCR: así pasa por las mismas verificaciones."""
-    lectura.metodo = "ia"
+def _codigo_de_tipo(valor) -> int | None:
+    """«81 - Tique Factura A», 81 o «Tique Factura A» → 81."""
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return int(valor)
+    texto = str(valor or "").strip()
+    if m := re.match(r"\D{0,3}(\d{1,3})\b", texto):
+        return int(m.group(1))
+    if codigo := tipo_del_texto(texto):
+        return codigo
+    if m := re.search(r"t\w?que\s+factura\W+([abc])\b", norm(texto)):
+        return {"a": 81, "b": 82, "c": 111}[m.group(1)]
+    return None
+
+
+def _primero(d: dict, *claves):
+    """El primer valor presente entre las claves (el esquema nuevo y el viejo)."""
+    for k in claves:
+        if d.get(k) not in (None, ""):
+            return d[k]
+    return None
+
+
+def _desde_json(lectura: Lectura, datos: dict, metodo: Literal["ia", "ocr"]) -> Lectura:
+    """El JSON fiscal (gemini.PROMPT; PaddleOCR y Tesseract arman el mismo, ver
+    tesseract.json_de_texto) a una Lectura: así todas pasan por las mismas verificaciones."""
+    lectura.metodo = metodo
+    validaciones = datos.get("validaciones") if isinstance(datos.get("validaciones"), dict) else {}
+    lectura.motor = str(validaciones.get("motor_utilizado") or ("gemini" if metodo == "ia" else "tesseract_local"))[:40]
     lectura.texto = str(datos.get("texto") or "")[:400_000]
+    if isinstance(datos.get("dudas"), dict):
+        lectura.dudas = {str(k): [str(x) for x in v][:5] for k, v in datos["dudas"].items() if isinstance(v, list)}
     if str(datos.get("tipo") or "").lower() == "tabla" or not isinstance(datos.get("encabezado"), dict):
         filas = [[_celda(c) for c in f] for f in (datos.get("filas") or []) if isinstance(f, list)]
         lectura.tipo = "tabla"
@@ -541,20 +608,28 @@ def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
     g = datos.get("encabezado") or {}
     e: dict[str, str] = {}
     for rol in ("emisor", "receptor"):
-        if nombre := str(g.get(rol) or "").strip():
+        if nombre := str(_primero(g, f"{rol}_razon_social", rol) or "").strip():
             e[rol] = nombre[:200]
         if cuit := re.sub(r"\D", "", str(g.get(f"{rol}_cuit") or "")):
+            # El 0 tachado de las ticketeadoras se lee como 8 (IA y OCR).
+            if len(cuit) == 11 and not cuit_valido(cuit) and len(arreglos := cuits_cambiando_0_y_8(cuit)) == 1:
+                lectura.avisos.append(
+                    f"{ETIQUETAS_ENCABEZADO[rol + '_cuit']}: se leyó {cuit}, que no pasa el dígito verificador; "
+                    f"cambiando 0 y 8 da {arreglos[0]}, que sí. Compará con la imagen."
+                )
+                cuit = arreglos[0]
             e[f"{rol}_cuit"] = cuit
-    if (codigo := _entero(g.get("tipo_codigo"))) in TIPOS:
+    if (codigo := _codigo_de_tipo(_primero(g, "tipo_comprobante", "tipo_codigo"))) in TIPOS:
         e["tipo"] = nombre_tipo(codigo)
-    pv, nro = _entero(g.get("punto_de_venta")), _entero(g.get("numero"))
-    if nro is not None:
+    pv = _entero(_primero(g, "punto_venta", "punto_de_venta"))
+    numero = str(_primero(g, "numero_comprobante", "numero") or "")
+    if m := re.fullmatch(r"\s*(\d{1,5})\s*-\s*(\d{1,8})\s*", numero):  # «00018-00076897» en un solo campo
+        pv, numero = pv or int(m.group(1)), m.group(2)
+    if (nro := _entero(numero)) is not None:
         e["numero"] = f"{pv or 0:05d}-{nro:08d}"
     if f := str(g.get("fecha") or "").strip():
         iso = fecha_iso(f)
         e["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else f
-    if cae := re.sub(r"\D", "", str(g.get("cae") or "")):
-        e["cae"] = cae
     lectura.tipo = "comprobante"
     lectura.encabezado = e
     lectura.items = [
@@ -562,8 +637,8 @@ def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
             codigo=str(x.get("codigo") or "")[:40],
             descripcion=str(x.get("descripcion") or "")[:300],
             cantidad=_numero(x.get("cantidad")),
-            precio=_numero(x.get("precio")),
-            alicuota=_numero(x.get("alicuota")),
+            precio=_numero(_primero(x, "precio_unitario", "precio")),
+            alicuota=_numero(_primero(x, "alicuota_iva", "alicuota")),
             importe=_numero(x.get("importe")),
             impuestos_internos=_numero(x.get("impuestos_internos")),
             producto=str(x.get("producto") or "")[:60],
@@ -571,25 +646,261 @@ def _desde_gemini(lectura: Lectura, datos: dict) -> Lectura:
         for x in (datos.get("items") or [])[:2000]
         if isinstance(x, dict)
     ]
-    t = datos.get("totales") or {}
+    t = datos.get("importes") if isinstance(datos.get("importes"), dict) else datos.get("totales") or {}
     lectura.totales = {k: _numero(t.get(k)) for k in TOTALES}
+    lectura.iva_alicuotas = [
+        AlicuotaIva(
+            alicuota=_numero(x.get("alicuota")),
+            base=_numero(_primero(x, "base_imponible", "base")),
+            importe=_numero(_primero(x, "importe_iva", "importe")),
+        )
+        for x in (t.get("desglose_iva") or [])[:20]
+        if isinstance(x, dict) and any(x.get(k) not in (None, "", 0) for k in ("base_imponible", "importe_iva", "base", "importe"))
+    ]
+    lectura.tributos = [_tributo(x) for x in (t.get("desglose_tributos") or [])[:30] if isinstance(x, dict)]
+    lectura.tributos = [x for x in lectura.tributos if x.descripcion or x.importe]
+    for advertencia in (validaciones.get("advertencias") or [])[:5]:
+        if not isinstance(advertencia, str) or not advertencia.strip():
+            continue
+        if metodo == "ia":
+            lectura.avisos.append(f"Gemini: {advertencia.strip()[:300]}")
+        elif "cambiando 0 y 8" in advertencia:
+            # Lo demás que no cierra ya lo dice la verificación.
+            lectura.avisos.append(f"{advertencia.strip()[:300]} Compará con la imagen.")
+    return lectura
+
+
+def _tributo(x: dict) -> Tributo:
+    codigo = str(x.get("codigo") or "").strip()
+    descripcion = str(x.get("descripcion") or "").strip()
+    # «07 - PERCEPCION IIBB BS AS» todo junto en la descripción.
+    if not codigo and (m := re.match(r"^(\d{1,3})\s*[-–]\s*(.+)$", descripcion)):
+        codigo, descripcion = m.group(1), m.group(2).strip()
+    return Tributo(
+        codigo=codigo[:10],
+        descripcion=descripcion[:120],
+        base=_numero(_primero(x, "base_imponible", "base")),
+        importe=_numero(x.get("importe")),
+    )
+
+
+_ES_IMP_INTERNO = re.compile(r"\bimp(?:uestos?|\.)?\s*int(?:ernos?|\.)?\b")
+_ES_PERC_IIBB = re.compile(r"\bperc\w*\.?.*\b(?:i[il1t]bb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos|arba)\b")
+_OTRA_JURISDICCION = re.compile(r"\b(?:caba|ciudad|agip|capital)\b")
+
+
+def grupo_tributo(x: Tributo) -> str:
+    """A qué total va una fila de otros tributos: «impuestos_internos», «percepcion_iibb»
+    (Bs. As.) u «otros_tributos» (el resto)."""
+    d = norm(f"{x.descripcion}")
+    if _ES_IMP_INTERNO.search(d):
+        return "impuestos_internos"
+    if _ES_PERC_IIBB.search(d) and not _OTRA_JURISDICCION.search(d):
+        return "percepcion_iibb"
+    return "otros_tributos"
+
+
+def totales_efectivos(lectura: Lectura) -> dict[str, float | None]:
+    """Los totales con el IVA igual a la suma de sus filas y, si hay filas de otros
+    tributos, cada fila sumada una sola vez en su total (impuestos internos,
+    percepción IIBB Bs. As. u otros tributos): así no se cuentan dos veces."""
+    t = dict(lectura.totales)
+    if lectura.iva_alicuotas:
+        t["iva"] = round(sum(x.importe or 0 for x in lectura.iva_alicuotas), 2)
+    if lectura.tributos:
+        grupos: dict[str, float] = {}
+        for x in lectura.tributos:
+            g = grupo_tributo(x)
+            grupos[g] = round(grupos.get(g, 0) + (x.importe or 0), 2)
+        for g in ("impuestos_internos", "percepcion_iibb"):
+            if g in grupos:
+                t[g] = grupos[g]
+        t["otros_tributos"] = grupos.get("otros_tributos", 0.0) or None
+    return t
+
+
+def completar_desglose(lectura: Lectura) -> Lectura:
+    """Sin desglose (OCR, PDF): una fila con el IVA leído, en la alícuota que da
+    con el neto si da alguna. Con desglose, el IVA total es la suma de las filas."""
+    if lectura.tipo != "comprobante":
+        return lectura
+    lectura.totales = t = totales_efectivos(lectura)
+    if not lectura.iva_alicuotas and t.get("iva"):
+        neto = t.get("neto_gravado")
+        lectura.iva_alicuotas = [AlicuotaIva(alicuota=_alicuota_de(neto or 0, t["iva"]), base=neto, importe=t["iva"])]
+    return lectura
+
+
+Modo = Literal["auto", "gemini", "paddle", "tesseract"]
+MOTORES: dict[str, Modo] = {
+    "auto": "auto",
+    "gemini": "gemini", "gemini_only": "gemini", "ia": "gemini",
+    "paddle": "paddle", "paddleocr": "paddle",
+    "tesseract": "tesseract", "tesseract_only": "tesseract",
+}
+
+
+def modo_ocr(pedido: str | None = None) -> Modo:
+    """Quién lee las imágenes: lo pedido en la petición; si no, FORCE_TESSERACT=true,
+    u OCR_MODE (variable de entorno o .env): auto, gemini_only, paddle o tesseract_only
+    (también sin el «_only»)."""
+    from .entorno import valor
+
+    if pedido and pedido.lower() in MOTORES:
+        return MOTORES[pedido.lower()]
+    if valor("FORCE_TESSERACT").lower() in ("1", "true", "si", "sí", "yes"):
+        return "tesseract"
+    return MOTORES.get(valor("OCR_MODE").lower(), "auto")
+
+
+def es_captura_limpia(imagen, contenido: bytes = b"") -> bool:
+    """Una captura de pantalla (fondo blanco puro, pocos grises), no una foto: ahí
+    el OCR local lee bien en menos de un segundo y no hace falta el modelo de visión."""
+    exif = getattr(imagen, "getexif", lambda: {})()
+    if exif and (exif.get(0x010F) or exif.get(0x0110)):  # marca / modelo de cámara
+        return False
+    chica = imagen.convert("L")
+    chica.thumbnail((500, 500))
+    histograma = chica.histogram()
+    total = sum(histograma) or 1
+    blanco = sum(histograma[248:]) / total
+    grises = sum(histograma[70:200]) / total
+    return blanco >= 0.55 and grises <= 0.10
+
+
+def _cierra_bien(lectura: Lectura) -> bool:
+    """La lectura no necesita otra: el total cierra y el CUIT del emisor es válido."""
+    if lectura.tipo != "comprobante":
+        return False
+    return _cierra(totales_efectivos(lectura)) and cuit_valido(lectura.encabezado.get("emisor_cuit", ""))
+
+
+def _aplicar_qr(lectura: Lectura, qr: dict) -> Lectura:
+    """Los datos del QR de ARCA son exactos: mandan sobre lo leído (sin el CAE)."""
+    from .modelo import fecha as fecha_iso_qr
+
+    del_qr: dict[str, str] = {}
+    if c := re.sub(r"\D", "", str(qr.get("cuit") or "")):
+        del_qr["emisor_cuit"] = c
+    if iso := fecha_iso_qr(qr.get("fecha")):
+        del_qr["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}"
+    if (codigo := _entero(qr.get("tipoCmp"))) in TIPOS:
+        del_qr["tipo"] = nombre_tipo(codigo)
+    if (nro := _entero(qr.get("nroCmp"))) is not None:
+        del_qr["numero"] = f"{_entero(qr.get('ptoVta')) or 0:05d}-{nro:08d}"
+    if _entero(qr.get("tipoDocRec")) == 80 and (rec := re.sub(r"\D", "", str(qr.get("nroDocRec") or ""))):
+        del_qr["receptor_cuit"] = rec
+    total = _numero(qr.get("importe"))
+    if lectura.tipo != "comprobante":
+        lectura.tipo, lectura.hojas = "comprobante", []
+        lectura.totales = {k: None for k in TOTALES}
+    cambios = []
+    for campo, valor in del_qr.items():
+        leido = lectura.encabezado.get(campo)
+        if leido and leido != valor:
+            cambios.append(f"{ETIQUETAS_ENCABEZADO[campo]} {leido} → {valor}")
+        lectura.encabezado[campo] = valor
+        lectura.dudas.pop(campo, None)
+    if total is not None:
+        leido = lectura.totales.get("total")
+        if leido is not None and abs(leido - total) > TOLERANCIA:
+            cambios.append(f"Total {_fmt(leido)} → {_fmt(total)}")
+        lectura.totales["total"] = total
+        lectura.dudas.pop("total", None)
+    lectura.motor = f"qr+{lectura.motor}" if lectura.motor else "qr"
+    aviso = "Se leyó el QR de ARCA: CUIT del emisor, fecha, tipo, número y total salen de ahí (son exactos)."
+    if cambios:
+        aviso += " Corrigió lo leído: " + "; ".join(cambios) + "."
+    lectura.avisos.append(aviso)
     return lectura
 
 
 # --- Producto sugerido por ítem (cuando no lo dio la IA) ------------------------------
 
+# Los productos/servicios cargados en Xubio: lo que va en PRODUCTOSERVICIO del Excel.
+PRODUCTOS_XUBIO = (
+    "Campañas Publicitarias", "Campañas Publicitarias 10.5%", "COMBUSTIBLE", "Combustible al 27%", "Combustible exento",
+    "Equipos de Computación", "Equipos de Computacion 10,5", "GASTOS BANCARIOS", "GASTOS BANCARIOS 10.5",
+    "Gastos de asesoramiento", "Gastos de capacitación", "Gastos de certificaciones y legalizaciones",
+    "Gastos de certificaciones y legalizaciones 21%", "Gastos de Libreria", "Gastos de limpieza, libreria y refrigerio",
+    "Gastos de Mantenimiento", "Gastos de movilidad y viáticos", "Gastos de Organización", "Gastos de Seguridad",
+    "GASTOS DE SEGUROS", "Gastos de sistemas", "Gastos de sistemas (Exento)", "GASTOS VARIOS", "Gastos Varios al 10,5%",
+    "Gastos varios de admnistracion exento", "Herramientas", "HONORARIOS PROFESIONALES", "Honorarios profesionales (exento)",
+    "IMPUESTO A LOS CR BANCARIOS", "IMPUESTO A LOS DB BANCARIOS", "Impuesto país", "Instalaciones", "INSTALACIONES 10,50%",
+    "Intereses financieros", "Luz, Gas, Telefono e internet 21%", "Luz, Gas, Telefono e internet 27%",
+    "Luz, Gas, Telefono e internet exento", "Mejoras en inmuebles de terceros", "Muebles y Utiles", "Muebles y Utiles 10,5%",
+    "Muebles y útiles exento", "Pagina web, redes, facebook, Instagram, etc", "Préstamo BBVA", "Producto al 10.5%",
+    "Producto al 21% (PROD21)", "Producto Exento (Compra de Servicios)", "Publicidad", "ROPA DE TRABAJO",
+    "Servicio de consultoria y procesamiento de datos", "Servidores - Emails", "SOFTWARE", "Software exento",
+)
+
+# Categorías para reconocer el ítem (también las que propone la IA); después se pasan
+# al producto de Xubio que corresponde según la alícuota (`producto_xubio`).
 PRODUCTOS = ("Mercaderías", "Servicios", "Honorarios", "Combustible", "Refrigerio", "Gastos de limpieza", "Alquiler")
 _REGLAS_PRODUCTO = (
     ("Combustible", r"nafta|gas\s?oil|diesel|combustible|infinia|v.?power|\bgnc\b|lubric|\bquantium\b"),
-    ("Gastos de limpieza", r"lavandina|detergente|limpi|desinfect|papel\s+higien|rollo\s+cocina|trapo|escoba|jabon|lysoform|cif\b"),
+    ("Gastos de limpieza", r"lavandina|detergente|limpi|desinfect|papel\s+higien|rollo\s+cocina|trapo|escoba|jabon|lysoform|cif\b|libreria|resma|birome|lapicera|cuaderno"),
+    ("Bancarios", r"comision\s+banc|mantenimiento\s+de\s+cuenta|gastos?\s+banc"),
+    ("Intereses", r"interes"),
+    ("Seguros", r"seguro|poliza"),
+    ("Ropa", r"ropa\s+de\s+trabajo|uniforme|botin|guante|mameluco"),
+    ("Herramientas", r"herramienta|taladro|destornillador|amoladora|martillo|pinza|llave\s+(?:de|inglesa)"),
+    ("Computacion", r"computadora|notebook|\bpc\b|monitor|impresora|teclado|mouse|disco\s+(?:rigido|ssd)|memoria\s+ram"),
+    ("Muebles", r"mueble|silla|escritorio|estanteria|armario|mesa\s+de\s+trabajo"),
+    ("Movilidad", r"\btaxi\b|\buber\b|\bcabify\b|remis|peaje|estacionamiento|viatico|pasaje"),
+    ("Servidores", r"hosting|servidor|dominio|\bemails?\b|correo\s+electronico"),
+    ("Software", r"software|licencia"),
+    ("Web", r"pagina\s+web|redes\s+sociales|facebook|instagram|community"),
+    ("Publicidad", r"publicidad|campa[nñ]a|google\s+ads|\bmeta\s+ads"),
+    ("Capacitacion", r"capacitacion|curso|seminario|taller\s+de"),
+    ("Certificaciones", r"certificacion|legalizacion|apostilla"),
+    ("Servicios publicos", r"\bluz\b|energia\s+electrica|edenor|edesur|\bgas\s+natural|metrogas|naturgy|telefon|internet|fibertel|movistar|telecom"),
+    ("Mantenimiento", r"mantenimiento|reparacion|arreglo"),
     ("Alquiler", r"alquiler|locacion|expensas"),
     ("Honorarios", r"honorario"),
-    ("Servicios", r"servicio|\bfee\b|abono|suscrip|mantenimiento|asesor|consultor|internet|telefon|hosting|licencia|flete|envio"),
+    ("Asesoramiento", r"asesor|consultor|auditoria|\bfee\b"),
+    ("Servicios", r"servicio|abono|suscrip|flete|envio"),
     ("Refrigerio", r"\bagua\b|gaseosa|\bcafe\b|cortado|medialuna|sandwich|\bmenu\b|almuerzo|cena|empanada|pizza|cerveza|\bvino\b|"
                    r"\bpapas?\b|pure|carne|entra[nñ]a|salm|salh|pollo|ensalada|postre|helado|hamburg|coleslaw|bife|porcion|"
                    r"bebida|jugo|cubierto|guarnicion|milanesa|tostado|factura[s]?\s+dulce|desayuno|merienda|\bmesa\b"),
 )
 
+
+def producto_xubio(categoria: str, alicuota: float | None) -> str:
+    """El producto/servicio de Xubio para la categoría, con la variante de la alícuota
+    del ítem (10,5 %, 27 % o exento) cuando Xubio la tiene."""
+    a = alicuota
+    exento, diez, veintisiete = a == 0, a == 10.5, a == 27
+
+    def segun(general: str, con_10=None, con_27=None, sin_iva=None) -> str:
+        return (diez and con_10) or (veintisiete and con_27) or (exento and sin_iva) or general
+
+    return {
+        "Combustible": segun("COMBUSTIBLE", con_27="Combustible al 27%", sin_iva="Combustible exento"),
+        "Gastos de limpieza": "Gastos de limpieza, libreria y refrigerio",
+        "Refrigerio": "Gastos de limpieza, libreria y refrigerio",
+        "Bancarios": segun("GASTOS BANCARIOS", con_10="GASTOS BANCARIOS 10.5"),
+        "Intereses": "Intereses financieros",
+        "Seguros": "GASTOS DE SEGUROS",
+        "Ropa": "ROPA DE TRABAJO",
+        "Herramientas": "Herramientas",
+        "Computacion": segun("Equipos de Computación", con_10="Equipos de Computacion 10,5"),
+        "Muebles": segun("Muebles y Utiles", con_10="Muebles y Utiles 10,5%", sin_iva="Muebles y útiles exento"),
+        "Movilidad": "Gastos de movilidad y viáticos",
+        "Servidores": "Servidores - Emails",
+        "Software": segun("SOFTWARE", sin_iva="Software exento"),
+        "Web": "Pagina web, redes, facebook, Instagram, etc",
+        "Publicidad": segun("Publicidad", con_10="Campañas Publicitarias 10.5%"),
+        "Capacitacion": "Gastos de capacitación",
+        "Certificaciones": "Gastos de certificaciones y legalizaciones 21%" if a == 21 else "Gastos de certificaciones y legalizaciones",
+        "Servicios publicos": segun("Luz, Gas, Telefono e internet 21%", con_27="Luz, Gas, Telefono e internet 27%", sin_iva="Luz, Gas, Telefono e internet exento"),
+        "Mantenimiento": "Gastos de Mantenimiento",
+        "Honorarios": segun("HONORARIOS PROFESIONALES", sin_iva="Honorarios profesionales (exento)"),
+        "Asesoramiento": "Gastos de asesoramiento",
+        "Servicios": segun("GASTOS VARIOS", con_10="Gastos Varios al 10,5%", sin_iva="Gastos varios de admnistracion exento"),
+        "Alquiler": segun("GASTOS VARIOS", con_10="Gastos Varios al 10,5%", sin_iva="Gastos varios de admnistracion exento"),
+        "Mercaderías": segun("Producto al 21% (PROD21)", con_10="Producto al 10.5%", sin_iva="Producto Exento (Compra de Servicios)"),
+    }.get(categoria, "")
 
 # --- Autocorrección de descripciones mal leídas -------------------------------------
 
@@ -626,6 +937,10 @@ def _corregir_palabra(palabra: str) -> str:
             break
         # Parecida y con la misma primera letra (si no, «ACONT» terminaba en «BACON»).
         for m in difflib.get_close_matches(c, [v for v in _VOCABULARIO if v[0] == c[0]], n=1, cutoff=0.8):
+            # Una es la otra con algo más al final («contables» / «contable», «servicio» /
+            # «servicios»): es la misma palabra en plural o singular, no algo mal leído.
+            if c.startswith(m) or m.startswith(c):
+                continue
             p = difflib.SequenceMatcher(None, c, m).ratio()
             if p > puntaje:
                 mejor, puntaje = m, p
@@ -708,42 +1023,114 @@ def sugerir_producto(descripcion: str) -> str:
 
 
 def sugerir_productos(items: list[Item]) -> None:
-    """Completa «producto» donde falta. Si casi todo el detalle es comida (un restaurante),
-    lo que no se reconoce también va como refrigerio; si no, como mercaderías."""
+    """Completa «producto» donde falta, con un producto/servicio de Xubio. Si casi todo
+    el detalle es comida (un restaurante), lo que no se reconoce también va como
+    refrigerio; si no, como producto (al 21 %, 10,5 % o exento según el ítem)."""
     sugeridos = [sugerir_producto(i.descripcion) or (i.producto if i.producto in PRODUCTOS else "") for i in items]
     conocidos = [x for x in sugeridos if x]
     resto = "Refrigerio" if conocidos and conocidos.count("Refrigerio") >= len(conocidos) * 0.6 else "Mercaderías"
     for item, sugerido in zip(items, sugeridos):
-        item.producto = sugerido or (resto if item.descripcion.strip() else "")
+        if item.producto in PRODUCTOS_XUBIO:
+            continue  # ya es un producto de Xubio (lo eligió la persona)
+        categoria = sugerido or (resto if item.descripcion.strip() else "")
+        item.producto = producto_xubio(categoria, item.alicuota) if categoria else ""
 
 
-def _leer_imagen(nombre: str, contenido: bytes) -> Lectura:
+def _con_gemini(nombre: str, imagen, lectura: Lectura, plazo_s: float | None) -> Lectura | None:
+    """Gemini, o None (con el aviso) si no estuvo disponible a tiempo."""
+    from . import gemini
+
+    try:
+        return _desde_json(lectura, gemini.leer_imagen(imagen, plazo_s=plazo_s), "ia")
+    except gemini.GeminiNoDisponible as exc:
+        lectura.avisos.append(f"{exc}")
+        return None
+
+
+def hay_ocr_local() -> bool:
+    from . import ocr, paddle
+
+    return paddle.disponible() or ocr.disponible()
+
+
+def _leer_local(nombre: str, imagen, lectura: Lectura, modo: Modo = "auto", pasadas_extra: bool = True) -> Lectura:
+    """El OCR local: PaddleOCR si está instalado (opcional, más preciso); si no, o si
+    falla, Tesseract."""
+    from . import paddle
+
+    if modo in ("auto", "paddle") and paddle.disponible():
+        try:
+            return _desde_json(lectura, paddle.extract_with_paddleocr(imagen), "ocr")
+        except Exception as exc:
+            logger.warning("PaddleOCR falló en %s: %s", nombre, exc)
+            lectura.avisos.append("PaddleOCR no pudo leer la imagen: se leyó con Tesseract.")
+    elif modo == "paddle":
+        lectura.avisos.append("PaddleOCR no está instalado (pip install paddleocr paddlepaddle): se leyó con Tesseract.")
+    return _imagen_a_lectura(nombre, imagen, lectura, pasadas_extra=pasadas_extra)
+
+
+def _leer_imagen(nombre: str, contenido: bytes, motor: str | None = None) -> Lectura:
+    """En cascada: el QR de ARCA (exacto) y después, según el modo:
+    - gemini: solo Gemini, sin plazo ni respaldo;
+    - paddle / tesseract: solo ese OCR local;
+    - auto: las capturas limpias, primero el OCR local en una pasada: si cierra,
+      listo. Si no, Gemini con plazo (GEMINI_PLAZO_S, 15 s); si no hay clave, falla,
+      da 429/503 o tarda, el OCR local (PaddleOCR o Tesseract)."""
     from PIL import Image, ImageOps, UnidentifiedImageError
 
     from . import gemini
+    from .qr_afip import leer_qrs
 
     try:
         imagen = Image.open(io.BytesIO(contenido))
         imagen.load()
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError(f"«{nombre}» no es una imagen válida.") from exc
+    captura = es_captura_limpia(imagen, contenido)
     imagen = ImageOps.exif_transpose(imagen).convert("RGB")
+    inicio = time.perf_counter()
+    modo = modo_ocr(motor)
+    qrs = leer_qrs(imagen)
     lectura = Lectura(archivo=nombre)
-    # Con clave de Gemini, la lee la IA; si falla, el OCR de siempre.
-    if gemini.disponible():
-        try:
-            return _desde_gemini(lectura, gemini.leer_imagen(imagen))
-        except gemini.GeminiNoDisponible as exc:
-            lectura.avisos.append(f"{exc} Se leyó con OCR.")
-    else:
+
+    if modo == "tesseract":
         lectura = _imagen_a_lectura(nombre, imagen, lectura)
-        if not lectura.texto:
-            lectura.avisos.append(
-                "Para leer imágenes con IA, poné la clave de Gemini (GEMINI_API_KEY) en el archivo .env "
-                "de la carpeta de datos de la app y volvé a subir la imagen."
-            )
-        return lectura
-    return _imagen_a_lectura(nombre, imagen, lectura)
+    elif modo == "paddle":
+        lectura = _leer_local(nombre, imagen, lectura, "paddle")
+    elif modo == "gemini":
+        if gemini.disponible():
+            lectura = _con_gemini(nombre, imagen, lectura, None) or lectura
+        else:
+            lectura.avisos.append("OCR_MODE=gemini_only pero no hay clave de Gemini (GEMINI_API_KEY).")
+    else:
+        local = hay_ocr_local()
+        if captura and local:
+            rapida = _leer_local(nombre, imagen, Lectura(archivo=nombre), pasadas_extra=False)
+            if _cierra_bien(rapida):
+                lectura = rapida
+            elif gemini.disponible():
+                lectura.avisos.append("La captura leída con OCR local no cerraba: se leyó con Gemini.")
+        if not lectura.motor and gemini.disponible():
+            # El plazo corto sólo tiene sentido si hay un OCR local para leer después:
+            # sin él, se espera a Gemini lo que haga falta.
+            if (con_ia := _con_gemini(nombre, imagen, lectura, gemini.plazo_auto() if local else None)) is not None:
+                lectura = con_ia
+            elif local:
+                lectura.avisos[-1] += " Se leyó con el OCR local."
+                lectura = _leer_local(nombre, imagen, lectura)
+            else:
+                lectura.avisos[-1] += " Tampoco hay OCR local (Tesseract) instalado para leerla: probá de nuevo en un rato."
+        elif not lectura.motor:
+            lectura = _leer_local(nombre, imagen, lectura)
+            if not lectura.texto:
+                lectura.avisos.append(
+                    "Para leer imágenes con IA, poné la clave de Gemini (GEMINI_API_KEY) en el archivo .env "
+                    "de la carpeta de datos de la app y volvé a subir la imagen."
+                )
+    if qrs:
+        lectura = _aplicar_qr(lectura, qrs[0])
+    lectura.duracion_ms = round((time.perf_counter() - inicio) * 1000)
+    return lectura
 
 
 def _leer_pdf(nombre: str, contenido: bytes) -> Lectura:
@@ -780,7 +1167,7 @@ def _leer_pdf(nombre: str, contenido: bytes) -> Lectura:
             pagina.close()
         if total > 1:
             lectura.avisos.append(f"PDF escaneado de {total} páginas: se leyó la primera.")
-        return _imagen_a_lectura(nombre, imagen, lectura)
+        return _leer_local(nombre, imagen, lectura)
     finally:
         pdf.close()
 
@@ -836,64 +1223,9 @@ def _leer_planilla(nombre: str, contenido: bytes) -> Lectura:
     return lectura
 
 
-_BASURA_NOMBRE = re.compile(r"[$#@*|~^_=+<>{}\[\]\\/%!?¡¿;:]")
-_SOCIEDAD = re.compile(r"\b(S\.?\s?A\.?(\s?U\.?)?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?\s?S\.?|S\.?\s?C\.?\s?A\.?|S\.?\s?H\.?)\s*$", re.I)
-
-
-def _esqueleto(nombre: str) -> str:
-    """Las letras del nombre sin sociedad ni basura («FOC FUELS MARKETING»)."""
-    sin = _SOCIEDAD.sub("", _BASURA_NOMBRE.sub(" ", nombre))
-    return re.sub(r"[^A-Z0-9]", "", sin.upper())
-
-
-_MENCIONA_IIBB = re.compile(r"\b(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos|arba)\b", re.I)
-
-
-def completar_tributos(lectura: Lectura) -> None:
-    """Si el total no cierra y hay un solo tributo leído (percepción u otros), ese tributo
-    es lo que falta para el total (6.709,98 leído -> 6.717,98). Si la factura nombra
-    Ingresos Brutos y solo se leyó «Otros tributos», es la percepción IIBB."""
-    t = lectura.totales
-    antes = {k: t.get(k) for k in ("percepcion_iibb", "otros_tributos")}
-    iibb, otros = t.get("percepcion_iibb") or 0, t.get("otros_tributos") or 0
-    if otros and not iibb and _MENCIONA_IIBB.search(lectura.texto or "") \
-            and not re.search(r"\b(caba|agip|ciudad\s+aut)", lectura.texto or "", re.I):
-        t["percepcion_iibb"], t["otros_tributos"] = otros, 0.0
-        iibb, otros = otros, 0
-    if t.get("total") is not None and not _cierra(t) and bool(iibb) != bool(otros):
-        campo = "percepcion_iibb" if iibb else "otros_tributos"
-        resto = round(t["total"] - sum(t.get(k) or 0 for k in TOTALES if k not in ("total", campo)), 2)
-        if resto > 0 and abs(resto - t[campo]) <= 0.1 * resto:
-            t[campo] = resto
-    for campo, valor in antes.items():
-        if valor and t.get(campo) != valor:
-            lectura.corregidos[campo] = _fmt(valor)
-    if antes["otros_tributos"] and not antes["percepcion_iibb"] and t.get("percepcion_iibb"):
-        lectura.corregidos.pop("otros_tributos", None)
-        lectura.corregidos["percepcion_iibb"] = "Otros tributos " + _fmt(antes["otros_tributos"])
-
-
-def limpiar_nombres(lectura: Lectura) -> None:
-    """Emisor y receptor que cada pasada leyó distinto solo por caracteres sueltos
-    («FOC FUELS MARKETING $» / «… SA»): se queda con el más limpio (sin símbolos y con
-    la sociedad), saca la duda y guarda lo leído en «corregidos»."""
-    for campo in ("emisor", "receptor"):
-        valores = lectura.dudas.get(campo)
-        if not valores or len(valores) < 2:
-            continue
-        base = _esqueleto(valores[0])
-        if not base or any(difflib.SequenceMatcher(None, base, _esqueleto(v)).ratio() < 0.85 for v in valores[1:]):
-            continue
-        limpio = min(valores, key=lambda v: (len(_BASURA_NOMBRE.findall(v)), not _SOCIEDAD.search(v), -len(v)))
-        leido = lectura.encabezado.get(campo, "")
-        if leido == limpio:
-            leido = next(v for v in valores if v != limpio)
-        lectura.encabezado[campo] = limpio
-        lectura.corregidos[campo] = leido
-        del lectura.dudas[campo]
-
-
-def leer(nombre: str, contenido: bytes) -> Lectura:
+def leer(nombre: str, contenido: bytes, motor: str | None = None) -> Lectura:
+    """`motor` (opcional, para probar): auto, gemini, paddle o tesseract; si no,
+    OCR_MODE."""
     nombre = Path(nombre).name
     sufijo = Path(nombre).suffix.lower()
     if sufijo in PLANILLAS:
@@ -901,15 +1233,14 @@ def leer(nombre: str, contenido: bytes) -> Lectura:
     elif sufijo == ".pdf":
         lectura = _leer_pdf(nombre, contenido)
     elif sufijo in IMAGENES:
-        lectura = _leer_imagen(nombre, contenido)
+        lectura = _leer_imagen(nombre, contenido, motor)
     else:
         raise ValueError(f"«{nombre}»: formato no soportado (foto, captura, PDF, CSV o Excel).")
     if lectura.tipo == "comprobante":
         corregir_descripciones(lectura.items)
         corregir_importes_items(lectura.items, lectura.totales)
-        limpiar_nombres(lectura)
-        completar_tributos(lectura)
         sugerir_productos(lectura.items)
+    completar_desglose(lectura)
     lectura.verificaciones = verificar(lectura)
     return lectura
 
@@ -935,6 +1266,21 @@ def _variantes(texto: str) -> list[tuple[int, str]]:
     return salida
 
 
+def cuits_cambiando_0_y_8(cuit: str) -> list[str]:
+    """CUIT válidos que salen de cambiar 0 por 8 y 8 por 0 (en las ticketeadoras el
+    cero va tachado y en una foto borrosa parece un ocho). Los de menos cambios."""
+    posiciones = [i for i, d in enumerate(cuit) if d in "08"]
+    for cuantos in range(1, len(posiciones) + 1):
+        validos = []
+        for cambiar in itertools.combinations(posiciones, cuantos):
+            c = "".join(("8" if d == "0" else "0") if i in cambiar else d for i, d in enumerate(cuit))
+            if cuit_valido(c):
+                validos.append(c)
+        if validos:
+            return validos
+    return []
+
+
 def cuits_parecidos(cuit: str, texto: str = "") -> list[str]:
     """CUIT válidos que difieren en un dígito que el OCR suele confundir. Primero
     los que se parecen a otros números del texto (Ingresos Brutos suele ser el
@@ -943,6 +1289,8 @@ def cuits_parecidos(cuit: str, texto: str = "") -> list[str]:
     for _, c in _variantes(cuit):
         if cuit_valido(c) and c not in candidatos:
             candidatos.append(c)
+    # Más de un dígito mal: en tiques térmicos casi siempre son 0 leídos como 8 (o al revés).
+    candidatos += [c for c in cuits_cambiando_0_y_8(cuit) if c not in candidatos]
     otros = [n for n in re.findall(r"(?<!\d)\d{11}(?!\d)", re.sub(r"(?<=\d)[-.](?=\d)", "", texto)) if n != cuit]
 
     def apoyo(c: str) -> int:
@@ -960,6 +1308,9 @@ def _mejor_parecido(cuit: str, texto: str) -> str | None:
     apoyos = [sum(1 for n in otros if sum(a != b for a, b in zip(c, n)) <= 1) for c in candidatos]
     if apoyos and apoyos[0] > 0 and apoyos.count(apoyos[0]) == 1:
         return candidatos[0]
+    # Sin otro desempate, el único que sale cambiando 0 y 8 (el error típico de las ticketeadoras).
+    if len(ceros_y_ochos := cuits_cambiando_0_y_8(cuit)) == 1:
+        return ceros_y_ochos[0]
     return None
 
 
@@ -1039,7 +1390,7 @@ def corregir_totales(t: dict[str, float | None], suma_items: float | None = None
     return None
 
 
-def _verificar_totales(t: dict[str, float | None], suma_items: float | None = None) -> list[Verificacion]:
+def _verificar_totales(t: dict[str, float | None], suma_items: float | None = None, varias_alicuotas: bool = False) -> list[Verificacion]:
     v: list[Verificacion] = []
     total = t.get("total")
     if total is None:
@@ -1065,7 +1416,7 @@ def _verificar_totales(t: dict[str, float | None], suma_items: float | None = No
                 ))
             sugerida = True
         # ¿Qué importe, corregido, hace cerrar la cuenta? El neto, si con el IVA da una alícuota.
-        if iva and not sugerida:
+        if iva and not sugerida and not varias_alicuotas:
             neto_calc = round(total - (suma - (neto or 0)), 2)
             if neto_calc > 0 and _alicuota_de(neto_calc, iva):
                 v.append(Verificacion(
@@ -1077,7 +1428,7 @@ def _verificar_totales(t: dict[str, float | None], suma_items: float | None = No
                     datos=[f"Leído {_fmt(neto)}", f"Debería ser {_fmt(neto_calc)}"],
                 ))
                 sugerida = True
-        if not sugerida and neto:
+        if not sugerida and neto and not varias_alicuotas:
             iva_calc = round(total - (suma - (iva or 0)), 2)
             if iva_calc > 0 and _alicuota_de(neto, iva_calc):
                 v.append(Verificacion(
@@ -1095,13 +1446,121 @@ def _verificar_totales(t: dict[str, float | None], suma_items: float | None = No
                 titulo="Los importes no suman el total",
                 datos=[f"Suma {_fmt(suma)}", f"Total {_fmt(total)}", f"Dif. {_fmt(diferencia)}"],
             ))
-    if neto and iva and not any(x.nivel == "error" for x in v):
+    if neto and iva and not varias_alicuotas and not any(x.nivel == "error" for x in v):
         if (a := _alicuota_de(neto, iva)) is not None:
             v.append(Verificacion(campo="iva", nivel="ok", mensaje=f"El IVA es el {a:g}% del neto gravado.", titulo=f"IVA {a:g}%"))
         elif iva > neto * 0.27 + TOLERANCIA:
             v.append(Verificacion(campo="iva", nivel="aviso", mensaje=f"El IVA ({_fmt(iva)}) es más del 27% del neto: revisalo.", titulo="IVA demasiado alto", datos=[_fmt(iva)]))
         else:
             v.append(Verificacion(campo="iva", nivel="aviso", mensaje="El IVA no es una sola alícuota del neto (puede tener varias): revisalo.", titulo="IVA con varias alícuotas"))
+    return v
+
+
+def _tolerancia_iva(iva: float) -> float:
+    return max(TOLERANCIA, abs(iva) * 0.0005)
+
+
+def iva_de_items(items: list[Item], t: dict[str, float | None]) -> tuple[dict[float, float], bool]:
+    """El IVA que dan los ítems en cada alícuota. Si el detalle suma el neto, los
+    importes son sin IVA; si suma el total (tiques, factura B), lo incluyen.
+    ({alícuota: IVA}, si los importes incluyen IVA)."""
+    suma = sum(x.importe or 0 for x in items)
+    neto, total = t.get("neto_gravado"), t.get("total")
+    con_iva = total is not None and (neto is None or abs(suma - total) < abs(suma - neto))
+    por_alicuota: dict[float, float] = {}
+    for x in items:
+        if x.alicuota is None or x.importe is None:
+            continue
+        a = float(x.alicuota)
+        iva = x.importe - x.importe / (1 + a / 100) if con_iva else x.importe * a / 100
+        por_alicuota[a] = por_alicuota.get(a, 0) + iva
+    return {a: round(v, 2) for a, v in por_alicuota.items()}, con_iva
+
+
+def _fmt_alicuota(a: float | None) -> str:
+    return "" if a is None else f"{a:g}".replace(".", ",") + "%"
+
+
+def _verificar_desglose(lectura: Lectura, t: dict[str, float | None]) -> list[Verificacion]:
+    filas = lectura.iva_alicuotas
+    if not filas:
+        return []
+    v: list[Verificacion] = []
+    bien = True
+    for i, f in enumerate(filas):
+        campo = f"iva_{i}"
+        nombre = f"IVA {_fmt_alicuota(f.alicuota)}" if f.alicuota is not None else f"IVA (fila {i + 1})"
+        if f.alicuota is None:
+            v.append(Verificacion(campo=campo, nivel="aviso", mensaje=f"{nombre}: falta la alícuota."))
+            bien = False
+            continue
+        if f.alicuota not in ALICUOTAS and f.alicuota != 0:
+            v.append(Verificacion(campo=campo, nivel="aviso", mensaje=f"{nombre}: no es una alícuota de IVA habitual (21, 10,5, 27, 5 o 2,5)."))
+            bien = False
+        if f.base is not None and f.importe is not None:
+            calculado = round(f.base * f.alicuota / 100, 2)
+            if abs(calculado - f.importe) > _tolerancia_iva(f.importe):
+                v.append(Verificacion(
+                    campo=campo, nivel="error",
+                    mensaje=f"{nombre}: el {_fmt_alicuota(f.alicuota)} de {_fmt(f.base)} es {_fmt(calculado)} y se leyó {_fmt(f.importe)}.",
+                    sugerencia=calculado,
+                ))
+                bien = False
+    if len({f.alicuota for f in filas}) < len(filas):
+        v.append(Verificacion(campo="iva", nivel="aviso", mensaje="Hay dos filas de IVA con la misma alícuota: juntalas."))
+        bien = False
+    neto = t.get("neto_gravado")
+    bases = round(sum(f.base or 0 for f in filas), 2)
+    if neto is not None and any(f.base is not None for f in filas) and abs(bases - neto) > TOLERANCIA:
+        v.append(Verificacion(
+            campo="iva", nivel="error",
+            mensaje=f"Las bases imponibles del IVA suman {_fmt(bases)} y el neto gravado es {_fmt(neto)} (diferencia {_fmt(round(neto - bases, 2))}).",
+        ))
+        bien = False
+    # Lo que dan los ítems en cada alícuota.
+    if lectura.items and all(x.alicuota is not None and x.importe is not None for x in lectura.items):
+        por_alicuota, _ = iva_de_items(lectura.items, t)
+        tolerancia_items = max(TOLERANCIA, 0.01 * len(lectura.items))
+        declaradas = {f.alicuota for f in filas}
+        for i, f in enumerate(filas):
+            if f.alicuota is None or f.importe is None:
+                continue
+            de_items = por_alicuota.get(f.alicuota, 0.0)
+            if abs(de_items - f.importe) > tolerancia_items:
+                v.append(Verificacion(
+                    campo=f"iva_{i}", nivel="aviso",
+                    mensaje=f"IVA {_fmt_alicuota(f.alicuota)}: los ítems de esa alícuota dan {_fmt(de_items)} de IVA y el comprobante dice {_fmt(f.importe)}.",
+                ))
+                bien = False
+        for a, iva in por_alicuota.items():
+            if a not in declaradas and abs(iva) > TOLERANCIA:
+                v.append(Verificacion(
+                    campo="iva", nivel="aviso",
+                    mensaje=f"Hay ítems al {_fmt_alicuota(a)} ({_fmt(iva)} de IVA) y esa alícuota no está en el desglose del IVA.",
+                ))
+                bien = False
+    if bien:
+        texto = " · ".join(f"{_fmt_alicuota(f.alicuota)}: {_fmt(f.importe)}" for f in filas)
+        v.append(Verificacion(campo="iva", nivel="ok", mensaje=f"El IVA de cada alícuota da con su base ({texto})."))
+    return v
+
+
+def _verificar_tributos(tributos: list[Tributo]) -> list[Verificacion]:
+    v: list[Verificacion] = []
+    for i, x in enumerate(tributos):
+        nombre = x.descripcion or f"fila {i + 1}"
+        if x.importe is None:
+            v.append(Verificacion(campo=f"tributo_{i}", nivel="aviso", mensaje=f"Otros tributos, {nombre}: falta el importe."))
+        elif not x.descripcion:
+            v.append(Verificacion(campo=f"tributo_{i}", nivel="aviso", mensaje=f"Otros tributos, fila {i + 1}: falta qué tributo es."))
+        elif x.base and abs(x.importe) > abs(x.base):
+            v.append(Verificacion(
+                campo=f"tributo_{i}", nivel="aviso",
+                mensaje=f"Otros tributos, {nombre}: el importe ({_fmt(x.importe)}) es mayor que la base ({_fmt(x.base)}): revisalo.",
+            ))
+    if tributos and not v:
+        texto = " · ".join(f"{x.descripcion}: {_fmt(x.importe)}" for x in tributos)
+        v.append(Verificacion(campo="otros_tributos", nivel="ok", mensaje=f"Otros tributos: {texto}."))
     return v
 
 
@@ -1119,28 +1578,11 @@ def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Veri
             aviso.append(Verificacion(
                 campo="items", nivel="aviso",
                 mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)} y lo corregí a {_fmt(x.importe)}: "
-                         "con ese valor el detalle suma el neto (en naranja en el detalle). Si no es así, cambialo a mano."),
-                titulo=f"Autocorregí el importe del ítem {n + 1}",
+                         "con ese valor el detalle suma el neto (en naranja en el detalle). Compará con la imagen."),
+                titulo=f"Corregí el importe del ítem {n + 1}",
                 datos=[f"Leído {_fmt(x.importe_leido)}", f"Ahora {_fmt(x.importe)}"],
             ))
     return aviso + _verificar_items_sin_correccion(items, t)
-
-
-def _verificar_iva_por_alicuota(items: list[Item], t: dict[str, float | None]) -> Verificacion | None:
-    """Xubio calcula el IVA de cada fila (importe x alícuota). Con el detalle agrupado por
-    alícuota, ¿da el IVA de la factura? Unos centavos de diferencia se ajustan al cargar."""
-    if not items or t.get("iva") is None or any(i.importe is None or i.alicuota is None for i in items):
-        return None
-    calculado = round(sum(round(suma * (a or 0) / 100, 2) for a, suma, _ in agrupar_items(items)), 2)
-    dif = round(t["iva"] - calculado, 2)
-    if not dif or abs(dif) > 0.05:
-        return None
-    return Verificacion(
-        campo="iva", nivel="aviso", titulo="Redondeo de IVA",
-        mensaje=(f"Xubio va a calcular un IVA de {_fmt(calculado)} y la factura dice {_fmt(t['iva'])} "
-                 f"(diferencia {_fmt(dif)}): ajustá esos centavos al importar el comprobante."),
-        datos=[f"Xubio {_fmt(calculado)}", f"Factura {_fmt(t['iva'])}", f"Dif. {_fmt(dif)}"],
-    )
 
 
 def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
@@ -1150,9 +1592,6 @@ def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None
     sin_importe = [i + 1 for i, x in enumerate(items) if x.importe is None]
     if sin_importe:
         v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin importe: {', '.join(map(str, sin_importe))}.", titulo="Ítems sin importe", datos=[f"#{n}" for n in sin_importe[:6]]))
-    mal_cant = [i + 1 for i, x in enumerate(items) if x.cantidad is not None and x.cantidad <= 0]
-    if mal_cant:
-        v.append(Verificacion(campo="items", nivel="error", mensaje=f"Ítems con cantidad 0 o negativa: {', '.join(map(str, mal_cant))}.", titulo="Cantidad mal leída", datos=[f"#{n}" for n in mal_cant[:6]]))
     sin_desc = [i + 1 for i, x in enumerate(items) if not x.descripcion.strip()]
     if sin_desc:
         v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin descripción: {', '.join(map(str, sin_desc))}.", titulo="Ítems sin descripción", datos=[f"#{n}" for n in sin_desc[:6]]))
@@ -1233,7 +1672,8 @@ def _verificar_tabla(lectura: Lectura) -> list[Verificacion]:
 def verificar(lectura: Lectura) -> list[Verificacion]:
     if lectura.tipo == "tabla":
         return _verificar_tabla(lectura)
-    e, t = lectura.encabezado, lectura.totales
+    e = lectura.encabezado
+    t = totales_efectivos(lectura)
     v: list[Verificacion] = []
     for campo, obligatorio in (("emisor_cuit", True), ("receptor_cuit", False)):
         if (x := _verificar_cuit(campo, e.get(campo, ""), obligatorio, lectura.texto)) is not None:
@@ -1246,48 +1686,22 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
         v.append(Verificacion(campo="tipo", nivel="aviso", mensaje="No se reconoció el tipo de comprobante.", titulo="Falta el tipo"))
     if (x := _verificar_fecha(e.get("fecha", ""))) is not None:
         v.append(x)
-    v += _verificar_totales(t, round(sum(x.importe or 0 for x in lectura.items), 2) if lectura.items else None)
+    v += _verificar_totales(t, round(sum(x.importe or 0 for x in lectura.items), 2) if lectura.items else None, len(lectura.iva_alicuotas) > 1)
+    v += _verificar_desglose(lectura, t)
+    v += _verificar_tributos(lectura.tributos)
     v += _verificar_items(lectura.items, t)
-    if (x := _verificar_iva_por_alicuota(lectura.items, t)) is not None:
-        v.append(x)
-    for campo, leido in lectura.corregidos.items():
-        ahora = _fmt(t[campo]) if campo in TOTALES and t.get(campo) is not None else e.get(campo, "")
-        if leido and ahora and leido != ahora:
-            etiqueta = ETIQUETAS_ENCABEZADO.get(campo) or ETIQUETAS_TOTALES.get(campo, campo)
-            articulo = {"percepcion_iibb": "la ", "impuestos_internos": "los ", "otros_tributos": ""}.get(campo, "el ")
-            v.append(Verificacion(campo=campo, nivel="aviso", titulo=f"Autocorregí {articulo}{etiqueta.lower()}",
-                                  mensaje=f"{etiqueta}: se leyó «{leido}» y lo dejé como «{ahora}». Si no es así, cambialo a mano.",
-                                  datos=[f"Leído {leido}", f"Ahora {ahora}"]))
     # Lo que cada pasada leyó distinto y sigue sin verificarse por otro lado.
     con_error = {x.campo for x in v if x.nivel != "ok"}
     verificados = {x.campo for x in v if x.nivel == "ok"}
     for campo, valores in lectura.dudas.items():
+        if campo in con_error or (campo in verificados and campo.endswith("_cuit")) or (campo in TOTALES and _cierra(t)):
+            continue
         etiqueta = ETIQUETAS_ENCABEZADO.get(campo) or ETIQUETAS_TOTALES.get(campo, campo)
-        if campo in con_error:
-            # Ya marcado como error: las lecturas distintas pasan a ser los «Usar X».
-            for x in v:
-                if x.campo == campo and x.nivel == "error" and not x.opciones:
-                    x.titulo, x.opciones = f"{etiqueta} mal leído", _ordenar_opciones(lectura, campo, valores)[:3]
-                    break
-            continue
-        if (campo in verificados and campo.endswith("_cuit")) or (campo in TOTALES and _cierra(t)):
-            continue
-        v.append(Verificacion(campo=campo, nivel="error", mensaje=f"{etiqueta}: cada lectura dio algo distinto ({' / '.join(valores[:3])}). Elegí el que figura en la imagen.",
-                             titulo=f"{etiqueta} mal leído", opciones=_ordenar_opciones(lectura, campo, valores)[:3]))
+        v.append(Verificacion(campo=campo, nivel="aviso", mensaje=f"{etiqueta}: cada lectura dio algo distinto ({' / '.join(valores[:3])}). Compará con la imagen.",
+                             titulo=f"{etiqueta}: ¿cuál es?", opciones=valores[:3]))
     # Primero lo que hay que arreglar.
     orden = {"error": 0, "aviso": 1, "ok": 2}
     return sorted(v, key=lambda x: orden[x.nivel])
-
-
-def _ordenar_opciones(lectura: Lectura, campo: str, valores: list[str]) -> list[str]:
-    """Primero la recomendada: el importe con el que cierra el total o, si no, el que quedó."""
-    def puntaje(v: str) -> tuple:
-        if campo in TOTALES:
-            n = _numero(v)
-            cierra = n is not None and _cierra({**lectura.totales, campo: n})
-            return (not cierra, n != lectura.totales.get(campo))
-        return (False, v != lectura.encabezado.get(campo))
-    return sorted(valores, key=puntaje)
 
 
 # --- Excel ---------------------------------------------------------------------------
@@ -1304,7 +1718,7 @@ def nombre_excel(lectura: Lectura, operacion: str | None = None, empresa: str = 
     cliente = limpiar_nombre(empresa).rstrip(". ") or base
     fecha = lectura.encabezado.get("fecha", "")
     periodo = f" - {mes_anio(fecha)}" if re.fullmatch(r"\d{2}/\d{2}/\d{4}", fecha) else ""
-    return f"Conversor de facturas {operacion} con AFIP{periodo} - {cliente}.xls"
+    return f"Conversor de facturas {operacion} con AFIP{periodo} - {cliente}.xlsx"
 
 
 class Extras(BaseModel):
@@ -1315,90 +1729,15 @@ class Extras(BaseModel):
     productos: list[str] = Field(default_factory=list, max_length=2000)
     centros: list[str] = Field(default_factory=list, max_length=2000)
     dto: list[float | None] = Field(default_factory=list, max_length=2000)
-    # Un solo producto para todo el detalle («Refrigerio»): una fila por alícuota y los
-    # artículos en «PRODUCTOOBSERVACION». Vacío: una fila por ítem.
-    agrupar: str = Field(default="", max_length=60)
 
 
 # El modelo de Xubio «Importar comprobantes» (modelo-importacion-ventas): una fila con
-# la cabecera y una por ítem, unidas por NUMERODECONTROL.
+# la cabecera y una por ítem, unidas por NUMERODECONTROL. En compras va el proveedor.
 COLUMNAS_IMPORTACION = [
     "NUMERODECONTROL", "CLIENTE", "TIPO", "NUMERO", "FECHA", "VENCIMIENTODELCOBRO",
     "COMPROBANTEASOCIADO", "MONEDA", "COTIZACION", "OBSERVACIONES", "PRODUCTOSERVICIO",
     "CENTRODECOSTO", "PRODUCTOOBSERVACION", "CANTIDAD", "PRECIO", "DESCUENTO", "IMPORTE", "IVA",
 ]
-
-
-# El modelo de Xubio para compras (ej-importacion-compras.xls, hoja «Hoja1»): sin
-# descuento ni comprobante asociado, con fecha fiscal y exento/no gravado; los impuestos
-# internos y las percepciones van como filas más, con su nombre en PRODUCTOSERVICIOPERCEPCION.
-COLUMNAS_COMPRAS = [
-    "NUMERODECONTROL", "PROVEEDOR", "TIPO", "NUMERO", "FECHA", "VENCIMIENTODELPAGO", "MONEDA",
-    "COTIZACION", "FECHAFISCAL", "OBSERVACIONES", "PRODUCTOSERVICIOPERCEPCION", "CENTRODECOSTO",
-    "PRODUCTOOBSERVACION", "CANTIDAD", "PRECIO", "IMPORTE", "IVA", "EXENOGRAV",
-]
-# Nombre de cada impuesto en Xubio. «Impuestos Internos» es el del modelo; los otros
-# tienen que coincidir con los que tiene el estudio en Xubio.
-TRIBUTOS_COMPRAS = (
-    ("impuestos_internos", "Impuestos Internos"),
-    ("percepcion_iibb", "Percepción IIBB Buenos Aires"),
-    ("otros_tributos", "Otros Tributos"),
-)
-
-
-# Tique Factura A / B / C (081, 082, 111): en compras, Xubio los importa como tipo 5.
-TIQUES_FACTURA = {81, 82, 111}
-
-
-def _tipo_compra(tipo: str) -> int | str:
-    m = re.match(r"\s*(\d+)", tipo or "")
-    return 5 if m and int(m.group(1)) in TIQUES_FACTURA else _tipo_xubio(tipo)
-
-
-def _precio_neto(cantidad: float | None, importe: float | None, observacion: str | None) -> tuple:
-    """PRECIO x CANTIDAD tiene que dar el IMPORTE (neto), no el precio con IVA de la foto.
-    Si el unitario no da justo con dos decimales, va como 1 con la cantidad en la observación."""
-    cant = cantidad or 1
-    if importe is None:
-        return cant, None, observacion
-    unitario = round(importe / cant, 2)
-    if round(unitario * cant, 2) == round(importe, 2):
-        return cant, unitario, observacion
-    return 1, importe, f"{_cantidad(cant)}x {observacion or ''}".strip()
-
-
-def filas_compras(lectura: Lectura, extras: Extras | None = None) -> list[list]:
-    """Cabecera, detalle (o el detalle agrupado) y una fila por cada impuesto o percepción."""
-    extras = extras or Extras()
-    e, t = lectura.encabezado, lectura.totales
-    fecha = _fecha_xubio(e.get("fecha", ""))
-    vence = _fecha_xubio(extras.vencimiento) if extras.vencimiento else fecha
-    filas = [[1, e.get("emisor", ""), _tipo_compra(e.get("tipo", "")), _numero_xubio(lectura), fecha, vence,
-              "pesos argentinos", "", fecha, Path(lectura.archivo).stem[:200]] + [None] * 8]
-    detalle = []  # (producto, centro, observación, cantidad, precio, importe, alícuota)
-    if extras.agrupar.strip() and lectura.items:
-        centro = next((c for c in extras.centros if c), None)
-        detalle = [(extras.agrupar.strip(), centro, obs, 1, suma, suma, a) for a, suma, obs in agrupar_items(lectura.items)]
-    elif lectura.items:
-        for n, it in enumerate(lectura.items):
-            def de(lista, defecto=None):
-                return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
-            cant, precio, obs = _precio_neto(it.cantidad, it.importe, it.descripcion or None)
-            detalle.append((de(extras.productos, it.producto or it.codigo or it.descripcion[:60]), de(extras.centros),
-                            obs, cant, precio, it.importe, it.alicuota))
-    elif t.get("neto_gravado"):
-        neto = t["neto_gravado"]
-        detalle = [(extras.agrupar.strip() or "Según factura", None, None, 1, neto, neto, _alicuota_de(neto, t.get("iva") or 0.0))]
-    # Lo exento y no gravado va en la primera fila del detalle.
-    exento = round((t.get("no_gravado") or 0) + (t.get("exento") or 0), 2) or None
-    for n, (prod, centro, obs, cant, precio, importe, alicuota) in enumerate(detalle):
-        filas.append([1] + [None] * 9 + [prod, centro, obs, cant, precio, importe, alicuota, exento if n == 0 else None])
-    internos_items = round(sum(i.impuestos_internos or 0 for i in lectura.items), 2)
-    for campo, nombre in TRIBUTOS_COMPRAS:
-        valor = t.get(campo) or (internos_items if campo == "impuestos_internos" else None)
-        if valor:
-            filas.append([1] + [None] * 9 + [nombre, None, None, 1, None, valor, None, None])
-    return filas
 
 
 def _tipo_xubio(tipo: str) -> int | str:
@@ -1430,22 +1769,6 @@ def _fecha_xubio(texto: str):
         return texto or None
 
 
-def _cantidad(c: float | None) -> str:
-    c = 1 if c is None else c
-    return str(int(c)) if float(c).is_integer() else f"{c:.3f}".rstrip("0").replace(".", ",")
-
-
-def agrupar_items(items: list[Item]) -> list[tuple[float | None, float, str]]:
-    """Por alícuota: (alícuota, suma de los importes netos, «1x AGUA…; 2x ENTRAÑA»), con
-    las cantidades leídas. El IVA de cada alícuota queda igual."""
-    grupos: dict[float | None, tuple[float, list[str]]] = {}
-    for it in items:
-        suma, detalle = grupos.get(it.alicuota, (0.0, []))
-        detalle.append(f"{_cantidad(it.cantidad)}x {it.descripcion.strip() or 'Sin descripción'}")
-        grupos[it.alicuota] = (round(suma + (it.importe or 0), 2), detalle)
-    return [(a, suma, "; ".join(d)) for a, (suma, d) in grupos.items()]
-
-
 def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> list[list]:
     extras = extras or Extras()
     e, t = lectura.encabezado, lectura.totales
@@ -1461,11 +1784,6 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
         alicuota=_alicuota_de(t.get("neto_gravado") or 0.0, t.get("iva") or 0.0),
     )]
     filas = [cabecera]
-    if extras.agrupar.strip() and lectura.items:
-        centro = next((c for c in extras.centros if c), None)
-        for alicuota, suma, detalle in agrupar_items(lectura.items):
-            filas.append([1] + [None] * 9 + [extras.agrupar.strip(), centro, detalle, 1, suma, None, suma, alicuota])
-        return filas
     for n, it in enumerate(items):
         def de(lista, defecto=None):
             return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
@@ -1476,60 +1794,53 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
     return filas
 
 
-def _hoja_impuestos(lectura: Lectura) -> list[list]:
-    """Ventas: el modelo no trae columnas para impuestos internos ni percepciones; van en
-    otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos»."""
+def _hoja_impuestos(wb, lectura: Lectura) -> None:
+    """El modelo de Xubio no trae columnas para impuestos internos ni percepciones: van
+    en otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos»."""
     t = lectura.totales
     internos = [(n + 1, i.descripcion, i.impuestos_internos) for n, i in enumerate(lectura.items) if i.impuestos_internos]
-    filas: list[list] = [["Impuestos internos", n, desc, v] for n, desc, v in internos]
+    if not (internos or t.get("impuestos_internos") or t.get("percepcion_iibb") or t.get("otros_tributos")):
+        return
+    ws = wb.create_sheet("Impuestos y percepciones")
+    ws.append(["CONCEPTO", "ITEM", "DETALLE", "IMPORTE"])
+    for n, desc, v in internos:
+        ws.append(["Impuestos internos", n, desc, v])
     if t.get("impuestos_internos") and not internos:
-        filas.append(["Impuestos internos", None, "Total de la factura", t["impuestos_internos"]])
+        ws.append(["Impuestos internos", None, "Total de la factura", t["impuestos_internos"]])
     if t.get("percepcion_iibb"):
-        filas.append(["Percepción IIBB Bs. As.", None, None, t["percepcion_iibb"]])
+        ws.append(["Percepción IIBB Bs. As.", None, None, t["percepcion_iibb"]])
     if t.get("otros_tributos"):
-        filas.append(["Otros tributos", None, None, t["otros_tributos"]])
-    return [["CONCEPTO", "ITEM", "DETALLE", "IMPORTE"], *filas] if filas else []
-
-
-def _xls(hojas: list[tuple[str, list[list], set[int], set[int]]]) -> bytes:
-    """Excel 97-2003 (.xls), como los modelos de Xubio: (nombre, filas, columnas de
-    fecha, columnas de importe)."""
-    import xlwt
-
-    fecha = xlwt.easyxf(num_format_str="dd/mm/yyyy")
-    numero = xlwt.easyxf(num_format_str="#,##0.00")
-    negrita = xlwt.easyxf("font: bold on")
-    wb = xlwt.Workbook(encoding="utf-8")
-    for nombre, filas, fechas, numeros in hojas:
-        ws = wb.add_sheet(nombre)
-        for i, fila in enumerate(filas):
-            for j, valor in enumerate(fila):
-                if valor is None or valor == "":
-                    continue
-                if i == 0:
-                    ws.write(i, j, valor, negrita)
-                elif j in fechas and isinstance(valor, datetime):
-                    ws.write(i, j, valor, fecha)
-                elif j in numeros and isinstance(valor, (int, float)):
-                    ws.write(i, j, valor, numero)
-                else:
-                    ws.write(i, j, valor)
-        for j, titulo in enumerate(filas[0] if filas else []):
-            ws.col(j).width = 256 * max(12, len(str(titulo)) + 2)
-    buffer = io.BytesIO()
-    wb.save(buffer)
-    return buffer.getvalue()
+        ws.append(["Otros tributos", None, None, t["otros_tributos"]])
+    for celda in ws["D"][1:]:
+        celda.number_format = "#,##0.00"
+    for letra, ancho in zip("ABCD", (26, 8, 40, 14)):
+        ws.column_dimensions[letra].width = ancho
 
 
 def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> bytes:
-    """El .xls con el modelo de importación de Xubio (Compras: «Hoja1»; Ventas: «Sheet0»)."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet0"
+    encabezado = list(COLUMNAS_IMPORTACION)
     if operacion == "Compras":
-        # En compras los impuestos internos y las percepciones van como filas del comprobante.
-        return _xls([("Hoja1", [COLUMNAS_COMPRAS, *filas_compras(lectura, extras)], {4, 5, 8}, {14, 15, 17})])
-    hojas = [("Sheet0", [COLUMNAS_IMPORTACION, *filas_importacion(lectura, operacion, extras)], {4, 5}, {14, 15, 16})]
-    if impuestos := _hoja_impuestos(lectura):
-        hojas.append(("Impuestos y percepciones", impuestos, set(), {3}))
-    return _xls(hojas)
+        encabezado[1], encabezado[5] = "PROVEEDOR", "VENCIMIENTODELPAGO"
+    ws.append(encabezado)
+    for fila in filas_importacion(lectura, operacion, extras):
+        ws.append(fila)
+    for letra in "EF":
+        for celda in ws[letra][1:]:
+            celda.number_format = "dd/mm/yyyy"
+    for letra in "OPQ":
+        for celda in ws[letra][1:]:
+            celda.number_format = "#,##0.00"
+    for i, c in enumerate(encabezado):
+        ws.column_dimensions[chr(65 + i)].width = max(12, len(c) + 2)
+    _hoja_impuestos(wb, lectura)
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
 
 
 def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | None = None) -> bytes:
@@ -1568,7 +1879,7 @@ def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | Non
                         c.number_format = moneda
             anchos(ws)
     else:
-        e, t = lectura.encabezado, lectura.totales
+        e, t = lectura.encabezado, totales_efectivos(lectura)
         ws = wb.create_sheet("Comprobante")
         ws.append([e.get("tipo") or "Comprobante"])
         ws["A1"].font = titulo
@@ -1598,6 +1909,28 @@ def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | Non
         ws.cell(ws.max_row, 2).number_format = moneda
         ws.append(["Diferencia con el total", f"=B{filas_importes['total']}-B{ws.max_row}"])
         ws.cell(ws.max_row, 2).number_format = moneda
+        if lectura.iva_alicuotas:
+            ws.append([])
+            ws.append(["IVA por alícuota"])
+            ws.cell(ws.max_row, 1).font = titulo
+            ws.append(["Alícuota %", "Base imponible", "IVA"])
+            for c in ws[ws.max_row]:
+                c.font, c.fill = negrita, cabecera
+            for x in lectura.iva_alicuotas:
+                ws.append([x.alicuota, x.base, x.importe])
+                for col in (2, 3):
+                    ws.cell(ws.max_row, col).number_format = moneda
+        if lectura.tributos:
+            ws.append([])
+            ws.append(["Otros tributos"])
+            ws.cell(ws.max_row, 1).font = titulo
+            ws.append(["Tributo", "Base imponible", "Importe"])
+            for c in ws[ws.max_row]:
+                c.font, c.fill = negrita, cabecera
+            for x in lectura.tributos:
+                ws.append([f"{x.codigo} - {x.descripcion}" if x.codigo else x.descripcion, x.base, x.importe])
+                for col in (2, 3):
+                    ws.cell(ws.max_row, col).number_format = moneda
         ws.append([])
         ws.append(["Archivo", lectura.archivo])
         ws.append(["Leído con", {"ocr": "OCR (foto o escaneo)", "ia": "IA (Gemini) de la imagen", "pdf": "texto del PDF", "planilla": "planilla"}[lectura.metodo]])
@@ -1629,6 +1962,8 @@ def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | Non
     for c in wv[1]:
         c.font, c.fill = negrita, cabecera
     nombres = {**ETIQUETAS_ENCABEZADO, **ETIQUETAS_TOTALES, "items": "Detalle", "hojas": "Hojas"}
+    nombres.update({f"tributo_{i}": x.descripcion or "Otros tributos" for i, x in enumerate(lectura.tributos)})
+    nombres.update({f"iva_{i}": f"IVA {_fmt_alicuota(x.alicuota)}".strip() for i, x in enumerate(lectura.iva_alicuotas)})
     for x in lectura.verificaciones or verificar(lectura):
         wv.append([{"ok": "Bien", "aviso": "Revisar", "error": "Error"}[x.nivel], nombres.get(x.campo, x.campo), x.mensaje])
         wv.cell(wv.max_row, 1).fill = PatternFill("solid", fgColor=colores[x.nivel])
@@ -1651,3 +1986,12 @@ def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | Non
     salida = io.BytesIO()
     wb.save(salida)
     return salida.getvalue()
+
+
+def extract_invoice_data(ruta, motor: str | None = None) -> Lectura:
+    """Un archivo del disco (PDF, foto, captura, planilla) → la Lectura, ya
+    verificada. Lo mismo que hace el endpoint con lo que se sube."""
+    from pathlib import Path
+
+    ruta = Path(ruta)
+    return leer(ruta.name, ruta.read_bytes(), motor)

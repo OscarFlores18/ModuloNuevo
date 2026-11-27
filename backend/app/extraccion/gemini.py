@@ -1,21 +1,20 @@
 """Lectura de imágenes con Gemini (Conversor De Facturas).
 
-Si hay una clave de Gemini, las fotos y capturas se leen con Gemini Flash
-en vez de Tesseract: devuelve los campos del comprobante (o la tabla) en JSON y
-después pasan por las mismas verificaciones que el OCR (dígito verificador del
-CUIT, que los importes sumen el total, etc.).
+Si hay una clave de Gemini, las fotos y capturas se leen con Gemini Flash: devuelve
+los campos del comprobante (o la tabla) en JSON, con el IVA desglosado por alícuota
+y sin CAE, y después pasan por las mismas verificaciones que el OCR (dígito
+verificador del CUIT, con el cambio 0↔8 de las ticketeadoras; que los importes
+sumen el total, etc.).
 
-La clave sale de, en este orden:
-1. La variable de entorno ``GEMINI_API_KEY``.
-2. Un archivo ``.env`` con ``GEMINI_API_KEY=...`` en la carpeta de datos de la app
-   (``Documentos\\ControlFCT\\data`` instalada; ``backend/data`` en desarrollo) o en
-   ``backend/``.
-
-El modelo se puede cambiar con ``GEMINI_MODELO`` (variable o ``.env``), por si Google
-retira el de ``MODELO``.
+La clave y la configuración salen de la variable de entorno o de un ``.env`` (ver
+entorno.py):
+- ``GEMINI_API_KEY``: la clave.
+- ``GEMINI_MODELO``: el modelo, por si Google retira el de ``MODELO``.
+- ``GEMINI_PLAZO_S``: en modo «auto», cuánto se le espera antes de leer con el OCR
+  local (15 s).
 
 Sin clave, o si Gemini falla (sin internet, cuota gratuita agotada…), la app
-sigue con el OCR de Tesseract y lo avisa.
+sigue con el OCR local (PaddleOCR o Tesseract) y lo avisa.
 """
 
 from __future__ import annotations
@@ -23,12 +22,10 @@ from __future__ import annotations
 import io
 import json
 import logging
-import os
 import re
 import time
-from pathlib import Path
 
-from ..core import config
+from .entorno import numero, valor
 
 logger = logging.getLogger(__name__)
 
@@ -38,38 +35,28 @@ MODELO = "gemini-3.8-flash"
 LADO_MAXIMO = 1600
 # Por pedido: si un modelo tarda más, se pasa al siguiente.
 ESPERA_S = 60
+# En modo «auto» del Conversor: si Gemini no contesta en este tiempo (o da 429/503),
+# la imagen se lee con el OCR local. Se cambia con GEMINI_PLAZO_S.
+PLAZO_AUTO_S = 15.0
+# Google rechaza (400) un pedido con un plazo menor a este.
+PLAZO_MINIMO_S = 10.0
+MOTOR = "gemini"
 
 
 class GeminiNoDisponible(RuntimeError):
     """Gemini no respondió: el mensaje es para mostrarle a la persona."""
 
 
-def _de_archivo_env(ruta: Path, nombre: str = "GEMINI_API_KEY") -> str:
-    try:
-        for linea in ruta.read_text(encoding="utf-8").splitlines():
-            m = re.match(rf"\s*(?:export\s+)?{nombre}\s*=\s*(.*)$", linea)
-            if m:
-                return m.group(1).strip().strip("'\"")
-    except OSError:
-        pass
-    return ""
-
-
-def _valor(nombre: str) -> str:
-    if valor := os.getenv(nombre, "").strip():
-        return valor
-    for carpeta in (config.DATA_DIR, config.BACKEND_DIR):
-        if valor := _de_archivo_env(Path(carpeta) / ".env", nombre):
-            return valor
-    return ""
-
-
 def clave() -> str:
-    return _valor("GEMINI_API_KEY")
+    return valor("GEMINI_API_KEY")
 
 
 def modelo() -> str:
-    return _valor("GEMINI_MODELO") or MODELO
+    return valor("GEMINI_MODELO") or MODELO
+
+
+def plazo_auto() -> float:
+    return numero("GEMINI_PLAZO_S", PLAZO_AUTO_S)
 
 
 def disponible() -> bool:
@@ -82,40 +69,59 @@ def disponible() -> bool:
     return True
 
 
-PROMPT = """Sos un lector de comprobantes argentinos (facturas, notas de crédito/débito, tiques, recibos).
-Leé la imagen y devolvé SOLO un JSON con esta forma, sin texto antes ni después:
+PROMPT = """Sos un auditor contable que lee comprobantes fiscales argentinos (tiques térmicos, tique factura A/B/C, facturas electrónicas, notas de crédito/débito, remitos).
+Leé la imagen y devolvé SOLO un JSON válido con esta forma, sin texto antes ni después:
 
 {
   "tipo": "comprobante" o "tabla",
   "encabezado": {
-    "emisor": razón social de quien emite,
-    "emisor_cuit": CUIT del emisor, 11 dígitos sin guiones,
-    "receptor": razón social de quien recibe (el cliente / "Señor(es)"),
-    "receptor_cuit": CUIT o DNI del receptor, solo dígitos,
-    "tipo_codigo": código ARCA del tipo de comprobante (1 Factura A, 6 Factura B, 11 Factura C, 3 NC A, 8 NC B, 13 NC C, 2 ND A, 7 ND B, 12 ND C, 81 Tique Factura A, 82 Tique Factura B, 83 Tique, 111 Tique Factura C, 51 Factura M, 19 Factura E), o null,
-    "punto_de_venta": número de punto de venta, o null,
-    "numero": número del comprobante (sin el punto de venta), o null,
-    "fecha": fecha de emisión en formato dd/mm/aaaa,
-    "cae": CAE o CAI de 14 dígitos, o ""
+    "emisor_razon_social": "string",
+    "emisor_cuit": "11 dígitos sin guiones",
+    "receptor_razon_social": "string" o null,
+    "receptor_cuit": "11 dígitos (o DNI) sin guiones" o null,
+    "tipo_comprobante": "código ARCA - nombre, p. ej. '81 - Tique Factura A'",
+    "punto_venta": "5 dígitos",
+    "numero_comprobante": "8 dígitos",
+    "fecha": "DD/MM/AAAA"
   },
-  "items": [ {"codigo": "", "descripcion": "", "cantidad": número o null, "precio": número o null, "alicuota": % de IVA o null, "importe": número o null, "impuestos_internos": número o null, "producto": categoría para el sistema contable} ],
-  "totales": {"neto_gravado": número o null, "no_gravado": número o null, "exento": número o null, "iva": número o null, "impuestos_internos": número o null, "percepcion_iibb": número o null, "otros_tributos": número o null, "total": número o null},
+  "importes": {
+    "neto_gravado": 0.00,
+    "no_gravado": 0.00,
+    "exento": 0.00,
+    "desglose_iva": [ {"alicuota": 21.0, "base_imponible": 0.00, "importe_iva": 0.00} ],
+    "desglose_tributos": [ {"codigo": "07", "descripcion": "Percepción IIBB Bs As", "base_imponible": 0.00, "importe": 0.00} ],
+    "impuestos_internos": 0.00,
+    "percepcion_iibb": 0.00,
+    "otros_tributos": 0.00,
+    "total": 0.00
+  },
+  "items": [ {"codigo": "string" o null, "descripcion": "string", "cantidad": 0.00, "precio_unitario": 0.00, "alicuota_iva": 21.0, "importe": 0.00, "impuestos_internos": 0.00 o null, "producto": "categoría"} ],
+  "validaciones": {
+    "cuit_emisor_valido": true,
+    "cuit_receptor_valido": true,
+    "suma_items_coincide": true,
+    "total_coincide": true,
+    "advertencias": ["string"]
+  },
   "filas": [ ["celda", "celda", ...] ],
-  "texto": todo el texto visible de la imagen, respetando los renglones
+  "texto": "todo el texto visible de la imagen, respetando los renglones"
 }
 
+Códigos ARCA de "tipo_comprobante": 1 Factura A, 6 Factura B, 11 Factura C, 51 Factura M, 19 Factura E, 2 ND A, 7 ND B, 12 ND C, 3 NC A, 8 NC B, 13 NC C, 81 Tique Factura A, 82 Tique Factura B, 111 Tique Factura C, 83 Tique, 91 Remito.
+
 Reglas:
-- "tipo": "comprobante" si es una factura, tique, nota o recibo; "tabla" si es una planilla o un listado.
-- Para "comprobante" completá encabezado, items y totales; "filas" va vacío.
-- Para "tabla" completá "filas" con cada renglón (la primera fila, los títulos) y dejá encabezado, items y totales vacíos.
-- Los importes como números JSON con punto decimal (1234.5), sin $ ni separador de miles. En Argentina «1.234,50» es 1234.5.
-- "iva" es la suma de todo el IVA discriminado.
-- "impuestos_internos": el total de impuestos internos (y en cada ítem, el suyo si figura).
-- "producto" de cada ítem: la categoría que mejor le queda, una de estas: Mercaderías, Servicios, Honorarios, Combustible, Refrigerio (comidas y bebidas, p. ej. un restaurante), Gastos de limpieza, Alquiler.
-- "descripcion" de cada ítem tal como figura pero sin errores de lectura (p. ej. «AGUA MINERAL SMART WATER 591ML»).
-- "percepcion_iibb": la percepción de Ingresos Brutos de Buenos Aires (ARBA).
-- "otros_tributos": el resto (percepción de IVA, IIBB de otras jurisdicciones, etc.), sin repetir lo anterior.
-- Si un dato no está o no se lee, usá "" o null. No inventes nada.
+1. Ceros y ochos en impresoras térmicas: en la tipografía de las ticketeadoras el cero ('0') suele tener una barra diagonal en el centro y en fotos borrosas parece un ocho ('8'). Mirá la geometría de cada dígito y el contexto numérico: un 8 tiene dos lazos cerrados apilados; un 0 tachado es un solo óvalo con una barra. No confundas ceros tachados con ochos.
+2. CUIT (módulo 11): tiene 11 dígitos y el último es verificador (pesos 5, 4, 3, 2, 7, 6, 5, 4, 3, 2 sobre los 10 primeros; resto = suma mod 11; verificador = 11 - resto, 11 → 0). Si un CUIT leído no pasa la validación y tiene 0 u 8, cambiá 8 por 0 (y viceversa) hasta encontrar la combinación válida. El CUIT suele repetirse en «Ingresos Brutos»: usalo para confirmar.
+3. Los tiques fiscales (controlador fiscal, p. ej. Tique Factura A/B) no llevan CAE. No incluyas ningún campo CAE.
+4. IVA por alícuota: no agrupes el IVA en un solo número. Cada alícuota presente (21, 10.5, 27, 5, 2.5) va en "desglose_iva" con su base imponible y su importe de IVA. Si el comprobante no discrimina IVA (Factura B/C, tique a consumidor final), "desglose_iva" va vacío.
+5. Cuadratura: verificá que los ítems sumen el neto gravado y que neto gravado + no gravado + exento + suma de IVA + otros tributos = total (tolerancia ±0.05). Si algo no cierra, volvé a mirar los dígitos dudosos; si sigue sin cerrar, dejá lo que leíste y explicalo en "advertencias".
+6. "tipo": "comprobante" si es una factura, tique, nota, remito o recibo; "tabla" si es una planilla o un listado. Para "tabla" completá "filas" (la primera, los títulos) y dejá encabezado, importes e items vacíos; para "comprobante", "filas" va vacío.
+7. Otros tributos: cada percepción o impuesto que no es IVA (impuestos internos, percepción de IIBB, percepción de IVA, tasas municipales…) va en "desglose_tributos" con su código si figura (p. ej. «07 - PERCEPCION IIBB BS AS» → codigo "07"), la descripción, la base imponible y el importe. "otros_tributos" es la suma de esos importes (o el «Importe total otros tributos» del comprobante). Si no hay, la lista va vacía. La leyenda «Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)» repite importes: no la cuentes como tributo.
+8. Importes como números JSON con punto decimal (1234.5), sin $ ni separador de miles. En Argentina «1.234,50» es 1234.5.
+9. Si un dato no está o no se lee, usá null. No inventes nada.
+10. Impuestos internos y percepción de IIBB de Buenos Aires: además de ir en "desglose_tributos", poné su total en "impuestos_internos" y "percepcion_iibb" (ARBA) de "importes"; en cada ítem, "impuestos_internos" si figura. "otros_tributos" sigue siendo la suma de todo "desglose_tributos".
+11. "producto" de cada ítem: la categoría que mejor le queda, una de estas: Mercaderías, Servicios, Honorarios, Combustible, Refrigerio (comidas y bebidas, p. ej. un restaurante), Gastos de limpieza, Alquiler.
+12. "descripcion" de cada ítem tal como figura pero sin errores de lectura (p. ej. «AGUA MINERAL SMART WATER 591ML»).
 """
 
 
@@ -131,9 +137,7 @@ def _achicar(imagen):
 
 
 def _json_de(texto: str) -> dict:
-    texto = texto.strip()
-    # Por las dudas viene envuelto en ```json … ```.
-    texto = re.sub(r"^```(?:json)?\s*|\s*```$", "", texto)
+    texto = re.sub(r"^```(?:json)?\s*|\s*```$", "", texto.strip())
     datos = json.loads(texto)
     if not isinstance(datos, dict):
         raise ValueError("Gemini no devolvió un objeto JSON.")
@@ -147,11 +151,22 @@ RESPALDOS = ("gemini-3.5-flash", "gemini-3.1-flash-lite")
 PAUSAS_S = (2,)
 
 
-def _pedir(cliente, types, errors, jpeg: bytes):
+def _pedir(cliente, types, errors, jpeg: bytes, plazo_s: float | None = None):
+    """Con `plazo_s`, todo (modelos de respaldo incluidos) tiene que terminar en ese
+    tiempo; si no, TimeoutError."""
     modelos = list(dict.fromkeys([modelo(), *RESPALDOS]))
+    if plazo_s:
+        # Con plazo, primero el más rápido: el resto suele tardar más que el plazo.
+        modelos = list(dict.fromkeys([RESPALDOS[-1], *modelos]))
+    fin = time.monotonic() + plazo_s if plazo_s else None
     ultimo: Exception | None = None
     for m in modelos:
         for intento in range(len(PAUSAS_S) + 1):
+            restante = fin - time.monotonic() if fin else None
+            if restante is not None and restante <= 0.2:
+                raise TimeoutError(f"Gemini no contestó en {plazo_s:g} s.")
+            # Google no acepta plazos menores a PLAZO_MINIMO_S (responde 400).
+            extra = {"http_options": types.HttpOptions(timeout=int(max(restante, PLAZO_MINIMO_S) * 1000))} if restante else {}
             try:
                 return cliente.models.generate_content(
                     model=m,
@@ -162,32 +177,46 @@ def _pedir(cliente, types, errors, jpeg: bytes):
                         response_mime_type="application/json",
                         temperature=0,
                         thinking_config=types.ThinkingConfig(thinking_budget=0),
+                        **extra,
                     ),
                 )
             except errors.APIError as exc:
+                if exc.code == 429:
+                    # El cupo gratuito es por modelo: sin reintentar, al siguiente.
+                    if not isinstance(ultimo, errors.APIError) or ultimo.code != 429:
+                        ultimo = exc
+                    logger.info("Gemini %s sin cupo (429).", m)
+                    break
                 if exc.code not in (500, 503, 504):
                     raise
-                ultimo = exc
+                if exc.code == 504:
+                    # Se le acabó el plazo: reintentar el mismo modelo tarda lo mismo.
+                    if not (isinstance(ultimo, errors.APIError) and ultimo.code == 429):
+                        ultimo = exc
+                    logger.info("Gemini %s no contestó a tiempo (504).", m)
+                    break
+                if not (isinstance(ultimo, errors.APIError) and ultimo.code == 429):
+                    ultimo = exc
                 logger.info("Gemini %s respondió %s (intento %s).", m, exc.code, intento + 1)
             except Exception as exc:  # tiempo agotado: al siguiente modelo
                 ultimo = exc
                 logger.info("Gemini %s no respondió a tiempo: %s", m, exc)
                 break
-            if intento < len(PAUSAS_S):
+            if intento < len(PAUSAS_S) and not fin:
                 time.sleep(PAUSAS_S[intento])
     assert ultimo is not None
     raise ultimo
 
 
-def leer_imagen(imagen) -> dict:
+def leer_imagen(imagen, plazo_s: float | None = None) -> dict:
     """La imagen (PIL, RGB) → el JSON del PROMPT. Lanza GeminiNoDisponible con un
-    mensaje claro si no se pudo."""
+    mensaje claro si no se pudo (o si con `plazo_s` no contestó a tiempo)."""
     from google import genai
     from google.genai import errors, types
 
     imagen = _achicar(imagen)
     buffer = io.BytesIO()
-    imagen.save(buffer, format="JPEG", quality=90)
+    imagen.convert("RGB").save(buffer, format="JPEG", quality=90)
     try:
         # Sin los reintentos propios del SDK (5 por pedido, con esperas de hasta 60 s):
         # los maneja `_pedir`, que ante un 503 pasa enseguida al modelo siguiente.
@@ -195,12 +224,16 @@ def leer_imagen(imagen) -> dict:
             api_key=clave(),
             http_options=types.HttpOptions(timeout=ESPERA_S * 1000, retry_options=types.HttpRetryOptions(attempts=1)),
         )
-        respuesta = _pedir(cliente, types, errors, buffer.getvalue())
+        respuesta = _pedir(cliente, types, errors, buffer.getvalue(), plazo_s)
     except errors.APIError as exc:
         logger.warning("Gemini respondió %s: %s", exc.code, exc.message)
+        if exc.code == 504:
+            raise GeminiNoDisponible(f"Gemini no contestó en {plazo_s or ESPERA_S:g} s.") from exc
         if exc.code in (500, 503):
             raise GeminiNoDisponible("Gemini está saturado en este momento (mucha demanda). Probá de nuevo en un rato.") from exc
         if exc.code == 429:
+            if "PerDay" in str(exc):
+                raise GeminiNoDisponible("Gemini: se usó todo el cupo gratuito del día. Se renueva mañana.") from exc
             raise GeminiNoDisponible("Gemini: se llegó al límite gratuito por minuto. Esperá un minuto y volvé a subir la imagen.") from exc
         if exc.code == 404:
             raise GeminiNoDisponible(f"Gemini: el modelo «{modelo()}» ya no está disponible. Poné otro en GEMINI_MODELO (por ejemplo gemini-3.8-flash).") from exc
@@ -209,9 +242,14 @@ def leer_imagen(imagen) -> dict:
         raise GeminiNoDisponible(f"Gemini no pudo leer la imagen (error {exc.code}).") from exc
     except Exception as exc:  # sin internet, tiempo agotado…
         logger.warning("Gemini no respondió: %s", exc)
+        if isinstance(exc, TimeoutError) or "timed out" in str(exc).lower() or "timeout" in type(exc).__name__.lower():
+            raise GeminiNoDisponible(f"Gemini no contestó en {plazo_s or ESPERA_S:g} s.") from exc
         raise GeminiNoDisponible("No se pudo conectar con Gemini (¿hay internet?).") from exc
     try:
-        return _json_de(respuesta.text or "")
+        datos = _json_de(respuesta.text or "")
     except (ValueError, json.JSONDecodeError) as exc:
         logger.warning("Gemini devolvió algo que no es JSON: %r", (respuesta.text or "")[:300])
         raise GeminiNoDisponible("Gemini devolvió una respuesta que no se entiende.") from exc
+    validaciones = datos.get("validaciones") if isinstance(datos.get("validaciones"), dict) else {}
+    datos["validaciones"] = {**validaciones, "motor_utilizado": MOTOR}
+    return datos
