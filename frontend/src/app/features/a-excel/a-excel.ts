@@ -45,150 +45,182 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
   imports: [Encabezado, Alerta, Ayuda, VistaArchivo],
   styles: `
     :host {
-      --ax-texto: #0f172a; --ax-tenue: #64748b; --ax-borde: #e2e8f0; --ax-borde-in: #cbd5e1; --ax-fondo: #f8fafc;
-      --ax-acento: #1d4ed8; --ax-error: #b91c1c; --ax-aviso: #b45309; --ax-ok: #15803d;
-      display: flex; flex-direction: column; gap: 14px; flex: 1 0 auto; color: var(--ax-texto);
+      --cf-texto: #0f172a; --cf-suave: #475569; --cf-tenue: #64748b; --cf-borde: #e2e8f0; --cf-borde-in: #cbd5e1;
+      --cf-fondo: #f8fafc; --cf-acento: #1d4ed8; --cf-acento-suave: #eff6ff;
+      --cf-error: #b91c1c; --cf-error-fondo: #fef2f2; --cf-aviso: #92400e; --cf-aviso-fondo: #fffbeb; --cf-ok: #15803d; --cf-ok-fondo: #f0fdf4;
+      display: flex; flex-direction: column; gap: 16px; flex: 1 0 auto; color: var(--cf-texto); font-size: .92rem;
     }
+    button { font: inherit; }
+    :is(button, select, input, [role='button']):focus-visible { outline: 2px solid var(--cf-acento); outline-offset: 2px; }
+
+    /* Botones */
+    .cf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 16px; border: 1px solid transparent; border-radius: 8px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+    .cf-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .cf-btn-prim { background: var(--cf-acento); color: #fff; }
+    .cf-btn-prim:hover:not(:disabled) { background: #1e40af; }
+    .cf-btn-sec { background: #fff; color: var(--cf-texto); border-color: var(--cf-borde-in); }
+    .cf-btn-sec:hover:not(:disabled) { background: var(--cf-fondo); }
+    .cf-btn-chico { min-height: 30px; padding: 0 10px; font-size: .84rem; }
+    .cf-link { border: 0; background: none; padding: 0; color: var(--cf-acento); font-weight: 600; cursor: pointer; }
+    .cf-link:hover { text-decoration: underline; }
+    .cf-x { display: inline-grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; }
+    .cf-x:hover { background: var(--cf-error-fondo); color: var(--cf-error); }
+    .cf-x svg { width: 14px; height: 14px; }
+    .cf-spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: cf-gira .8s linear infinite; }
+    @keyframes cf-gira { to { transform: rotate(360deg); } }
+
     /* Sin archivos */
-    .ax-inicio { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; width: 100%; max-width: 640px; margin: auto; padding: 40px 24px; background: #fff; border: 1px dashed var(--ax-borde-in); border-radius: 8px; text-align: center; cursor: pointer; }
-    .ax-inicio:hover, .ax-inicio.encima { border-color: var(--ax-acento); }
-    .ax-inicio-i { width: 28px; height: 28px; margin-bottom: 4px; color: var(--ax-tenue); }
-    .ax-inicio-t { font-size: 1rem; font-weight: 600; }
-    .ax-inicio-err { width: 100%; max-width: 640px; margin: 0 auto auto; }
+    .cf-inicio { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 680px; margin: 24px auto auto; padding: 48px 24px; background: #fff; border: 2px dashed var(--cf-borde-in); border-radius: 14px; text-align: center; cursor: pointer; }
+    .cf-inicio:hover, .cf-inicio.encima { border-color: var(--cf-acento); background: var(--cf-acento-suave); }
+    .cf-inicio-i { width: 40px; height: 40px; margin-bottom: 4px; color: var(--cf-acento); }
+    .cf-inicio-t { font-size: 1.15rem; font-weight: 700; }
+    .cf-inicio-s { color: var(--cf-suave); }
+    .cf-inicio-f { font-size: .82rem; color: var(--cf-tenue); }
+    kbd { padding: 1px 6px; border: 1px solid var(--cf-borde-in); border-bottom-width: 2px; border-radius: 4px; background: #fff; font: inherit; font-size: .78rem; }
+    .cf-inicio-err { width: 100%; max-width: 680px; margin: 0 auto auto; }
 
-    /* Arriba: archivos y el elegido */
-    .ax-top { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; align-items: start; }
-    @media (max-width: 860px) { .ax-top { grid-template-columns: minmax(0, 1fr); } }
-    .ax-tarjeta { min-width: 0; padding: 14px 16px; background: #fff; border: 1px solid var(--ax-borde); border-radius: 8px; }
-    .ax-tarjeta.encima { border-color: var(--ax-acento); }
-    .ax-cab, .ax-barra { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    .ax-cab { margin-bottom: 10px; }
-    .ax-cab h2, .ax-titulo { margin: 0; font-size: .95rem; font-weight: 600; }
-    .ax-titulo { display: flex; flex-direction: column; min-width: 0; }
-    .ax-meta { font-size: .8rem; font-weight: 400; color: var(--ax-tenue); }
-    .ax-lista { margin: 0; padding: 0; list-style: none; border: 1px solid var(--ax-borde); border-radius: 6px; }
-    .ax-lista li { display: flex; align-items: center; gap: 8px; padding: 0 6px 0 10px; }
-    .ax-lista li + li { border-top: 1px solid var(--ax-borde); }
-    .ax-lista li.activo { background: var(--ax-fondo); box-shadow: inset 2px 0 0 var(--ax-acento); }
-    .ax-fila { flex: 1; min-width: 0; padding: 7px 0; border: 0; background: none; font: inherit; text-align: left; cursor: pointer; }
-    .ax-nombre { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .875rem; font-weight: 600; }
-    .ax-x { flex: none; width: 28px; height: 28px; border: 0; border-radius: 4px; background: none; color: var(--ax-tenue); font-size: 1.1rem; line-height: 1; cursor: pointer; }
-    .ax-x:hover { background: var(--ax-fondo); color: var(--ax-error); }
-    .ax-leyendo { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; }
-    .ax-link { border: 0; background: none; padding: 0; color: var(--ax-acento); font: inherit; font-size: .85rem; font-weight: 600; cursor: pointer; }
-    .ax-link:hover { text-decoration: underline; }
-    .ax-limpiar { display: block; margin: 10px 0 0 auto; color: var(--ax-tenue); }
-    .ax-pend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 10px 0 0; font-size: .85rem; color: var(--ax-error); }
-    .ax-descargar { flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; }
-    .ax-inicio:focus-visible, .ax-fila:focus-visible, .ax-x:focus-visible, .ax-link:focus-visible, .ax-quitar:focus-visible, .ax-mas:focus-visible { outline: 2px solid var(--ax-acento); outline-offset: 2px; }
-    .ax-punto { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ax-borde-in); }
-    .ax-punto.aviso { background: #f59e0b; } .ax-punto.error { background: #dc2626; }
-    .ax-empresa { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ax-borde); font-size: .85rem; }
-    .ax-empresa label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-    .ax-empresa select { width: auto; min-width: 220px; }
-    .ax-empresa p { flex-basis: 100%; margin: 0; color: var(--ax-tenue); }
-    .ax-empresa p.aviso { color: var(--ax-aviso); }
+    /* 1. Archivos */
+    .cf-archivos { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; background: #fff; border: 1px solid var(--cf-borde); border-radius: 12px; }
+    .cf-archivos.encima { border-color: var(--cf-acento); background: var(--cf-acento-suave); }
+    .cf-archivos ul { display: contents; list-style: none; }
+    .cf-chip { display: flex; align-items: center; max-width: 280px; border: 1px solid var(--cf-borde); border-radius: 9px; background: var(--cf-fondo); }
+    .cf-chip.activo { border-color: var(--cf-acento); background: var(--cf-acento-suave); box-shadow: inset 0 -2px 0 var(--cf-acento); }
+    .cf-chip-btn { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 4px 6px 10px; border: 0; background: none; text-align: left; cursor: pointer; }
+    .cf-chip-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; }
+    .cf-chip-nombre { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; font-size: .86rem; }
+    .cf-chip-estado { font-size: .76rem; color: var(--cf-tenue); }
+    .cf-chip-estado.error { color: var(--cf-error); } .cf-chip-estado.aviso { color: var(--cf-aviso); } .cf-chip-estado.ok { color: var(--cf-ok); }
+    .cf-punto { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+    .cf-punto.aviso { background: #f59e0b; } .cf-punto.error { background: #dc2626; }
+    .cf-archivos-fin { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+    .cf-leyendo { display: inline-flex; align-items: center; gap: 6px; color: var(--cf-suave); font-size: .86rem; }
 
-    /* Abajo: el archivo y lo leído */
-    .ax-grilla { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; align-items: start; }
-    .ax-grilla.sin-vista { grid-template-columns: minmax(0, 1fr); }
-    @media (max-width: 900px) { .ax-grilla { grid-template-columns: minmax(0, 1fr); } }
-    .ax-ver-cab { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 10px; }
-    .ax-ver-cab h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
-    .ax-op { flex: 1 1 400px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 12px; border: 1px solid var(--ax-borde); border-radius: 8px; background: var(--ax-fondo); font-size: .88rem; }
-    .ax-op.aviso { border-color: #fcd34d; background: #fffbeb; }
-    .ax-op-tipo { font-weight: 700; }
-    .ax-op-frase { flex: 1 1 240px; color: #334155; }
-    .ax-ver { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-    .ax-ver li { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 6px 10px; border-left: 3px solid var(--ax-borde-in); background: var(--ax-fondo); border-radius: 0 6px 6px 0; font-size: .84rem; line-height: 1.35; }
-    .ax-ver li.error { border-left-color: #dc2626; } .ax-ver li.aviso { border-left-color: #f59e0b; } .ax-ver li.ok { border-left-color: #22c55e; color: var(--ax-ok); }
-    .ax-ver li p { margin: 0; flex: 1 1 200px; }
+    /* 2. Resumen */
+    .cf-resumen { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 20px; padding: 18px 20px; background: #fff; border: 1px solid var(--cf-borde); border-radius: 14px; }
+    .cf-res-meta { margin: 0 0 4px; font-size: .84rem; color: var(--cf-tenue); }
+    .cf-res-titulo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; font-size: 1.2rem; font-weight: 700; line-height: 1.3; }
+    .cf-flecha { color: var(--cf-tenue); font-weight: 400; }
+    .cf-op { padding: 2px 10px; border-radius: 999px; font-size: .78rem; font-weight: 700; letter-spacing: .02em; text-transform: uppercase; background: #e0e7ff; color: #3730a3; }
+    .cf-op.venta { background: #dcfce7; color: #166534; }
+    .cf-res-total { margin: 8px 0 0; color: var(--cf-suave); }
+    .cf-res-total strong { margin-left: 6px; font-size: 1.5rem; color: var(--cf-texto); font-variant-numeric: tabular-nums; }
+    .cf-res-acciones { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end; gap: 8px; }
+    .cf-estudio { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding-top: 14px; border-top: 1px solid var(--cf-borde); }
+    .cf-estudio label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .cf-estudio select { width: auto; min-width: 240px; }
+    .cf-estudio-frase { flex: 1 1 300px; margin: 0; color: var(--cf-suave); }
+    .cf-estudio-frase.aviso { color: var(--cf-aviso); }
+    .cf-estado { grid-column: 1 / -1; padding: 12px 14px; border-radius: 10px; background: var(--cf-aviso-fondo); }
+    .cf-estado.ok { background: var(--cf-ok-fondo); }
+    .cf-estado.con-error { background: var(--cf-error-fondo); }
+    .cf-estado-t { margin: 0; font-weight: 700; }
+    .cf-estado.ok .cf-estado-t { color: var(--cf-ok); }
+    .cf-estado ul { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+    .cf-estado li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+    .cf-estado li p { margin: 0; flex: 1 1 240px; }
+    .cf-ic { flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; font-size: .72rem; font-weight: 800; color: #fff; background: #f59e0b; }
+    li.error .cf-ic { background: #dc2626; }
+    .cf-datos { color: var(--cf-suave); font-variant-numeric: tabular-nums; }
+    .cf-xubio { grid-column: 1 / -1; margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--cf-ok-fondo); color: var(--cf-ok); }
+    .cf-xubio.aviso { background: var(--cf-aviso-fondo); color: var(--cf-aviso); }
+    .cf-xubio p { margin: 0; } .cf-xubio p + p { margin-top: 4px; }
+    .cf-alerta-lectura { grid-column: 1 / -1; }
+    @media (max-width: 720px) { .cf-resumen { grid-template-columns: minmax(0, 1fr); } .cf-res-acciones { justify-content: flex-start; } }
 
-    /* Cada bloque: encabezado, importes, IVA, tributos, total, detalle */
-    .ax-bloque { margin-top: 14px; border: 1px solid var(--ax-borde); border-radius: 8px; background: #fff; overflow: hidden; }
-    .ax-bloque > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 8px 12px; border-bottom: 1px solid var(--ax-borde); }
-    .ax-bloque > header h3 { margin: 0; font-size: .875rem; font-weight: 600; }
-    .ax-bloque > header span { font-size: .78rem; color: var(--ax-tenue); }
-    .ax-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 12px; padding: 10px 12px 12px; }
-    .ax-campos label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
-    .ax-partes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-    .ax-parte { min-width: 0; margin: 0; padding: 10px 12px 12px; border: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
-    .ax-parte + .ax-parte { border-left: 1px solid #f1f5f9; }
-    .ax-parte legend { float: left; grid-column: 1 / -1; padding: 0; font-size: .8rem; font-weight: 600; color: var(--ax-texto); }
-    .ax-parte label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
-    .ax-papel { margin-left: 6px; font-weight: 400; color: var(--ax-tenue); }
-    .ax-comp { border-top: 1px solid #f1f5f9; }
-    @media (max-width: 640px) { .ax-partes { grid-template-columns: minmax(0, 1fr); } .ax-parte + .ax-parte { border-left: 0; border-top: 1px solid #f1f5f9; } }
-    .ax-acciones { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
-    .ax-xubio { flex: none; padding: 8px 14px; }
-    .ax-xubio-res { margin-top: 10px; padding: 8px 10px; border-left: 3px solid #22c55e; background: var(--ax-fondo); border-radius: 0 6px 6px 0; font-size: .84rem; color: var(--ax-ok); }
-    .ax-xubio-res.aviso { border-left-color: #f59e0b; color: var(--ax-aviso); }
-    .ax-xubio-res p { margin: 0; } .ax-xubio-res p + p { margin-top: 3px; }
-    .ax-detalle-ancho { margin-top: 2px; }
-    .ax-renglon { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 12px; font-size: .86rem; }
-    .ax-renglon + .ax-renglon { border-top: 1px solid #f1f5f9; }
-    .ax-renglon.ax-nuevo-grupo { border-top: 1px solid var(--ax-borde); }
-    .ax-renglon .num { font-variant-numeric: tabular-nums; }
-    .ax-renglon .ax-in { flex: 0 1 180px; }
-    .ax-fila-imp { display: grid; grid-template-columns: minmax(0, 2fr) minmax(84px, 1fr) minmax(84px, 1fr) 30px; gap: 2px 8px; align-items: center; padding: 5px 12px; }
-    .ax-fila-imp + .ax-fila-imp { border-top: 1px solid #f1f5f9; }
-    .ax-fila-imp .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ax-cols { padding-bottom: 0; font-size: .75rem; color: var(--ax-tenue); }
-    .ax-nota { grid-column: 1 / -1; margin: 0; font-size: .76rem; line-height: 1.3; color: var(--ax-tenue); }
-    .ax-nota.error { color: var(--ax-error); } .ax-nota.aviso { color: var(--ax-aviso); }
-    .ax-suma { border-top: 1px solid var(--ax-borde) !important; background: var(--ax-fondo); font-size: .86rem; font-weight: 600; }
-    .ax-suma .num { padding-right: 7px; }
-    .ax-concepto { display: flex; gap: 6px; min-width: 0; }
-    .ax-concepto .ax-cod { flex: 0 0 52px; text-align: center; }
-    @media (max-width: 560px) { .ax-fila-imp { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 30px; } .ax-fila-imp > :first-child { grid-column: 1 / -1; } .ax-cols { display: none; } }
-    .ax-vacio { margin: 0; padding: 10px 12px; font-size: .84rem; color: var(--ax-tenue); }
-    .ax-pie { padding: 8px 12px; border-top: 1px solid var(--ax-borde); }
-    .ax-mas { padding: 4px 10px; border: 1px solid var(--ax-borde-in); border-radius: 6px; background: #fff; color: var(--ax-texto); font: inherit; font-size: .82rem; font-weight: 600; cursor: pointer; }
-    .ax-mas:hover:not(:disabled) { background: var(--ax-fondo); }
-    .ax-mas:disabled { opacity: .5; cursor: not-allowed; }
-    .ax-quitar { display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; }
-    .ax-quitar:hover { background: #fef2f2; color: var(--ax-error); }
-    .ax-quitar svg { width: 14px; height: 14px; }
-    .ax-total { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--ax-borde); background: var(--ax-fondo); font-weight: 600; }
-    .ax-total .ax-in { flex: 0 1 180px; font-weight: 600; }
-    .ax-cuadre-msj { margin: 0; padding: 6px 12px 8px; font-size: .8rem; color: var(--ax-tenue); background: var(--ax-fondo); }
-    .ax-cuadre-msj.ok { color: var(--ax-ok); } .ax-cuadre-msj.error { color: var(--ax-error); }
+    /* 3. Revisión */
+    .cf-revision { display: flex; flex-direction: column; gap: 16px; }
+    .cf-grilla { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 16px; align-items: start; }
+    .cf-grilla.sin-vista { grid-template-columns: minmax(0, 1fr); }
+    @media (max-width: 1000px) { .cf-grilla { grid-template-columns: minmax(0, 1fr); } }
+    .cf-form { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+    .cf-bloque { background: #fff; border: 1px solid var(--cf-borde); border-radius: 14px; overflow: hidden; }
+    .cf-bloque-cab { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 12px 16px; border-bottom: 1px solid var(--cf-borde); }
+    .cf-bloque-cab h3 { margin: 0; font-size: 1rem; font-weight: 700; }
+    .cf-bloque-cab p { margin: 0; font-size: .82rem; color: var(--cf-tenue); }
 
     /* Campos */
-    .ax-in { width: 100%; min-width: 0; padding: 4px 7px; border: 1px solid var(--ax-borde-in); border-radius: 6px; font: inherit; font-size: .86rem; color: var(--ax-texto); background: #fff; }
-    .ax-in:focus { outline: 2px solid var(--ax-acento); outline-offset: -1px; }
-    .ax-in.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ax-in.error { border-color: #dc2626; }
-    .ax-in.aviso { border-color: #f59e0b; }
+    .cf-in { width: 100%; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--cf-borde-in); border-radius: 8px; background: #fff; color: var(--cf-texto); font: inherit; font-size: .92rem; }
+    select.cf-in { padding-right: 4px; }
+    .cf-in:hover { border-color: #94a3b8; }
+    .cf-in:focus { outline: 2px solid var(--cf-acento); outline-offset: -1px; border-color: var(--cf-acento); }
+    .cf-in.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .cf-in::placeholder { color: #94a3b8; }
+    .cf-in.error { border-color: #dc2626; background: var(--cf-error-fondo); }
+    .cf-in.aviso { border-color: #f59e0b; background: var(--cf-aviso-fondo); }
+    .cf-campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: .82rem; font-weight: 600; color: var(--cf-suave); }
+
+    /* Comprobante */
+    .cf-comp { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; padding: 14px 16px; }
+    .cf-partes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid var(--cf-borde); }
+    .cf-parte { min-width: 0; margin: 0; padding: 14px 16px; border: 0; display: flex; flex-direction: column; gap: 10px; }
+    .cf-parte + .cf-parte { border-left: 1px solid var(--cf-borde); }
+    .cf-parte legend { float: left; width: 100%; padding: 0; margin-bottom: 2px; font-weight: 700; }
+    .cf-papel { margin-left: 6px; font-weight: 400; font-size: .84rem; color: var(--cf-tenue); }
+    @media (max-width: 640px) {
+      .cf-comp { grid-template-columns: minmax(0, 1fr); }
+      .cf-partes { grid-template-columns: minmax(0, 1fr); }
+      .cf-parte + .cf-parte { border-left: 0; border-top: 1px solid var(--cf-borde); }
+    }
+
+    /* Importes: un solo libro, como el pie de la factura */
+    .cf-libro-caja { overflow-x: auto; }
+    .cf-libro { width: 100%; min-width: 480px; border-collapse: collapse; }
+    .cf-libro th, .cf-libro td { padding: 6px 8px; vertical-align: middle; }
+    .cf-libro th:first-child, .cf-libro td:first-child { padding-left: 16px; }
+    .cf-libro th:last-child, .cf-libro td:last-child { padding-right: 10px; width: 40px; }
+    .cf-libro thead th { padding-top: 10px; padding-bottom: 4px; font-size: .78rem; font-weight: 600; color: var(--cf-tenue); text-align: left; }
+    .cf-libro .num { text-align: right; width: 128px; }
+    .cf-libro tbody th { font-weight: 500; text-align: left; }
+    .cf-libro .cf-grupo-t th { padding-top: 14px; padding-bottom: 4px; font-size: .8rem; font-weight: 700; color: var(--cf-suave); text-transform: uppercase; letter-spacing: .03em; border-top: 1px solid var(--cf-borde); }
+    .cf-libro .cf-grupo-t span { margin-left: 6px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--cf-tenue); }
+    .cf-nota td { padding-top: 0; }
+    .cf-nota p { margin: 0; font-size: .8rem; color: var(--cf-tenue); }
+    .cf-nota p.error { color: var(--cf-error); font-weight: 600; } .cf-nota p.aviso { color: var(--cf-aviso); }
+    .cf-vacio td { color: var(--cf-tenue); font-size: .86rem; }
+    .cf-agregar td { padding-top: 2px; padding-bottom: 8px; }
+    .cf-concepto { display: flex; gap: 6px; }
+    .cf-concepto .cf-cod { flex: 0 0 56px; text-align: center; }
+    .cf-libro tfoot th, .cf-libro tfoot td { background: var(--cf-fondo); text-align: left; }
+    .cf-libro tfoot td.num { text-align: right; }
+    .cf-suma th, .cf-suma td { border-top: 1px solid var(--cf-borde); padding-top: 12px; color: var(--cf-suave); font-weight: 600; }
+    .cf-suma .num { padding-right: 19px; font-variant-numeric: tabular-nums; }
+    .cf-total th { font-size: 1rem; font-weight: 700; }
+    .cf-total .cf-in { font-weight: 700; }
+    .cf-cuadre td { padding-bottom: 12px; }
+    .cf-cuadre p { margin: 0; font-weight: 600; color: var(--cf-tenue); }
+    .cf-cuadre p.ok { color: var(--cf-ok); } .cf-cuadre p.error { color: var(--cf-error); }
 
     /* Detalle y hojas */
-    .ax-caja { overflow-x: auto; }
-    .ax-tabla { width: 100%; border-collapse: collapse; font-size: .86rem; }
-    .ax-tabla th { text-align: left; font-size: .75rem; font-weight: 500; color: var(--ax-tenue); padding: 6px; border-bottom: 1px solid var(--ax-borde); }
-    .ax-tabla th.num, .ax-tabla td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .ax-tabla td { padding: 3px 4px; border-bottom: 1px solid #f1f5f9; vertical-align: middle; }
-    .ax-tabla tfoot td { padding: 8px 6px; border-bottom: 0; border-top: 1px solid var(--ax-borde); background: var(--ax-fondo); font-weight: 600; }
-    .ax-mas-filas { margin: 0; padding: 6px 12px; font-size: .78rem; color: var(--ax-tenue); }
-    .ax-texto-leido { margin-top: 14px; font-size: .84rem; }
-    .ax-texto-leido summary { cursor: pointer; color: var(--ax-tenue); }
-    .ax-nota-lectura { margin: 6px 0 0; color: var(--ax-tenue); }
-    .ax-texto { margin-top: 8px; white-space: pre-wrap; font: .75rem ui-monospace, monospace; background: var(--ax-fondo); padding: 10px; border-radius: 6px; max-height: 320px; overflow: auto; }
+    .cf-tabla-caja { overflow-x: auto; }
+    .cf-tabla { width: 100%; border-collapse: collapse; font-size: .9rem; }
+    .cf-tabla th { padding: 8px 6px; font-size: .78rem; font-weight: 600; color: var(--cf-tenue); text-align: left; border-bottom: 1px solid var(--cf-borde); white-space: nowrap; }
+    .cf-tabla th:first-child, .cf-tabla td:first-child { padding-left: 16px; }
+    .cf-tabla th.num, .cf-tabla td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .cf-tabla td { padding: 4px 6px; border-bottom: 1px solid #f1f5f9; }
+    .cf-tabla tfoot td { padding: 10px 6px; border-bottom: 0; background: var(--cf-fondo); font-weight: 600; }
+    .cf-tabla-hoja td { white-space: nowrap; }
+    .cf-mas-filas { margin: 0; padding: 8px 16px; font-size: .82rem; color: var(--cf-tenue); }
+
+    .cf-lectura { font-size: .86rem; color: var(--cf-suave); }
+    .cf-lectura summary { cursor: pointer; padding: 4px 0; }
+    .cf-lectura p { margin: 6px 0 0; }
+    .cf-texto { margin-top: 8px; white-space: pre-wrap; font: .78rem ui-monospace, monospace; background: var(--cf-fondo); padding: 12px; border-radius: 8px; max-height: 320px; overflow: auto; color: var(--cf-texto); }
   `,
   template: `
     <app-encabezado
       titulo="Conversor De Facturas"
-      bajada="Subí fotos, PDF, CSV o Excel: los leo, los revisás y descargás el Excel."
+      bajada="Subí la factura (foto, PDF o planilla): la leo, revisás lo que haga falta y la bajás a Excel o la preparás para Xubio."
     />
 
     <input #entrada type="file" multiple class="sr-only" tabindex="-1" aria-hidden="true" [attr.accept]="acepta" (change)="elegir($event)" />
 
     @if (!lecturas().length) {
       <div
-        class="ax-inicio"
+        class="cf-inicio"
         [class.encima]="encima()"
         role="button"
         tabindex="0"
-        aria-describedby="ax-inicio-sub"
+        aria-describedby="cf-inicio-s"
         [attr.aria-busy]="leyendo()"
         [attr.aria-disabled]="leyendo()"
         data-tour="ax-archivos"
@@ -200,342 +232,320 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
         (drop)="soltar($event)"
       >
         @if (leyendo()) {
-          <span class="ej-spinner" aria-hidden="true"></span>
-          <strong class="ax-inicio-t">Leyendo los archivos…</strong>
-          <span class="ax-meta">Las fotos tardan unos segundos.</span>
+          <span class="cf-spinner" aria-hidden="true"></span>
+          <strong class="cf-inicio-t">Leyendo…</strong>
+          <span class="cf-inicio-s">Las fotos tardan unos segundos.</span>
         } @else {
-          <svg class="ax-inicio-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
-          <strong class="ax-inicio-t">Arrastrá los archivos o hacé clic para elegir</strong>
-          <span id="ax-inicio-sub" class="ax-meta">PDF, JPG, PNG, CSV, XLS o XLSX, hasta 20. También podés pegar una captura con Ctrl + V.</span>
+          <svg class="cf-inicio-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
+          <strong class="cf-inicio-t">Soltá acá tus facturas</strong>
+          <span id="cf-inicio-s" class="cf-inicio-s">o hacé clic para elegirlas · también podés pegar una captura con <kbd>Ctrl</kbd> + <kbd>V</kbd></span>
+          <span class="cf-inicio-f">Fotos, PDF, CSV o Excel · hasta 20 por vez</span>
         }
       </div>
-      @if (error(); as err) { <app-alerta class="ax-inicio-err" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
+      @if (error(); as err) { <app-alerta class="cf-inicio-err" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
     } @else {
-      <div class="ax-top">
-        <section
-          class="ax-tarjeta"
-          [class.encima]="encima()"
-          aria-labelledby="t-elegir"
-          data-tour="ax-archivos"
-          (dragover)="$event.preventDefault(); encima.set(true)"
-          (dragleave)="encima.set(false)"
-          (drop)="soltar($event)"
-        >
-          <div class="ax-cab">
-            <h2 id="t-elegir">Archivos <span class="ax-meta">({{ lecturas().length }})</span></h2>
-            <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="abrirSelector(entrada)" [disabled]="leyendo()">+ Agregar</button>
-          </div>
-          <ul class="ax-lista" aria-label="Archivos leídos">
-            @for (l of lecturas(); track l.archivo; let i = $index) {
-              <li [class.activo]="i === indice()">
-                <span class="ax-punto" [class.error]="l.error || errores(l)" [class.aviso]="!l.error && !errores(l) && avisos(l)" aria-hidden="true"></span>
-                <button type="button" class="ax-fila" (click)="indice.set(i)" [attr.aria-current]="i === indice() ? 'true' : null">
-                  <span class="ax-nombre" [title]="l.archivo">{{ l.archivo }}</span>
-                  <span class="ax-meta">{{ nombreTipo(l) }}@if (pendientes(l); as p) { · {{ p }} para revisar }</span>
-                </button>
-                <button type="button" class="ax-x" (click)="quitar(i)" [attr.aria-label]="'Quitar ' + l.archivo" [disabled]="leyendo()">×</button>
-              </li>
-            }
-          </ul>
-          @if (leyendo()) { <p class="ax-meta ax-leyendo" aria-live="polite"><span class="ej-spinner" aria-hidden="true"></span> Leyendo…</p> }
-          @if (lecturas().length > 1) {
-            <button type="button" class="ax-link ax-limpiar" (click)="limpiar()" [disabled]="leyendo()">Quitar todos</button>
+      <!-- 1. Los archivos, como pestañas -->
+      <nav
+        class="cf-archivos"
+        [class.encima]="encima()"
+        aria-label="Archivos leídos"
+        data-tour="ax-archivos"
+        (dragover)="$event.preventDefault(); encima.set(true)"
+        (dragleave)="encima.set(false)"
+        (drop)="soltar($event)"
+      >
+        <ul>
+          @for (l of lecturas(); track l.archivo; let i = $index) {
+            @let estado = estadoArchivo(l);
+            <li class="cf-chip" [class.activo]="i === indice()">
+              <button type="button" class="cf-chip-btn" (click)="indice.set(i)" [attr.aria-current]="i === indice() ? 'true' : null" [title]="l.archivo">
+                <span class="cf-punto" [class]="estado.nivel" aria-hidden="true"></span>
+                <span class="cf-chip-txt">
+                  <span class="cf-chip-nombre">{{ l.archivo }}</span>
+                  <span class="cf-chip-estado" [class]="estado.nivel">{{ estado.texto }}</span>
+                </span>
+              </button>
+              <button type="button" class="cf-x" (click)="quitar(i)" [attr.aria-label]="'Quitar ' + l.archivo" [disabled]="leyendo()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
+              </button>
+            </li>
           }
-          @if (error(); as err) { <app-alerta class="mt-3" nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
-        </section>
+        </ul>
+        <div class="cf-archivos-fin">
+          @if (leyendo()) { <span class="cf-leyendo" aria-live="polite"><span class="cf-spinner" aria-hidden="true"></span> Leyendo…</span> }
+          @if (lecturas().length > 1) { <button type="button" class="cf-link" (click)="limpiar()" [disabled]="leyendo()">Quitar todos</button> }
+          <button type="button" class="cf-btn cf-btn-sec cf-btn-chico" (click)="abrirSelector(entrada)" [disabled]="leyendo()">+ Agregar</button>
+        </div>
+      </nav>
+      @if (error(); as err) { <app-alerta nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
 
-        <section class="ax-tarjeta" aria-labelledby="t-resultado">
-          @if (actual(); as l) {
-            <div class="ax-barra">
-              <h2 id="t-resultado" class="ax-titulo">
-                <span class="ax-nombre" [title]="l.archivo">{{ l.archivo }}</span>
-                <span class="ax-meta">{{ nombreTipo(l) }}</span>
+      @if (actual(); as l) {
+        <!-- 2. Resumen: qué es, qué hacer y qué falta -->
+        <section class="cf-resumen" aria-labelledby="cf-res-t">
+          <div>
+            @if (l.error) {
+              <p class="cf-res-meta">No se pudo leer</p>
+              <h2 id="cf-res-t" class="cf-res-titulo">{{ l.archivo }}</h2>
+            } @else if (l.tipo === 'comprobante') {
+              @let r = resumen();
+              <p class="cf-res-meta">{{ r.cabecera }}</p>
+              <h2 id="cf-res-t" class="cf-res-titulo">
+                @if (estudio(); as f) { <span class="cf-op" [class.venta]="f.operacion === 'Ventas'">{{ f.operacion === 'Compras' ? 'Compra' : 'Venta' }}</span> }
+                <span>{{ r.emisor }}</span><span class="cf-flecha" aria-label="a">→</span><span>{{ r.receptor }}</span>
               </h2>
-              @if (!l.error) {
-                <div class="ax-acciones">
-                @if (l.tipo === 'comprobante') {
-                  <button type="button" class="mf-btn mf-btn-suave ax-xubio" (click)="prepararXubio()" [disabled]="!estudio() || preparando() || verificando()" [attr.aria-busy]="preparando()"
-                    [attr.title]="estudio() ? 'Arma el archivo para «Importar desde Mis Comprobantes (ARCA)» de Xubio' : 'Elegí primero la empresa'">
-                    {{ preparando() ? 'Preparando…' : 'Preparar para Xubio' }}
-                  </button>
-                }
-                <button type="button" class="mf-btn ax-descargar" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
-                  @if (generando()) {
-                    <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
-                    Armando…
-                  } @else {
-                    Descargar Excel
-                  }
+              <p class="cf-res-total">Total<strong>{{ r.total }}</strong></p>
+            } @else {
+              <p class="cf-res-meta">Planilla · {{ l.hojas.length }} {{ l.hojas.length === 1 ? 'hoja' : 'hojas' }}</p>
+              <h2 id="cf-res-t" class="cf-res-titulo">{{ l.archivo }}</h2>
+            }
+          </div>
+
+          @if (!l.error) {
+            <div class="cf-res-acciones">
+              @if (l.tipo === 'comprobante') {
+                <button type="button" class="cf-btn cf-btn-sec" (click)="prepararXubio()" [disabled]="!estudio() || preparando() || verificando()" [attr.aria-busy]="preparando()"
+                  [title]="estudio() ? 'Arma el archivo para «Importar desde Mis Comprobantes (ARCA)» de Xubio' : 'Elegí primero la empresa'">
+                  @if (preparando()) { <span class="cf-spinner" aria-hidden="true"></span> Preparando… } @else { Preparar para Xubio }
                 </button>
-                </div>
+              }
+              <button type="button" class="cf-btn cf-btn-prim" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
+                @if (generando()) { <span class="cf-spinner" aria-hidden="true"></span> Armando… } @else { Descargar Excel }
+              </button>
+            </div>
+          }
+
+          @if (l.error) {
+            <app-alerta class="cf-alerta-lectura" nivel="error" [mensajes]="[l.error]" />
+          } @else {
+            @if (l.tipo === 'comprobante') {
+              <div class="cf-estudio" data-tour="ax-estudio">
+                <label>
+                  Empresa
+                  <select class="cf-in" (change)="elegirEmpresa($any($event.target).value)" [disabled]="!empresas().length">
+                    <option value="" [selected]="!estudio()">{{ empresas().length ? 'Elegí la empresa' : 'Sin clientes para elegir' }}</option>
+                    @for (e of empresas(); track e.nombre) { <option [value]="e.nombre" [selected]="estudio()?.empresa === e.nombre">{{ e.nombre }}</option> }
+                  </select>
+                </label>
+                @if (estudio(); as f) {
+                  <p class="cf-estudio-frase" [class.aviso]="f.origen === 'manual' || f.origen === 'trabajo'">{{ fraseOperacion() }}</p>
+                  <button type="button" class="cf-link" (click)="elegirOperacion(f.operacion === 'Compras' ? 'Ventas' : 'Compras')">Es {{ f.operacion === 'Compras' ? 'venta' : 'compra' }}</button>
+                } @else {
+                  <p class="cf-estudio-frase aviso">{{ empresas().length ? 'Ninguna CUIT de la factura es de un cliente: elegí la empresa y te digo si es compra o venta.' : 'No se pudieron ver los clientes del estudio.' }}</p>
+                }
+              </div>
+            }
+
+            @if (l.avisos.length && sinDatos(l)) { <app-alerta class="cf-alerta-lectura" nivel="aviso" [mensajes]="l.avisos" /> }
+
+            <div class="cf-estado" [class.ok]="!aMirar().length" [class.con-error]="hayErrores()" role="status" aria-live="polite">
+              @if (!aMirar().length) {
+                <p class="cf-estado-t">✓ Todo cuadra{{ l.tipo === 'comprobante' ? ': las cuentas dan y no falta nada.' : '.' }}</p>
+              } @else {
+                <p class="cf-estado-t">{{ aMirar().length }} {{ aMirar().length === 1 ? 'cosa para revisar' : 'cosas para revisar' }}</p>
+                <ul>
+                  @for (v of aMirar(); track $index) {
+                    @let c = corta(v);
+                    <li [class]="v.nivel">
+                      <span class="cf-ic" aria-hidden="true">{{ v.nivel === 'error' ? '✕' : '!' }}</span>
+                      <p [title]="v.mensaje">
+                        <span class="sr-only">{{ v.nivel === 'error' ? 'Error: ' : 'Revisar: ' }}</span>{{ c.titulo || c.mensaje }}
+                        @if (c.datos?.length) { <span class="cf-datos"> · {{ c.datos!.join(' · ') }}</span> }
+                      </p>
+                      @for (o of c.opciones ?? []; track o) {
+                        <button type="button" class="cf-btn cf-btn-sec cf-btn-chico" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">{{ o }}</button>
+                      }
+                      @if (v.sugerencia !== null && v.sugerencia !== undefined) {
+                        <button type="button" class="cf-btn cf-btn-prim cf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
+                      }
+                    </li>
+                  }
+                </ul>
               }
             </div>
-            @if (!l.error && paraXubio(); as x) {
-              <div class="ax-xubio-res" [class.aviso]="!x.listo || x.avisos.length" role="status">
+
+            @if (paraXubio(); as x) {
+              <div class="cf-xubio" [class.aviso]="!x.listo || x.avisos.length" role="status">
                 @if (x.listo) { <p>✓ Listo para Xubio: se descargó «{{ x.nombre }}». Falta que el bot lo cargue (todavía no está conectado).</p> }
                 @for (a of x.avisos; track $index) { <p>{{ a }}</p> }
               </div>
             }
-            @if (l.error) {
-              <app-alerta class="mt-3" nivel="error" [mensajes]="[l.error]" />
-            } @else {
-              @if (pendientes(l); as p) {
-                <p class="ax-pend" role="status">
-                  {{ p }} {{ p === 1 ? 'campo para revisar' : 'campos para revisar' }}
-                  <button type="button" class="ax-link" (click)="irARevision()">Ir a corregir ↓</button>
-                </p>
-              }
-              @if (l.tipo === 'comprobante') {
-                <div class="ax-empresa" data-tour="ax-estudio">
-                  <label>
-                    Empresa
-                    <select class="ax-in" (change)="elegirEmpresa($any($event.target).value)" [disabled]="!empresas().length">
-                      <option value="" [selected]="!estudio()">{{ empresas().length ? 'Elegí la empresa' : 'Sin clientes para elegir' }}</option>
-                      @for (e of empresas(); track e.nombre) { <option [value]="e.nombre" [selected]="estudio()?.empresa === e.nombre">{{ e.nombre }}</option> }
-                    </select>
-                  </label>
-                  @if (!empresas().length) { <p class="aviso">No se pudieron ver los clientes del estudio.</p> }
-                </div>
-              }
-            }
           }
         </section>
-      </div>
-    }
 
-    @if (actual(); as l) {
-      @if (!l.error) {
-        <section class="mf-panel" id="ax-revision" aria-labelledby="ax-titulo" data-tour="ax-verificar">
-          <div class="ax-grilla" [class.sin-vista]="!vista()">
-            @if (vista(); as v) {
-              <app-vista-archivo [url]="v.url" [tipo]="v.tipo" [nombre]="l.archivo" />
-            }
-            <div class="min-w-0">
-              <div class="ax-ver-cab">
-                <h2 id="ax-titulo">
-                  Verificá lo que leí
-                  <app-ayuda texto="Solo te aviso lo que no cierra (las cuentas, un CUIT mal) o lo que falta. Si la cuenta da el valor correcto, aparece «Usar»." />
-                </h2>
-              @if (l.tipo === 'comprobante') {
-                <div class="ax-op" [class.aviso]="!estudio() || estudio()!.origen === 'manual' || estudio()!.origen === 'trabajo'" role="status">
-                  @if (estudio(); as f) {
-                    <span class="ax-op-tipo">{{ f.operacion === 'Compras' ? 'Compra' : 'Venta' }}</span>
-                    <span class="ax-op-frase">{{ fraseOperacion() }}</span>
-                    <button type="button" class="ax-link" (click)="elegirOperacion(f.operacion === 'Compras' ? 'Ventas' : 'Compras')">Es {{ f.operacion === 'Compras' ? 'venta' : 'compra' }}</button>
-                  } @else {
-                    <span class="ax-op-tipo">¿Compra o venta?</span>
-                    <span class="ax-op-frase">{{ empresas().length ? 'Ninguna CUIT de la factura es de un cliente: elegí la empresa arriba y te digo cuál es.' : 'Sin la lista de clientes no puedo saberlo.' }}</span>
-                  }
-                </div>
+        <!-- 3. Revisión: el archivo al lado de lo leído -->
+        @if (!l.error) {
+          <section class="cf-revision" id="ax-revision" aria-label="Revisión" data-tour="ax-verificar">
+            <div class="cf-grilla" [class.sin-vista]="!vista()">
+              @if (vista(); as v) {
+                <app-vista-archivo [url]="v.url" [tipo]="v.tipo" [nombre]="l.archivo" />
               }
-              </div>
-              @if (l.avisos.length && sinDatos(l)) { <app-alerta class="mb-2 block" nivel="aviso" [mensajes]="l.avisos" /> }
-
-              <ul class="ax-ver" aria-live="polite">
-                @for (v of aMirar(); track $index) {
-                  @let c = corta(v);
-                  <li [class]="v.nivel">
-                    <p [title]="v.mensaje">{{ c.titulo || c.mensaje }}@if (c.datos?.length) { · {{ c.datos!.join(' · ') }} }</p>
-                    @for (o of c.opciones ?? []; track o) {
-                      <button type="button" class="ax-mas" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">{{ o }}</button>
-                    }
-                    @if (v.sugerencia !== null && v.sugerencia !== undefined) {
-                      <button type="button" class="mf-btn mf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
-                    }
-                  </li>
-                }
-                @if (!aMirar().length) {
-                  <li class="ok" [title]="resumenBien()"><p>✓ Todo cuadra</p></li>
-                }
-              </ul>
-
-              @if (l.tipo === 'comprobante') {
-                <section class="ax-bloque" aria-labelledby="ax-enc-t">
-                  <header><h3 id="ax-enc-t">Encabezado</h3></header>
-                  <div class="ax-partes">
-                    @for (rol of roles; track rol) {
-                      <fieldset class="ax-parte">
-                        <legend>{{ rol === 'emisor' ? 'Emisor' : 'Receptor' }}@if (papel(rol); as p) { <span class="ax-papel">{{ p }}</span> }</legend>
-                        <label>Razón social
-                          <input class="ax-in" [class]="nivel(rol)" [attr.title]="explicar(rol, estadoCampo(rol, l.encabezado[rol]))" [value]="l.encabezado[rol] ?? ''" (change)="cambiarEncabezado(rol, $any($event.target).value)" />
+              <div class="cf-form">
+                @if (l.tipo === 'comprobante') {
+                  <section class="cf-bloque" aria-labelledby="cf-comp-t">
+                    <div class="cf-bloque-cab"><h3 id="cf-comp-t">Comprobante</h3></div>
+                    <div class="cf-comp">
+                      @for (c of camposComprobante; track c.id) {
+                        <label class="cf-campo">{{ c.etiqueta }}
+                          <input class="cf-in" [class]="nivel(c.id)" [attr.title]="explicar(c.id, estadoCampo(c.id, l.encabezado[c.id]))" [placeholder]="c.ayuda ?? ''" [value]="l.encabezado[c.id] ?? ''" (change)="cambiarEncabezado(c.id, $any($event.target).value)" />
                         </label>
-                        <label>CUIT
-                          <input class="ax-in" [class]="nivel(rol + '_cuit')" [attr.title]="explicar(rol + '_cuit', estadoCampo(rol + '_cuit', l.encabezado[rol + '_cuit']))" [value]="l.encabezado[rol + '_cuit'] ?? ''" (change)="cambiarEncabezado(rol + '_cuit', $any($event.target).value)" />
-                        </label>
-                      </fieldset>
-                    }
-                  </div>
-                  <div class="ax-campos ax-comp">
-                    @for (c of camposComprobante; track c.id) {
-                      <label>{{ c.etiqueta }}
-                        <input class="ax-in" [class]="nivel(c.id)" [attr.title]="explicar(c.id, estadoCampo(c.id, l.encabezado[c.id]))" [placeholder]="c.ayuda ?? ''" [value]="l.encabezado[c.id] ?? ''" (change)="cambiarEncabezado(c.id, $any($event.target).value)" />
-                      </label>
-                    }
-                  </div>
-                </section>
+                      }
+                    </div>
+                    <div class="cf-partes">
+                      @for (rol of roles; track rol) {
+                        <fieldset class="cf-parte">
+                          <legend>{{ rol === 'emisor' ? 'Emisor' : 'Receptor' }}@if (papel(rol); as p) { <span class="cf-papel">{{ p }}</span> }</legend>
+                          <label class="cf-campo">Razón social
+                            <input class="cf-in" [class]="nivel(rol)" [attr.title]="explicar(rol, estadoCampo(rol, l.encabezado[rol]))" [value]="l.encabezado[rol] ?? ''" (change)="cambiarEncabezado(rol, $any($event.target).value)" />
+                          </label>
+                          <label class="cf-campo">CUIT
+                            <input class="cf-in" inputmode="numeric" [class]="nivel(rol + '_cuit')" [attr.title]="explicar(rol + '_cuit', estadoCampo(rol + '_cuit', l.encabezado[rol + '_cuit']))" [value]="l.encabezado[rol + '_cuit'] ?? ''" (change)="cambiarEncabezado(rol + '_cuit', $any($event.target).value)" />
+                          </label>
+                        </fieldset>
+                      }
+                    </div>
+                  </section>
 
-                <section class="ax-bloque" aria-labelledby="ax-importes-t">
-                  <header><h3 id="ax-importes-t">Importes sin IVA</h3></header>
-                  @for (c of camposImportes(); track c.id) {
-                    <label class="ax-renglon">
-                      <span>{{ c.etiqueta }}</span>
-                      <input class="ax-in num" [class]="nivel(c.id)" [attr.title]="explicar(c.id, estadoCampo(c.id, l.totales[c.id]))" [value]="texto(l.totales[c.id])" (change)="cambiarTotal(c.id, $any($event.target).value)" />
-                    </label>
-                  }
-                </section>
-
-                <section class="ax-bloque" aria-labelledby="ax-iva-titulo">
-                  <header><h3 id="ax-iva-titulo">IVA</h3></header>
-                  @if (desglose().length) {
-                    <div class="ax-fila-imp ax-cols" aria-hidden="true">
-                      <span>Alícuota</span><span class="num">Base imponible</span><span class="num">Importe</span><span></span>
-                    </div>
-                  }
-                  @for (f of desglose(); track $index; let i = $index) {
-                    <div class="ax-fila-imp" role="group" [attr.aria-label]="nombreAlicuota(f.alicuota)">
-                      <select class="ax-in" [attr.aria-label]="'Alícuota de la fila ' + (i + 1)" (change)="cambiarAlicuota(i, $any($event.target).value)">
-                        @if (f.alicuota === null) { <option value="" selected>Elegí…</option> }
-                        @for (a of alicuotasDe(f.alicuota); track a) {
-                          <option [value]="a" [selected]="a === f.alicuota">{{ nombreAlicuota(a) }}</option>
-                        }
-                      </select>
-                      <input class="ax-in num" inputmode="decimal" [attr.aria-label]="'Base imponible ' + nombreAlicuota(f.alicuota)" [value]="texto(f.base)" (change)="cambiarFilaIva(i, 'base', $any($event.target).value)" />
-                      <input class="ax-in num" inputmode="decimal" [class]="f.estado === 'ok' ? '' : f.estado" [attr.aria-label]="'Importe ' + nombreAlicuota(f.alicuota)" [attr.aria-invalid]="f.estado === 'error' ? 'true' : null" [attr.title]="f.motivo" [value]="texto(f.importe)" (change)="cambiarFilaIva(i, 'importe', $any($event.target).value)" />
-                      <button type="button" class="ax-quitar" (click)="sacarAlicuota(i)" [attr.aria-label]="'Quitar ' + nombreAlicuota(f.alicuota)">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                      </button>
-                      @if (f.estado !== 'ok') { <p class="ax-nota" [class]="f.estado">{{ f.motivo }}</p> }
-                    </div>
-                  } @empty {
-                    <p class="ax-vacio">Sin IVA discriminado (factura B/C o tique a consumidor final).</p>
-                  }
-                  <div class="ax-fila-imp ax-suma">
-                    <span>Total IVA</span>
-                    <span class="num">{{ desglose().length ? texto(sumaBases()) : '' }}</span>
-                    <span class="num">{{ texto(l.totales['iva']) || '—' }}</span>
-                    <span></span>
-                  </div>
-                  <div class="ax-pie"><button type="button" class="ax-mas" (click)="agregarAlicuota()" [disabled]="!puedeAgregarAlicuota()">+ Alícuota</button></div>
-                </section>
-
-                <section class="ax-bloque" aria-labelledby="ax-trib-titulo">
-                  <header><h3 id="ax-trib-titulo">Otros tributos</h3><span>Percepciones, impuestos internos, tasas</span></header>
-                  @if ((l.tributos ?? []).length) {
-                    <div class="ax-fila-imp ax-cols" aria-hidden="true">
-                      <span>Concepto</span><span class="num">Base imponible</span><span class="num">Importe</span><span></span>
-                    </div>
-                  }
-                  @for (t of l.tributos ?? []; track $index; let i = $index) {
-                    @let estado = estadoCampo('tributo_' + i, t.importe);
-                    <div class="ax-fila-imp" role="group" [attr.aria-label]="t.descripcion || 'Tributo ' + (i + 1)">
-                      <div class="ax-concepto">
-                        <input class="ax-in ax-cod" [attr.aria-label]="'Código del tributo ' + (i + 1)" placeholder="Cód." [value]="t.codigo" (change)="cambiarTributo(i, 'codigo', $any($event.target).value)" />
-                        <input class="ax-in" [attr.aria-label]="'Descripción del tributo ' + (i + 1)" placeholder="Ej.: Percepción IIBB Bs. As." [attr.title]="t.descripcion || null" [value]="t.descripcion" (change)="cambiarTributo(i, 'descripcion', $any($event.target).value)" />
-                      </div>
-                      <input class="ax-in num" inputmode="decimal" [attr.aria-label]="'Base imponible de ' + (t.descripcion || 'el tributo ' + (i + 1))" [value]="texto(t.base)" (change)="cambiarTributo(i, 'base', $any($event.target).value)" />
-                      <input class="ax-in num" inputmode="decimal" [class]="estado === 'ok' ? '' : (estado ?? '')" [attr.aria-label]="'Importe de ' + (t.descripcion || 'el tributo ' + (i + 1))" [attr.title]="explicar('tributo_' + i, estado)" [value]="texto(t.importe)" (change)="cambiarTributo(i, 'importe', $any($event.target).value)" />
-                      <button type="button" class="ax-quitar" (click)="sacarTributo(i)" [attr.aria-label]="'Quitar ' + (t.descripcion || 'el tributo ' + (i + 1))">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                      </button>
-                      <p class="ax-nota">Va a «{{ columnaTributo(t) }}»@if (porcentaje(t); as p) { · {{ p }} de la base }</p>
-                    </div>
-                  } @empty {
-                    <p class="ax-vacio">Sin otros tributos.</p>
-                  }
-                  @if ((l.tributos ?? []).length || totalTributos()) {
-                    <div class="ax-fila-imp ax-suma">
-                      <span>Total otros tributos</span>
-                      <span></span>
-                      <span class="num">{{ texto(totalTributos()) || '—' }}</span>
-                      <span></span>
-                    </div>
-                  }
-                  <div class="ax-pie"><button type="button" class="ax-mas" (click)="agregarTributo()">+ Tributo</button></div>
-                </section>
-
-                <section class="ax-bloque" aria-labelledby="ax-cuadre-t">
-                  <header><h3 id="ax-cuadre-t">Total</h3></header>
-                  @for (p of cuadre().partes; track $index; let i = $index) {
-                    <div class="ax-renglon" [class.ax-nuevo-grupo]="i > 0 && cuadre().partes[i - 1].grupo !== p.grupo">
-                      <span>{{ p.nombre }}</span><span class="num">{{ texto(p.valor) }}</span>
-                    </div>
-                  }
-                  <label class="ax-total">Total de la factura
-                    <input class="ax-in num" [class]="nivel('total')" [attr.title]="explicar('total', estadoCampo('total', l.totales['total']))" [value]="texto(l.totales['total'])" (change)="cambiarTotal('total', $any($event.target).value)" />
-                  </label>
-                  <p class="ax-cuadre-msj" [class]="cuadre().estado" role="status">
-                    @if (cuadre().estado === 'ok') { ✓ La suma da el total. }
-                    @else if (cuadre().estado === 'error') { La suma da {{ texto(cuadre().suma) }}: difiere en {{ texto(cuadre().diferencia) }}. }
-                    @else { Falta el total. }
-                  </p>
-                </section>
-
-              } @else {
-                @for (h of l.hojas; track h.nombre) {
-                  <section class="ax-bloque">
-                    <header><h3>{{ h.nombre }}</h3><span>{{ h.filas.length }} filas</span></header>
-                    <div class="ax-caja">
-                      <table class="ax-tabla">
+                  <section class="cf-bloque" aria-labelledby="cf-imp-t">
+                    <div class="cf-bloque-cab"><h3 id="cf-imp-t">Importes</h3><p>En el orden del pie de la factura</p></div>
+                    <div class="cf-libro-caja">
+                      <table class="cf-libro" aria-labelledby="cf-imp-t">
+                        <thead>
+                          <tr><th scope="col">Concepto</th><th scope="col" class="num">Base imponible</th><th scope="col" class="num">Importe</th><th scope="col"><span class="sr-only">Quitar</span></th></tr>
+                        </thead>
                         <tbody>
-                          @for (f of h.filas.slice(0, 60); track $index) {
-                            <tr>@for (c of f; track $index) { <td>{{ c }}</td> }</tr>
+                          @for (c of camposImportes(); track c.id) {
+                            <tr>
+                              <th scope="row"><label [for]="'cf-' + c.id">{{ c.etiqueta }}</label></th>
+                              <td></td>
+                              <td><input [id]="'cf-' + c.id" class="cf-in num" inputmode="decimal" [class]="nivel(c.id)" [attr.title]="explicar(c.id, estadoCampo(c.id, l.totales[c.id]))" placeholder="0,00" [value]="l.totales[c.id] ? texto(l.totales[c.id]) : ''" (change)="cambiarTotal(c.id, $any($event.target).value)" /></td>
+                              <td></td>
+                            </tr>
                           }
                         </tbody>
-                      </table>
-                    </div>
-                    @if (h.filas.length > 60) { <p class="ax-mas-filas">Se muestran 60 de {{ h.filas.length }} filas; el Excel las lleva todas.</p> }
-                  </section>
-                }
-              }
-
-              @if (l.texto || (l.avisos.length && !sinDatos(l))) {
-                <details class="ax-texto-leido">
-                  <summary>Cómo se leyó{{ nombreMotor(l) ? " · " + nombreMotor(l) : "" }}</summary>
-                  @if (!sinDatos(l)) { @for (a of l.avisos; track $index) { <p class="ax-nota-lectura">{{ a }}</p> } }
-                  @if (l.texto) { <div class="ax-texto">{{ textoSinCae(l.texto) }}</div> }
-                </details>
-              }
-            </div>
-          </div>
-          @if (l.tipo === 'comprobante') {
-            <div class="ax-detalle-ancho">
-                <section class="ax-bloque" aria-labelledby="ax-det-t">
-                  <header><h3 id="ax-det-t">Detalle</h3><span>{{ l.items.length }} {{ l.items.length === 1 ? 'ítem' : 'ítems' }}</span></header>
-                  <div class="ax-caja">
-                    <table class="ax-tabla" aria-labelledby="ax-det-t">
-                      <thead><tr><th>Código</th><th>Descripción</th><th>Producto</th><th class="num">Cant.</th><th class="num">Precio</th><th class="num">IVA %</th><th class="num">Importe</th><th><span class="sr-only">Quitar</span></th></tr></thead>
-                      <tbody>
-                        @for (x of l.items; track $index; let i = $index) {
-                          <tr>
-                            <td style="width: 80px"><input class="ax-in" [value]="x.codigo" (change)="cambiarItem(i, 'codigo', $any($event.target).value)" aria-label="Código" /></td>
-                            <td><input class="ax-in" [class.aviso]="!!x.leido && x.leido !== x.descripcion" [attr.title]="x.leido && x.leido !== x.descripcion ? 'Corregido solo: decía «' + x.leido + '»' : null" [value]="x.descripcion" (change)="cambiarItem(i, 'descripcion', $any($event.target).value)" aria-label="Descripción" /></td>
-                            <td style="width: 210px"><input class="ax-in" [attr.title]="x.producto || null" [value]="x.producto ?? ''" [attr.list]="'ax-productos'" (change)="cambiarItem(i, 'producto', $any($event.target).value)" aria-label="Producto" /></td>
-                            <td style="width: 64px"><input class="ax-in num" [value]="cantidadTexto(x.cantidad)" (change)="cambiarItem(i, 'cantidad', $any($event.target).value)" aria-label="Cantidad" /></td>
-                            <td style="width: 100px"><input class="ax-in num" [value]="texto(x.precio)" (change)="cambiarItem(i, 'precio', $any($event.target).value)" aria-label="Precio" /></td>
-                            <td style="width: 60px"><input class="ax-in num" [value]="x.alicuota ?? ''" (change)="cambiarItem(i, 'alicuota', $any($event.target).value)" aria-label="IVA %" /></td>
-                            <td style="width: 110px"><input class="ax-in num" [class.aviso]="importeCorregido(x) || nivel('item_' + i) === 'aviso'" [attr.title]="importeCorregido(x) ? 'Corregido solo: se leyó ' + texto(x.importe_leido) : explicar('item_' + i, estadoCampo('item_' + i, x.importe))" [value]="texto(x.importe)" (change)="cambiarItem(i, 'importe', $any($event.target).value)" aria-label="Importe" /></td>
-                            <td style="width: 34px">
-                              <button type="button" class="ax-quitar" (click)="sacarItem(i)" aria-label="Sacar el ítem">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
-                              </button>
+                        <tbody>
+                          <tr class="cf-grupo-t"><th scope="colgroup" colspan="4">IVA</th></tr>
+                          @for (f of desglose(); track $index; let i = $index) {
+                            <tr>
+                              <th scope="row">
+                                <select class="cf-in" [attr.aria-label]="'Alícuota de la fila ' + (i + 1)" (change)="cambiarAlicuota(i, $any($event.target).value)">
+                                  @if (f.alicuota === null) { <option value="" selected>Elegí…</option> }
+                                  @for (a of alicuotasDe(f.alicuota); track a) { <option [value]="a" [selected]="a === f.alicuota">{{ nombreAlicuota(a) }}</option> }
+                                </select>
+                              </th>
+                              <td><input class="cf-in num" inputmode="decimal" [attr.aria-label]="'Base imponible ' + nombreAlicuota(f.alicuota)" [value]="texto(f.base)" (change)="cambiarFilaIva(i, 'base', $any($event.target).value)" /></td>
+                              <td><input class="cf-in num" inputmode="decimal" [class]="f.estado === 'ok' ? '' : f.estado" [attr.aria-label]="'Importe ' + nombreAlicuota(f.alicuota)" [attr.aria-invalid]="f.estado === 'error' ? 'true' : null" [attr.title]="f.motivo" [value]="texto(f.importe)" (change)="cambiarFilaIva(i, 'importe', $any($event.target).value)" /></td>
+                              <td><button type="button" class="cf-x" (click)="sacarAlicuota(i)" [attr.aria-label]="'Quitar ' + nombreAlicuota(f.alicuota)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button></td>
+                            </tr>
+                            @if (f.estado !== 'ok') { <tr class="cf-nota"><td colspan="4"><p [class]="f.estado">{{ f.motivo }}</p></td></tr> }
+                          } @empty {
+                            <tr class="cf-vacio"><td colspan="4">Sin IVA discriminado (factura B, C o tique).</td></tr>
+                          }
+                          <tr class="cf-agregar"><td colspan="4"><button type="button" class="cf-link" (click)="agregarAlicuota()" [disabled]="!puedeAgregarAlicuota()">+ Agregar alícuota</button></td></tr>
+                        </tbody>
+                        <tbody>
+                          <tr class="cf-grupo-t"><th scope="colgroup" colspan="4">Otros tributos<span>percepciones, impuestos internos, tasas</span></th></tr>
+                          @for (t of l.tributos ?? []; track $index; let i = $index) {
+                            @let estado = estadoCampo('tributo_' + i, t.importe);
+                            <tr>
+                              <th scope="row">
+                                <div class="cf-concepto">
+                                  <input class="cf-in cf-cod" [attr.aria-label]="'Código del tributo ' + (i + 1)" placeholder="Cód." [value]="t.codigo" (change)="cambiarTributo(i, 'codigo', $any($event.target).value)" />
+                                  <input class="cf-in" [attr.aria-label]="'Descripción del tributo ' + (i + 1)" placeholder="Ej.: Percepción IIBB Bs. As." [attr.title]="t.descripcion || null" [value]="t.descripcion" (change)="cambiarTributo(i, 'descripcion', $any($event.target).value)" />
+                                </div>
+                              </th>
+                              <td><input class="cf-in num" inputmode="decimal" [attr.aria-label]="'Base imponible de ' + (t.descripcion || 'el tributo ' + (i + 1))" [value]="texto(t.base)" (change)="cambiarTributo(i, 'base', $any($event.target).value)" /></td>
+                              <td><input class="cf-in num" inputmode="decimal" [class]="estado === 'ok' ? '' : (estado ?? '')" [attr.aria-label]="'Importe de ' + (t.descripcion || 'el tributo ' + (i + 1))" [attr.title]="explicar('tributo_' + i, estado)" [value]="texto(t.importe)" (change)="cambiarTributo(i, 'importe', $any($event.target).value)" /></td>
+                              <td><button type="button" class="cf-x" (click)="sacarTributo(i)" [attr.aria-label]="'Quitar ' + (t.descripcion || 'el tributo ' + (i + 1))"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button></td>
+                            </tr>
+                            <tr class="cf-nota"><td colspan="4"><p>En el Excel: {{ columnaTributo(t) }}@if (porcentaje(t); as p) { · {{ p }} de la base }</p></td></tr>
+                          } @empty {
+                            <tr class="cf-vacio"><td colspan="4">Sin otros tributos.</td></tr>
+                          }
+                          <tr class="cf-agregar"><td colspan="4"><button type="button" class="cf-link" (click)="agregarTributo()">+ Agregar tributo</button></td></tr>
+                        </tbody>
+                        <tfoot>
+                          <tr class="cf-suma"><th scope="row">Suma de los importes</th><td></td><td class="num">{{ texto(cuadre().suma) }}</td><td></td></tr>
+                          <tr class="cf-total">
+                            <th scope="row"><label for="cf-total">Total de la factura</label></th>
+                            <td></td>
+                            <td><input id="cf-total" class="cf-in num" inputmode="decimal" [class]="nivel('total')" [attr.title]="explicar('total', estadoCampo('total', l.totales['total']))" [value]="texto(l.totales['total'])" (change)="cambiarTotal('total', $any($event.target).value)" /></td>
+                            <td></td>
+                          </tr>
+                          <tr class="cf-cuadre">
+                            <td colspan="4">
+                              <p [class]="cuadre().estado" role="status">
+                                @if (cuadre().estado === 'ok') { ✓ La suma da el total. }
+                                @else if (cuadre().estado === 'error') { ✕ La suma no da el total: difiere en {{ texto(cuadre().diferencia) }}. }
+                                @else { Falta el total de la factura. }
+                              </p>
                             </td>
                           </tr>
-                        }
-                      </tbody>
-                      <tfoot>
-                        <tr>
-                          <td colspan="3"><button type="button" class="ax-mas" (click)="agregarItem()">+ Ítem</button></td>
-                          <td colspan="3" class="num">Suma del detalle</td>
-                          <td class="num">{{ texto(suma()) }}</td><td></td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                  <datalist id="ax-productos">@for (p of productos; track p) { <option [value]="p"></option> }</datalist>
-                </section>
+                        </tfoot>
+                      </table>
+                    </div>
+                  </section>
+                } @else {
+                  @for (h of l.hojas; track h.nombre) {
+                    <section class="cf-bloque">
+                      <div class="cf-bloque-cab"><h3>{{ h.nombre }}</h3><p>{{ h.filas.length }} filas</p></div>
+                      <div class="cf-tabla-caja">
+                        <table class="cf-tabla cf-tabla-hoja">
+                          <tbody>
+                            @for (f of h.filas.slice(0, 60); track $index) { <tr>@for (c of f; track $index) { <td>{{ c }}</td> }</tr> }
+                          </tbody>
+                        </table>
+                      </div>
+                      @if (h.filas.length > 60) { <p class="cf-mas-filas">Se muestran 60 de {{ h.filas.length }} filas; el Excel las lleva todas.</p> }
+                    </section>
+                  }
+                }
+
+                @if (l.texto || (l.avisos.length && !sinDatos(l))) {
+                  <details class="cf-lectura">
+                    <summary>Cómo se leyó{{ nombreMotor(l) ? ' · ' + nombreMotor(l) : '' }}</summary>
+                    @if (!sinDatos(l)) { @for (a of l.avisos; track $index) { <p>{{ a }}</p> } }
+                    @if (l.texto) { <div class="cf-texto">{{ textoSinCae(l.texto) }}</div> }
+                  </details>
+                }
+              </div>
             </div>
-          }
-        </section>
+
+            @if (l.tipo === 'comprobante') {
+              <section class="cf-bloque" aria-labelledby="cf-det-t">
+                <div class="cf-bloque-cab"><h3 id="cf-det-t">Detalle</h3><p>{{ l.items.length }} {{ l.items.length === 1 ? 'ítem' : 'ítems' }}</p></div>
+                <div class="cf-tabla-caja">
+                  <table class="cf-tabla" aria-labelledby="cf-det-t">
+                    <thead><tr><th scope="col">Código</th><th scope="col">Descripción</th><th scope="col">Producto</th><th scope="col" class="num">Cantidad</th><th scope="col" class="num">Precio</th><th scope="col" class="num">IVA %</th><th scope="col" class="num">Importe</th><th scope="col"><span class="sr-only">Quitar</span></th></tr></thead>
+                    <tbody>
+                      @for (x of l.items; track $index; let i = $index) {
+                        <tr>
+                          <td style="width: 90px"><input class="cf-in" [value]="x.codigo" (change)="cambiarItem(i, 'codigo', $any($event.target).value)" [attr.aria-label]="'Código del ítem ' + (i + 1)" /></td>
+                          <td><input class="cf-in" [class.aviso]="!!x.leido && x.leido !== x.descripcion" [attr.title]="x.leido && x.leido !== x.descripcion ? 'Corregido solo: decía «' + x.leido + '»' : x.descripcion || null" [value]="x.descripcion" (change)="cambiarItem(i, 'descripcion', $any($event.target).value)" [attr.aria-label]="'Descripción del ítem ' + (i + 1)" /></td>
+                          <td style="width: 210px"><input class="cf-in" [attr.title]="x.producto || null" [value]="x.producto ?? ''" [attr.list]="'cf-productos'" (change)="cambiarItem(i, 'producto', $any($event.target).value)" [attr.aria-label]="'Producto del ítem ' + (i + 1)" /></td>
+                          <td style="width: 90px"><input class="cf-in num" inputmode="decimal" [value]="cantidadTexto(x.cantidad)" (change)="cambiarItem(i, 'cantidad', $any($event.target).value)" [attr.aria-label]="'Cantidad del ítem ' + (i + 1)" /></td>
+                          <td style="width: 120px"><input class="cf-in num" inputmode="decimal" [value]="texto(x.precio)" (change)="cambiarItem(i, 'precio', $any($event.target).value)" [attr.aria-label]="'Precio del ítem ' + (i + 1)" /></td>
+                          <td style="width: 74px"><input class="cf-in num" inputmode="decimal" [value]="x.alicuota ?? ''" (change)="cambiarItem(i, 'alicuota', $any($event.target).value)" [attr.aria-label]="'IVA % del ítem ' + (i + 1)" /></td>
+                          <td style="width: 130px"><input class="cf-in num" inputmode="decimal" [class.aviso]="importeCorregido(x) || nivel('item_' + i) === 'aviso'" [attr.title]="importeCorregido(x) ? 'Corregido solo: se leyó ' + texto(x.importe_leido) : explicar('item_' + i, estadoCampo('item_' + i, x.importe))" [value]="texto(x.importe)" (change)="cambiarItem(i, 'importe', $any($event.target).value)" [attr.aria-label]="'Importe del ítem ' + (i + 1)" /></td>
+                          <td style="width: 40px"><button type="button" class="cf-x" (click)="sacarItem(i)" [attr.aria-label]="'Quitar el ítem ' + (i + 1)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg></button></td>
+                        </tr>
+                      } @empty {
+                        <tr><td colspan="8" class="cf-mas-filas">No se leyó el detalle: el Excel lleva el encabezado y los importes.</td></tr>
+                      }
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td colspan="3"><button type="button" class="cf-link" (click)="agregarItem()">+ Agregar ítem</button></td>
+                        <td colspan="3" class="num">Suma del detalle</td>
+                        <td class="num">{{ texto(suma()) }}</td><td></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  <datalist id="cf-productos">@for (p of productos; track p) { <option [value]="p"></option> }</datalist>
+                </div>
+              </section>
+            }
+          </section>
+        }
       }
     }
   `,
@@ -626,6 +636,19 @@ export class PasarAExcel implements OnDestroy {
     const estado: NivelVerificacion = diferencia === null ? 'aviso' : diferencia <= 0.05 ? 'ok' : 'error';
     return { partes, suma, diferencia, estado };
   });
+  /** Lo que se ve en el resumen: qué comprobante es, de quién a quién y el total. */
+  protected readonly resumen = computed(() => {
+    const e = this.actual()?.encabezado ?? {};
+    const total = this.actual()?.totales['total'];
+    const cabecera = [e['tipo']?.replace(/^\d+\s*-\s*/, ''), e['numero'], e['fecha']].filter(Boolean).join(' · ');
+    return {
+      cabecera: cabecera || 'Comprobante',
+      emisor: e['emisor'] || 'Emisor sin leer',
+      receptor: e['receptor'] || (e['receptor_cuit'] ? cuitConGuiones(e['receptor_cuit']) : 'Consumidor final'),
+      total: total === null || total === undefined ? '—' : '$ ' + aTexto(total),
+    };
+  });
+  protected readonly hayErrores = computed(() => this.aMirar().some((v) => v.nivel === 'error'));
   protected readonly puedeAgregarAlicuota = computed(() => alicuotaLibre(this.actual()?.iva_alicuotas ?? []) !== null);
   protected readonly nombreAlicuota = nombreAlicuota;
 
@@ -823,6 +846,14 @@ export class PasarAExcel implements OnDestroy {
   /** La etiqueta de color de cada archivo (como Ventas / Compras en «Subir a Xubio»). */
   protected nombreTipo(l: LecturaExcel): string {
     return l.error ? 'No se leyó' : l.tipo === 'comprobante' ? 'Factura' : 'Tabla';
+  }
+
+  /** El estado de cada archivo en su pestaña. */
+  protected estadoArchivo(l: LecturaExcel): { nivel: string; texto: string } {
+    if (l.error) return { nivel: 'error', texto: 'No se pudo leer' };
+    const n = this.pendientes(l);
+    if (!n) return { nivel: 'ok', texto: l.tipo === 'comprobante' ? 'Todo cuadra' : 'Planilla' };
+    return { nivel: this.errores(l) ? 'error' : 'aviso', texto: n === 1 ? '1 para revisar' : `${n} para revisar` };
   }
 
   /** Lo que queda por revisar del archivo: errores y avisos. */
