@@ -112,9 +112,6 @@ def _leer_imagen(nombre: str, contenido: bytes, motor: str | None = None) -> Lec
       da 429/503 o tarda, el OCR local (PaddleOCR o Tesseract)."""
     from PIL import Image, ImageOps, UnidentifiedImageError
 
-    from .. import gemini
-    from ..qr_afip import leer_qrs
-
     try:
         imagen = Image.open(io.BytesIO(contenido))
         imagen.load()
@@ -122,10 +119,19 @@ def _leer_imagen(nombre: str, contenido: bytes, motor: str | None = None) -> Lec
         raise ValueError(f"«{nombre}» no es una imagen válida.") from exc
     captura = es_captura_limpia(imagen, contenido)
     imagen = ImageOps.exif_transpose(imagen).convert("RGB")
+    return _leer_pil(nombre, imagen, motor, captura)
+
+
+def _leer_pil(nombre: str, imagen, motor: str | None = None, captura: bool = False, lectura: Lectura | None = None) -> Lectura:
+    """La cascada de una imagen ya abierta (foto, captura o página de un PDF escaneado):
+    QR de ARCA, Gemini y, si no está, falla o tarda, el OCR local."""
+    from .. import gemini
+    from ..qr_afip import leer_qrs
+
     inicio = time.perf_counter()
     modo = modo_ocr(motor)
     qrs = leer_qrs(imagen)
-    lectura = Lectura(archivo=nombre)
+    lectura = lectura or Lectura(archivo=nombre)
 
     if modo == "tesseract":
         lectura = _imagen_a_lectura(nombre, imagen, lectura)
@@ -201,7 +207,8 @@ def _leer_pdf(nombre: str, contenido: bytes) -> Lectura:
             pagina.close()
         if total > 1:
             lectura.avisos.append(f"PDF escaneado de {total} páginas: se leyó la primera.")
-        return _leer_local(nombre, imagen, lectura)
+        # Igual que una foto: Gemini primero y, si no está o falla, el OCR local.
+        return _leer_pil(nombre, imagen.convert("RGB"), lectura=lectura)
     finally:
         pdf.close()
 

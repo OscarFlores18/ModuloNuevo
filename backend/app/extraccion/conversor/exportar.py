@@ -112,8 +112,9 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
 
 def _hoja_impuestos(wb, lectura: Lectura) -> None:
     """El modelo de Xubio no trae columnas para impuestos internos ni percepciones: van
-    en otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos»."""
-    t = lectura.totales
+    en otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos».
+    Con los totales efectivos: si los tributos vinieron renglón por renglón, salen de ahí."""
+    t = totales_efectivos(lectura)
     internos = [(n + 1, i.descripcion, i.impuestos_internos) for n, i in enumerate(lectura.items) if i.impuestos_internos]
     if not (internos or t.get("impuestos_internos") or t.get("percepcion_iibb") or t.get("otros_tributos")):
         return

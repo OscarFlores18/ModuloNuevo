@@ -217,7 +217,7 @@ def test_esquema_nuevo_con_desglose_de_iva(con_gemini):
         ("10", "IMPUESTOS INTERNOS ITEMS", 90.54), ("07", "PERCEPCION IIBB BS AS", 6717.98)]
     # Cada fila en su total, una sola vez: internos, IIBB Bs. As. y ningún «otro».
     assert (l.totales["impuestos_internos"], l.totales["percepcion_iibb"], l.totales["otros_tributos"]) == (90.54, 6717.98, None)
-    assert any("borroso" in a for a in l.avisos)
+    assert not any("borroso" in a for a in l.avisos)  # las advertencias de Gemini no se muestran
     v = {(x.campo, x.nivel) for x in l.verificaciones}
     assert ("total", "ok") in v and ("iva", "ok") in v and ("items", "ok") in v
 

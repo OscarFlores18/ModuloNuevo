@@ -152,7 +152,8 @@ def test_autocorrige_descripciones_mal_leidas():
     items =[Item(descripcion="AGUA NWINERAL SMART VATER 591NL", importe=1), Item(descripcion="ENTRANA", importe=1)]
     assert corregir_descripciones(items) == 1 and items[0].leido == "AGUA NWINERAL SMART VATER 591NL"
     v = verificar(Lectura(tipo="comprobante", items=items, totales={"total": 2}))
-    assert any(x.campo == "descripcion" and x.titulo == "Autocorregí 1 descripción" for x in v)
+    # Lo autocorregido queda marcado en el ítem (`leido`), sin cartel aparte.
+    assert not any(x.campo == "descripcion" for x in v)
 
 
 def test_corrige_el_importe_de_un_item_mal_leido():

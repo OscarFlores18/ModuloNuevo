@@ -62,11 +62,12 @@ def test_con_lo_corregido_la_verificacion_da_bien():
     assert ("neto_gravado", "error") not in v
 
 
-def test_items_iguales_con_otro_importe_se_avisan():
+def test_items_parecidos_se_avisan_por_la_cuenta_no_por_parecido():
+    """Dos ítems de igual precio y otro importe: avisa la cuenta (no suman el neto), no el parecido."""
     items = [Item(descripcion="AGUA", cantidad=1, precio=3600, alicuota=21, importe=2937.79),
              Item(descripcion="AGUA C/GAS", cantidad=1, precio=3600, alicuota=21, importe=2937.73)]
     v = a_excel._verificar_items(items, {"neto_gravado": 5875.58})
-    assert any("1 y 2" in x.mensaje for x in v)
+    assert [x.titulo for x in v if x.nivel != "ok"] == ["Los ítems no suman el neto"]
 
 
 def test_corregir_totales_solo_si_hay_una_salida():

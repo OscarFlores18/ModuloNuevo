@@ -184,10 +184,6 @@ def _verificar_totales(t: dict[str, float | None], suma_items: float | None = No
     if neto and iva and not varias_alicuotas and not any(x.nivel == "error" for x in v):
         if (a := _alicuota_de(neto, iva)) is not None:
             v.append(Verificacion(campo="iva", nivel="ok", mensaje=f"El IVA es el {a:g}% del neto gravado.", titulo=f"IVA {a:g}%"))
-        elif iva > neto * 0.27 + TOLERANCIA:
-            v.append(Verificacion(campo="iva", nivel="aviso", mensaje=f"El IVA ({_fmt(iva)}) es más del 27% del neto: revisalo.", titulo="IVA demasiado alto", datos=[_fmt(iva)]))
-        else:
-            v.append(Verificacion(campo="iva", nivel="aviso", mensaje="El IVA no es una sola alícuota del neto (puede tener varias): revisalo.", titulo="IVA con varias alícuotas"))
     return v
 
 
@@ -225,9 +221,6 @@ def _verificar_desglose(lectura: Lectura, t: dict[str, float | None]) -> list[Ve
             v.append(Verificacion(campo=campo, nivel="aviso", mensaje=f"{nombre}: falta la alícuota."))
             bien = False
             continue
-        if f.alicuota not in ALICUOTAS and f.alicuota != 0:
-            v.append(Verificacion(campo=campo, nivel="aviso", mensaje=f"{nombre}: no es una alícuota de IVA habitual (21, 10,5, 27, 5 o 2,5)."))
-            bien = False
         if f.base is not None and f.importe is not None:
             calculado = round(f.base * f.alicuota / 100, 2)
             if abs(calculado - f.importe) > _tolerancia_iva(f.importe):
@@ -284,11 +277,6 @@ def _verificar_tributos(tributos: list[Tributo]) -> list[Verificacion]:
             v.append(Verificacion(campo=f"tributo_{i}", nivel="aviso", mensaje=f"Otros tributos, {nombre}: falta el importe."))
         elif not x.descripcion:
             v.append(Verificacion(campo=f"tributo_{i}", nivel="aviso", mensaje=f"Otros tributos, fila {i + 1}: falta qué tributo es."))
-        elif x.base and abs(x.importe) > abs(x.base):
-            v.append(Verificacion(
-                campo=f"tributo_{i}", nivel="aviso",
-                mensaje=f"Otros tributos, {nombre}: el importe ({_fmt(x.importe)}) es mayor que la base ({_fmt(x.base)}): revisalo.",
-            ))
     if tributos and not v:
         texto = " · ".join(f"{x.descripcion}: {_fmt(x.importe)}" for x in tributos)
         v.append(Verificacion(campo="otros_tributos", nivel="ok", mensaje=f"Otros tributos: {texto}."))
@@ -296,48 +284,17 @@ def _verificar_tributos(tributos: list[Tributo]) -> list[Verificacion]:
 
 
 def _verificar_items(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
-    corregidos = [(n + 1, x) for n, x in enumerate(items) if x.leido and x.leido != x.descripcion]
-    aviso = [Verificacion(
-        campo="descripcion", nivel="aviso",
-        mensaje="Estas descripciones se leyeron mal y las corregí solo (en naranja en el detalle): "
-                + "; ".join(f"ítem {n}: «{x.leido}» → «{x.descripcion}»" for n, x in corregidos) + ". Revisalas.",
-        titulo=f"Autocorregí {len(corregidos)} {'descripción' if len(corregidos) == 1 else 'descripciones'}",
-        datos=[f"#{n} {x.descripcion}" for n, x in corregidos[:4]],
-    )] if corregidos else []
-    for n, x in enumerate(items):
-        if x.importe_leido is not None and x.importe is not None and x.importe_leido != x.importe:
-            aviso.append(Verificacion(
-                campo="items", nivel="aviso",
-                mensaje=(f"El importe del ítem {n + 1} se leyó {_fmt(x.importe_leido)} y lo corregí a {_fmt(x.importe)}: "
-                         "con ese valor el detalle suma el neto (en naranja en el detalle). Compará con la imagen."),
-                titulo=f"Corregí el importe del ítem {n + 1}",
-                datos=[f"Leído {_fmt(x.importe_leido)}", f"Ahora {_fmt(x.importe)}"],
-            ))
-    return aviso + _verificar_items_sin_correccion(items, t)
+    """Lo autocorregido no se avisa: queda marcado en naranja en el detalle."""
+    return _verificar_items_sin_correccion(items, t)
 
 
 def _verificar_items_sin_correccion(items: list[Item], t: dict[str, float | None]) -> list[Verificacion]:
     if not items:
-        return [Verificacion(campo="items", nivel="aviso", mensaje="No se pudo leer el detalle: el Excel va a tener solo el encabezado y los totales.", titulo="Sin detalle")]
+        return []
     v: list[Verificacion] = []
     sin_importe = [i + 1 for i, x in enumerate(items) if x.importe is None]
     if sin_importe:
         v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin importe: {', '.join(map(str, sin_importe))}.", titulo="Ítems sin importe", datos=[f"#{n}" for n in sin_importe[:6]]))
-    sin_desc = [i + 1 for i, x in enumerate(items) if not x.descripcion.strip()]
-    if sin_desc:
-        v.append(Verificacion(campo="items", nivel="aviso", mensaje=f"Ítems sin descripción: {', '.join(map(str, sin_desc))}.", titulo="Ítems sin descripción", datos=[f"#{n}" for n in sin_desc[:6]]))
-    # Mismo producto, cantidad y precio pero otro importe: uno de los dos está mal leído.
-    for i, a in enumerate(items):
-        for j in range(i + 1, len(items)):
-            b = items[j]
-            if (a.cantidad, a.precio, a.alicuota) == (b.cantidad, b.precio, b.alicuota) and a.precio and a.importe != b.importe                     and a.importe and b.importe and abs(a.importe - b.importe) < 0.02 * max(a.importe, b.importe):
-                v.append(Verificacion(
-                    campo="items", nivel="aviso",
-                    mensaje=(f"Los ítems {i + 1} y {j + 1} tienen la misma cantidad y precio pero distinto importe "
-                             f"({_fmt(a.importe)} y {_fmt(b.importe)}): uno puede estar mal leído."),
-                    titulo=f"Ítems {i + 1} y {j + 1}: mismo precio, otro importe",
-                    datos=[f"#{i + 1} {_fmt(a.importe)}", f"#{j + 1} {_fmt(b.importe)}"],
-                ))
     suma = round(sum(x.importe or 0 for x in items), 2)
     # El detalle suma el neto (factura A) o el total (factura B/C, tiques).
     for campo in ("neto_gravado", "total"):
@@ -369,8 +326,6 @@ def _verificar_fecha(valor: str) -> Verificacion | None:
         return Verificacion(campo="fecha", nivel="error", mensaje=f"La fecha «{valor}» no es válida (tiene que ser DD/MM/AAAA).", titulo="Fecha inválida", datos=[valor])
     if d > date.today():
         return Verificacion(campo="fecha", nivel="aviso", mensaje=f"La fecha {valor} es posterior a hoy.", titulo="Fecha futura", datos=[valor])
-    if d.year < 2000:
-        return Verificacion(campo="fecha", nivel="aviso", mensaje=f"La fecha {valor} es muy vieja: revisala.", titulo="Fecha muy vieja", datos=[valor])
     return Verificacion(campo="fecha", nivel="ok", mensaje=f"Fecha {valor}.", titulo=f"Fecha {valor}")
 
 
@@ -380,23 +335,9 @@ def _verificar_tabla(lectura: Lectura) -> list[Verificacion]:
         return [Verificacion(campo="hojas", nivel="error", mensaje="No se leyó ningún dato.")]
     for h in lectura.hojas:
         if not h.filas:
-            v.append(Verificacion(campo="hojas", nivel="aviso", mensaje=f"La hoja «{h.nombre}» está vacía."))
             continue
         ancho = max(len(f) for f in h.filas)
         v.append(Verificacion(campo="hojas", nivel="ok", mensaje=f"«{h.nombre}»: {len(h.filas)} filas y {ancho} columnas."))
-        # Columnas con números y texto mezclados (fuera del encabezado): suele ser un número mal escrito.
-        for col in range(ancho):
-            valores = [f[col] for f in h.filas[1:] if col < len(f) and f[col] is not None]
-            nums = [x for x in valores if isinstance(x, (int, float))]
-            textos = [x for x in valores if isinstance(x, str)]
-            if len(valores) >= 5 and len(nums) >= 0.8 * len(valores) and textos:
-                v.append(Verificacion(
-                    campo="hojas", nivel="aviso",
-                    mensaje=f"«{h.nombre}», columna {col + 1}: casi todos son números pero {len(textos)} no ({', '.join(map(str, textos[:3]))}).",
-                ))
-    if lectura.metodo in ("ocr", "ia"):
-        como = "con OCR" if lectura.metodo == "ocr" else "con IA (Gemini)"
-        v.append(Verificacion(campo="hojas", nivel="aviso", mensaje=f"Leído {como}: compará el texto con la imagen antes de armar el Excel."))
     return v
 
 
@@ -411,8 +352,6 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
             v.append(x)
     if not e.get("numero"):
         v.append(Verificacion(campo="numero", nivel="aviso", mensaje="No se encontró el número de comprobante.", titulo="Falta el número"))
-    elif not re.fullmatch(r"\d{4,5}-\d{8}", e["numero"]):
-        v.append(Verificacion(campo="numero", nivel="aviso", mensaje=f"El número «{e['numero']}» no tiene la forma 00001-00000001.", titulo="Número raro", datos=[e["numero"]]))
     if not e.get("tipo"):
         v.append(Verificacion(campo="tipo", nivel="aviso", mensaje="No se reconoció el tipo de comprobante.", titulo="Falta el tipo"))
     if (x := _verificar_fecha(e.get("fecha", ""))) is not None:
@@ -421,15 +360,6 @@ def verificar(lectura: Lectura) -> list[Verificacion]:
     v += _verificar_desglose(lectura, t)
     v += _verificar_tributos(lectura.tributos)
     v += _verificar_items(lectura.items, t)
-    # Lo que cada pasada leyó distinto y sigue sin verificarse por otro lado.
-    con_error = {x.campo for x in v if x.nivel != "ok"}
-    verificados = {x.campo for x in v if x.nivel == "ok"}
-    for campo, valores in lectura.dudas.items():
-        if campo in con_error or (campo in verificados and campo.endswith("_cuit")) or (campo in TOTALES and _cierra(t)):
-            continue
-        etiqueta = ETIQUETAS_ENCABEZADO.get(campo) or ETIQUETAS_TOTALES.get(campo, campo)
-        v.append(Verificacion(campo=campo, nivel="aviso", mensaje=f"{etiqueta}: cada lectura dio algo distinto ({' / '.join(valores[:3])}). Compará con la imagen.",
-                             titulo=f"{etiqueta}: ¿cuál es?", opciones=valores[:3]))
     # Primero lo que hay que arreglar.
     orden = {"error": 0, "aviso": 1, "ok": 2}
     return sorted(v, key=lambda x: orden[x.nivel])

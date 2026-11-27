@@ -485,9 +485,8 @@ def _desde_json(lectura: Lectura, datos: dict, metodo: Literal["ia", "ocr"]) -> 
     for advertencia in (validaciones.get("advertencias") or [])[:5]:
         if not isinstance(advertencia, str) or not advertencia.strip():
             continue
-        if metodo == "ia":
-            lectura.avisos.append(f"Gemini: {advertencia.strip()[:300]}")
-        elif "cambiando 0 y 8" in advertencia:
+        # Las advertencias de Gemini no se muestran: lo que no cierra ya lo dicen las cuentas.
+        if metodo != "ia" and "cambiando 0 y 8" in advertencia:
             # Lo demás que no cierra ya lo dice la verificación.
             lectura.avisos.append(f"{advertencia.strip()[:300]} Compará con la imagen.")
     return lectura
