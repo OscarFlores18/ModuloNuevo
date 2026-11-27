@@ -80,4 +80,16 @@ describe('Pasar a Excel', () => {
     expect(l.totales['percepcion_iibb']).toBe(6717.98);
     expect(l.totales['otros_tributos']).toBe(10); // la de CABA; antes quedaba 6808,52 y se contaba dos veces
   });
+
+  it('borrar un renglón de tributo deja de sumarlo', () => {
+    const con = conTributos(base, [
+      { codigo: '10', descripcion: 'IMPUESTOS INTERNOS ITEMS', base: null, importe: 90.54 },
+      { codigo: '07', descripcion: 'PERCEPCION IIBB BS AS', base: null, importe: 6717.98 },
+    ]);
+    const sinInternos = conTributos(con, [con.tributos[1]]);
+    expect(sinInternos.totales['impuestos_internos']).toBeNull();
+    expect(sinInternos.totales['percepcion_iibb']).toBe(6717.98);
+    const sinNada = conTributos(sinInternos, []);
+    expect(sinNada.totales['percepcion_iibb']).toBeNull();
+  });
 });

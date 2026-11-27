@@ -156,6 +156,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .ax-mas-filas { margin: 0; padding: 6px 12px; font-size: .78rem; color: var(--ax-tenue); }
     .ax-texto-leido { margin-top: 14px; font-size: .84rem; }
     .ax-texto-leido summary { cursor: pointer; color: var(--ax-tenue); }
+    .ax-nota-lectura { margin: 6px 0 0; color: var(--ax-tenue); }
     .ax-texto { margin-top: 8px; white-space: pre-wrap; font: .75rem ui-monospace, monospace; background: var(--ax-fondo); padding: 10px; border-radius: 6px; max-height: 320px; overflow: auto; }
   `,
   template: `
@@ -294,7 +295,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
               <div class="ax-ver-cab">
                 <h2 id="ax-titulo">
                   Verificá lo que leí
-                  <app-ayuda texto="Rojo: seguro está mal (un CUIT que no pasa el dígito verificador, importes que no suman el total). Amarillo: conviene compararlo con el archivo. Si las cuentas dan el valor correcto, aparece «Usar»." />
+                  <app-ayuda texto="Solo te aviso lo que no cierra (las cuentas, un CUIT mal) o lo que falta. Si la cuenta da el valor correcto, aparece «Usar»." />
                 </h2>
                 @if (l.tipo === 'comprobante') {
                   <div class="ax-seg" role="group" aria-label="¿Es compra o venta?" [attr.title]="estudio() ? null : 'Elegí primero la empresa'">
@@ -303,7 +304,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                   </div>
                 }
               </div>
-              @if (l.avisos.length) { <app-alerta class="mb-2 block" nivel="aviso" [mensajes]="l.avisos" /> }
+              @if (l.avisos.length && sinDatos(l)) { <app-alerta class="mb-2 block" nivel="aviso" [mensajes]="l.avisos" /> }
 
               <ul class="ax-ver" aria-live="polite">
                 @for (v of aMirar(); track $index) {
@@ -481,10 +482,11 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                 }
               }
 
-              @if (l.texto) {
+              @if (l.texto || (l.avisos.length && !sinDatos(l))) {
                 <details class="ax-texto-leido">
-                  <summary>Ver el texto que se leyó</summary>
-                  <div class="ax-texto">{{ textoSinCae(l.texto) }}</div>
+                  <summary>Cómo se leyó{{ nombreMotor(l) ? " · " + nombreMotor(l) : "" }}</summary>
+                  @if (!sinDatos(l)) { @for (a of l.avisos; track $index) { <p class="ax-nota-lectura">{{ a }}</p> } }
+                  @if (l.texto) { <div class="ax-texto">{{ textoSinCae(l.texto) }}</div> }
                 </details>
               }
             </div>
@@ -568,6 +570,18 @@ export class PasarAExcel implements OnDestroy {
 
   protected readonly errores = (l: LecturaExcel) => contar(l, 'error');
   protected readonly avisos = (l: LecturaExcel) => contar(l, 'aviso');
+  /** No se sacó nada útil: ahí sí importan los avisos de la lectura (sin clave de Gemini, sin OCR…). */
+  protected sinDatos(l: LecturaExcel): boolean {
+    if (l.tipo === 'tabla') return !l.hojas.some((h) => h.filas.length);
+    return !l.items.length && !Object.values(l.totales).some((v) => v !== null && v !== undefined);
+  }
+  protected nombreMotor(l: LecturaExcel): string {
+    const m = (l.motor ?? '').toLowerCase();
+    if (l.metodo === 'ia' || m.includes('gemini')) return 'IA (Gemini)';
+    if (m.includes('paddle')) return 'OCR local (PaddleOCR)';
+    if (l.metodo === 'ocr') return 'OCR local (Tesseract)';
+    return l.metodo === 'pdf' ? 'texto del PDF' : '';
+  }
   protected readonly texto = aTexto;
 
   // --- Para el estudio: de qué empresa es y si es compra o venta ---

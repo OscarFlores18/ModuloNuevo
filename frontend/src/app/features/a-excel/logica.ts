@@ -138,13 +138,13 @@ export function grupoTributo(t: TributoLeido): GrupoTributo {
  */
 export function conTributos(lectura: LecturaExcel, filas: TributoLeido[]): LecturaExcel {
   const totales = { ...lectura.totales };
-  if (filas.length) {
+  // Con renglones (o si se acaba de borrar el último), los renglones mandan: lo borrado deja de sumar.
+  if (filas.length || (lectura.tributos ?? []).length) {
     const grupos = new Map<GrupoTributo, number>();
     for (const f of filas) grupos.set(grupoTributo(f), (grupos.get(grupoTributo(f)) ?? 0) + (f.importe ?? 0));
-    for (const g of ['impuestos_internos', 'percepcion_iibb'] as const) {
-      if (grupos.has(g)) totales[g] = redondear(grupos.get(g)!);
+    for (const g of ['impuestos_internos', 'percepcion_iibb', 'otros_tributos'] as const) {
+      totales[g] = grupos.get(g) ? redondear(grupos.get(g)!) : null;
     }
-    totales['otros_tributos'] = grupos.has('otros_tributos') ? redondear(grupos.get('otros_tributos')!) : null;
   }
   return sinDuda({ ...lectura, tributos: filas, totales }, 'otros_tributos');
 }
