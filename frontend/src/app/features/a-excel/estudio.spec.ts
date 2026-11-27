@@ -87,3 +87,22 @@ describe('avisos cortos con un backend anterior', () => {
     expect(v('El IVA es el 21% del neto gravado.').titulo).toBe('IVA 21%');
   });
 });
+
+describe('emisor y receptor son clientes del estudio', () => {
+  const dos = [{ nombre: 'Piccinini', cuits: ['30710809883'] }, { nombre: 'Fiscales San Martin', cuits: ['30717538826'] }];
+  const e = { emisor: 'PICCININI y ASOCIADOS S.A.', emisor_cuit: '30710809883', receptor: 'FISCALES SAN MARTIN S.A.', receptor_cuit: '30717538826' };
+
+  it('el nombre del archivo dice venta: es venta del emisor', () => {
+    const f = detectarEmpresa(e, dos, { archivo: 'Xubio - Comprobantes de Venta.pdf' });
+    expect([f?.empresa, f?.operacion, f?.ambigua]).toEqual(['Piccinini', 'Ventas', true]);
+  });
+
+  it('sin pista en el archivo, manda la empresa con la que se trabaja', () => {
+    expect(detectarEmpresa(e, dos, { archivo: 'factura.pdf', trabajo: 'Piccinini' })?.operacion).toBe('Ventas');
+    expect(detectarEmpresa(e, dos, { archivo: 'factura.pdf', trabajo: 'Fiscales San Martin' })?.operacion).toBe('Compras');
+  });
+
+  it('un solo cliente en la factura: no es ambigua', () => {
+    expect(detectarEmpresa(e, [dos[1]])?.ambigua).toBeUndefined();
+  });
+});
