@@ -8,6 +8,7 @@ import pytest
 from PIL import Image
 
 from backend.app.extraccion import a_excel, gemini
+from backend.app.extraccion.conversor import leer as paso_leer
 
 
 def _png(ancho=400, alto=300) -> bytes:
@@ -43,7 +44,7 @@ def con_gemini(monkeypatch):
         monkeypatch.delenv(nombre, raising=False)
     monkeypatch.delenv("FORCE_TESSERACT", raising=False)
     # La imagen de prueba es blanca: que no la tome como captura para el OCR local.
-    monkeypatch.setattr(a_excel, "es_captura_limpia", lambda *a: False)
+    monkeypatch.setattr(paso_leer, "es_captura_limpia", lambda *a: False)
     return monkeypatch
 
 
@@ -73,8 +74,8 @@ def test_si_gemini_falla_sigue_con_ocr(con_gemini):
         raise gemini.GeminiNoDisponible("Gemini: se llegó al límite gratuito por minuto.")
 
     con_gemini.setattr(gemini, "leer_imagen", falla)
-    con_gemini.setattr(a_excel, "hay_ocr_local", lambda: True)
-    con_gemini.setattr(a_excel, "_leer_local", lambda nombre, imagen, lectura, *a, **k: lectura.model_copy(update={"metodo": "ocr"}))
+    con_gemini.setattr(paso_leer, "hay_ocr_local", lambda: True)
+    con_gemini.setattr(paso_leer, "_leer_local", lambda nombre, imagen, lectura, *a, **k: lectura.model_copy(update={"metodo": "ocr"}))
     l = a_excel.leer("factura.jpg", _png())
     assert l.metodo == "ocr"
     assert any("límite gratuito" in a and "OCR local" in a for a in l.avisos)
