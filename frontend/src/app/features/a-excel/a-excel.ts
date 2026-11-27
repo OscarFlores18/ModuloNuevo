@@ -111,6 +111,19 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .ax-bloque > header span { font-size: .78rem; color: var(--ax-tenue); }
     .ax-campos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px 12px; padding: 10px 12px 12px; }
     .ax-campos label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
+    .ax-partes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .ax-parte { min-width: 0; margin: 0; padding: 10px 12px 12px; border: 0; display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 8px 10px; }
+    .ax-parte + .ax-parte { border-left: 1px solid #f1f5f9; }
+    .ax-parte legend { float: left; grid-column: 1 / -1; padding: 0; font-size: .8rem; font-weight: 600; color: var(--ax-texto); }
+    .ax-parte label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
+    .ax-papel { margin-left: 6px; font-weight: 400; color: var(--ax-tenue); }
+    .ax-comp { border-top: 1px solid #f1f5f9; }
+    @media (max-width: 640px) { .ax-partes { grid-template-columns: minmax(0, 1fr); } .ax-parte + .ax-parte { border-left: 0; border-top: 1px solid #f1f5f9; } }
+    .ax-acciones { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    .ax-xubio { flex: none; padding: 8px 14px; }
+    .ax-xubio-res { margin-top: 10px; padding: 8px 10px; border-left: 3px solid #22c55e; background: var(--ax-fondo); border-radius: 0 6px 6px 0; font-size: .84rem; color: var(--ax-ok); }
+    .ax-xubio-res.aviso { border-left-color: #f59e0b; color: var(--ax-aviso); }
+    .ax-xubio-res p { margin: 0; } .ax-xubio-res p + p { margin-top: 3px; }
     .ax-renglon { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 12px; font-size: .86rem; }
     .ax-renglon + .ax-renglon { border-top: 1px solid #f1f5f9; }
     .ax-renglon.ax-nuevo-grupo { border-top: 1px solid var(--ax-borde); }
@@ -238,6 +251,13 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                 <span class="ax-meta">{{ nombreTipo(l) }}</span>
               </h2>
               @if (!l.error) {
+                <div class="ax-acciones">
+                @if (l.tipo === 'comprobante') {
+                  <button type="button" class="mf-btn mf-btn-suave ax-xubio" (click)="prepararXubio()" [disabled]="!estudio() || preparando() || verificando()" [attr.aria-busy]="preparando()"
+                    [attr.title]="estudio() ? 'Arma el archivo para «Importar desde Mis Comprobantes (ARCA)» de Xubio' : 'Elegí primero la empresa'">
+                    {{ preparando() ? 'Preparando…' : 'Preparar para Xubio' }}
+                  </button>
+                }
                 <button type="button" class="mf-btn ax-descargar" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
                   @if (generando()) {
                     <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/40 border-t-white" aria-hidden="true"></span>
@@ -246,8 +266,15 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                     Descargar Excel
                   }
                 </button>
+                </div>
               }
             </div>
+            @if (!l.error && paraXubio(); as x) {
+              <div class="ax-xubio-res" [class.aviso]="!x.listo || x.avisos.length" role="status">
+                @if (x.listo) { <p>✓ Listo para Xubio: se descargó «{{ x.nombre }}». Falta que el bot lo cargue (todavía no está conectado).</p> }
+                @for (a of x.avisos; track $index) { <p>{{ a }}</p> }
+              </div>
+            }
             @if (l.error) {
               <app-alerta class="mt-3" nivel="error" [mensajes]="[l.error]" />
             } @else {
@@ -324,8 +351,21 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
               @if (l.tipo === 'comprobante') {
                 <section class="ax-bloque" aria-labelledby="ax-enc-t">
                   <header><h3 id="ax-enc-t">Encabezado</h3></header>
-                  <div class="ax-campos">
-                    @for (c of camposEncabezado; track c.id) {
+                  <div class="ax-partes">
+                    @for (rol of roles; track rol) {
+                      <fieldset class="ax-parte">
+                        <legend>{{ rol === 'emisor' ? 'Emisor' : 'Receptor' }}@if (papel(rol); as p) { <span class="ax-papel">{{ p }}</span> }</legend>
+                        <label>Razón social
+                          <input class="ax-in" [class]="nivel(rol)" [attr.title]="explicar(rol, estadoCampo(rol, l.encabezado[rol]))" [value]="l.encabezado[rol] ?? ''" (change)="cambiarEncabezado(rol, $any($event.target).value)" />
+                        </label>
+                        <label>CUIT
+                          <input class="ax-in" [class]="nivel(rol + '_cuit')" [attr.title]="explicar(rol + '_cuit', estadoCampo(rol + '_cuit', l.encabezado[rol + '_cuit']))" [value]="l.encabezado[rol + '_cuit'] ?? ''" (change)="cambiarEncabezado(rol + '_cuit', $any($event.target).value)" />
+                        </label>
+                      </fieldset>
+                    }
+                  </div>
+                  <div class="ax-campos ax-comp">
+                    @for (c of camposComprobante; track c.id) {
                       <label>{{ c.etiqueta }}
                         <input class="ax-in" [class]="nivel(c.id)" [attr.title]="explicar(c.id, estadoCampo(c.id, l.encabezado[c.id]))" [placeholder]="c.ayuda ?? ''" [value]="l.encabezado[c.id] ?? ''" (change)="cambiarEncabezado(c.id, $any($event.target).value)" />
                       </label>
@@ -501,7 +541,16 @@ export class PasarAExcel implements OnDestroy {
   private readonly sanitizer = inject(DomSanitizer);
 
   protected readonly acepta = ACEPTA;
-  protected readonly camposEncabezado = CAMPOS_ENCABEZADO;
+  protected readonly roles = ['emisor', 'receptor'] as const;
+  /** Tipo, número y fecha (emisor y receptor van aparte, cada uno en su lado). */
+  protected readonly camposComprobante = CAMPOS_ENCABEZADO.filter((c) => !/^(emisor|receptor)/.test(c.id));
+  protected readonly preparando = signal(false);
+  /** archivo → lo que dio «Preparar para Xubio» (se borra al cambiar algo de la factura). */
+  private readonly xubio = signal<Record<string, { listo: boolean; avisos: string[]; nombre: string }>>({});
+  protected readonly paraXubio = computed(() => {
+    const l = this.actual();
+    return l ? (this.xubio()[l.archivo] ?? null) : null;
+  });
   protected readonly camposTotales = CAMPOS_TOTALES;
 
   protected readonly lecturas = signal<LecturaExcel[]>([]);
@@ -660,6 +709,43 @@ export class PasarAExcel implements OnDestroy {
     const l = this.actual();
     if (l) this.elegido.update((m) => ({ ...m, [l.archivo]: { empresa: nombre, operacion: null } }));
     recordarEmpresaDeTrabajo(nombre);
+  }
+
+  /** Qué es cada parte para la empresa del estudio. */
+  protected papel(rol: string): string {
+    const f = this.estudio();
+    if (!f) return '';
+    const esLaEmpresa = (rol === 'receptor') === (f.operacion === 'Compras');
+    return esLaEmpresa ? f.empresa : f.operacion === 'Compras' ? 'proveedor' : 'cliente';
+  }
+
+  private olvidarXubio(archivo: string): void {
+    if (!this.xubio()[archivo]) return;
+    this.xubio.update((m) => {
+      const resto = { ...m };
+      delete resto[archivo];
+      return resto;
+    });
+  }
+
+  /** Arma el .zip para «Importar desde Mis Comprobantes (ARCA)» y lo descarga. No abre Xubio. */
+  protected async prepararXubio(): Promise<void> {
+    const l = this.actual();
+    const f = this.estudio();
+    if (!l || !f) return;
+    this.preparando.set(true);
+    try {
+      const r = await this.api.prepararXubioAExcel(l, f.operacion, f.empresa);
+      if (r.zip) {
+        const bytes = Uint8Array.from(atob(r.zip.contenido), (c) => c.charCodeAt(0));
+        descargarBlob(r.zip.nombre, new Blob([bytes], { type: 'application/zip' }));
+      }
+      this.xubio.update((m) => ({ ...m, [l.archivo]: { listo: r.listo, avisos: r.avisos, nombre: r.zip?.nombre ?? '' } }));
+    } catch (err) {
+      this.toast.error('No se pudo preparar para Xubio', mensajeDeError(err, ''));
+    } finally {
+      this.preparando.set(false);
+    }
   }
 
   protected elegirOperacion(operacion: Operacion): void {
@@ -822,6 +908,7 @@ export class PasarAExcel implements OnDestroy {
 
   private reemplazar(nueva: LecturaExcel): void {
     const i = this.indice();
+    this.olvidarXubio(nueva.archivo);
     this.lecturas.update((ls) => ls.map((l, j) => (j === i ? nueva : l)));
     this.reverificar();
   }

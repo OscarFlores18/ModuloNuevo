@@ -59,6 +59,14 @@ export class ApiService {
       this.http.post<{ nombre: string; contenido: string }>(`${this.url}/a-excel/generar`, { lectura, ...extra }).pipe(errorLegible('No se pudo armar el Excel.')),
     );
   }
+  /** El .zip para «Importar desde Mis Comprobantes (ARCA)» de Xubio (no abre Xubio). */
+  prepararXubioAExcel(lectura: LecturaExcel, operacion: string, empresa: string): Promise<{ listo: boolean; avisos: string[]; zip: { nombre: string; contenido: string } | null }> {
+    return firstValueFrom(
+      this.http
+        .post<{ listo: boolean; avisos: string[]; zip: { nombre: string; contenido: string } | null }>(`${this.url}/a-excel/xubio/preparar`, { lectura, operacion, empresa })
+        .pipe(errorLegible('No se pudo preparar para Xubio.')),
+    );
+  }
   /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */
   extraerComprobantes(archivos: ArchivoSubido[]): Promise<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }> {
     return firstValueFrom(
