@@ -55,7 +55,7 @@ def test_imagen_leida_con_gemini(con_gemini):
     e = l.encabezado
     assert e["emisor_cuit"] == "30712345671" and e["receptor_cuit"] == "30718889881"
     assert e["tipo"] == "1 - Factura A" and e["numero"] == "00018-00076897"
-    assert e["fecha"] == "12/08/2026" and "cae" not in e  # el conversor ya no lleva CAE
+    assert e["fecha"] == "12/08/2026" and e["cae"] == "76123456789012"  # se guarda (no se muestra): lo pide Xubio
     assert l.totales["total"] == 112000.06 and l.totales["no_gravado"] is None
     assert l.items[0].precio == 7683.21  # como el resto de la app: 2 decimales
     # Pasa por las mismas verificaciones que el OCR.

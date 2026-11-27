@@ -466,6 +466,27 @@ def generar_a_excel(body: GenerarAExcelRequest) -> dict:
     }
 
 
+class XubioAExcelRequest(LecturaRequest):
+    operacion: Literal["Compras", "Ventas"]
+    empresa: str = Field(min_length=1, max_length=200)
+
+
+@router.post("/a-excel/xubio/preparar")
+def preparar_xubio_a_excel(body: XubioAExcelRequest) -> dict:
+    """El .zip para «Importar desde Mis Comprobantes (ARCA)» de Xubio. Solo lo arma:
+    no abre Xubio (eso lo hace /convertir-aux/xubio con este .zip)."""
+    from ...extraccion.conversor import xubio
+
+    r = xubio.preparar(body.lectura, body.operacion, body.empresa)
+    zip_ = r["zip"]
+    return {
+        "listo": r["listo"],
+        "avisos": r["avisos"],
+        "fila": r["fila"],
+        "zip": {"nombre": zip_["nombre"], "contenido": base64.b64encode(zip_["contenido"]).decode("ascii")} if zip_ else None,
+    }
+
+
 class PrepararRequest(BaseModel):
     comprobantes: list[Comprobante] = Field(min_length=1, max_length=5000)
 

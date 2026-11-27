@@ -217,7 +217,7 @@ def test_el_qr_de_arca_manda(sin_entorno):
     e = l.encabezado
     assert (e["numero"], e["fecha"], e["tipo"], e["receptor_cuit"]) == ("00103-00000524", "25/10/2026", "81 - Tique Factura A", "30709864013")
     assert l.totales["total"] == 100.0 and l.motor == "qr+tesseract_local"
-    assert "cae" not in e and any("QR de ARCA" in a and "999" in a for a in l.avisos)
+    assert e["cae"] == "76123456789012" and any("QR de ARCA" in a and "999" in a for a in l.avisos)
 
 
 def test_endpoint_acepta_el_motor(cliente_demo, sin_entorno):

@@ -453,6 +453,9 @@ def _desde_json(lectura: Lectura, datos: dict, metodo: Literal["ia", "ocr"]) -> 
     if f := str(g.get("fecha") or "").strip():
         iso = fecha_iso(f)
         e["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else f
+    # El CAE no se muestra, pero se guarda: lo pide la importación de Xubio.
+    if len(cae := re.sub(r"\D", "", str(_primero(g, "cae", "codigo_autorizacion") or ""))) == 14:
+        e["cae"] = cae
     lectura.tipo = "comprobante"
     lectura.encabezado = e
     lectura.items = [
@@ -588,7 +591,7 @@ MOTORES: dict[str, Modo] = {
 
 
 def _aplicar_qr(lectura: Lectura, qr: dict) -> Lectura:
-    """Los datos del QR de ARCA son exactos: mandan sobre lo leído (sin el CAE)."""
+    """Los datos del QR de ARCA son exactos: mandan sobre lo leído."""
     from ..modelo import fecha as fecha_iso_qr
 
     del_qr: dict[str, str] = {}
@@ -602,6 +605,9 @@ def _aplicar_qr(lectura: Lectura, qr: dict) -> Lectura:
         del_qr["numero"] = f"{_entero(qr.get('ptoVta')) or 0:05d}-{nro:08d}"
     if _entero(qr.get("tipoDocRec")) == 80 and (rec := re.sub(r"\D", "", str(qr.get("nroDocRec") or ""))):
         del_qr["receptor_cuit"] = rec
+    # El CAE no se muestra, pero se guarda (lo pide la importación de Xubio).
+    if len(cae := re.sub(r"\D", "", str(qr.get("codAut") or ""))) == 14:
+        lectura.encabezado["cae"] = cae
     total = _numero(qr.get("importe"))
     if lectura.tipo != "comprobante":
         lectura.tipo, lectura.hojas = "comprobante", []

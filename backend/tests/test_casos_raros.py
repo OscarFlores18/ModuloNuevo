@@ -267,3 +267,68 @@ def test_todos_sin_cupo_del_dia_lo_dice_claro(monkeypatch):
         gemini._pedir(cliente, types, errors, b"jpeg")
     with pytest.raises(gemini.GeminiNoDisponible, match="cupo gratuito del día de todos"):
         gemini._pedir(cliente, types, errors, b"jpeg")
+
+
+# --- Salida a Xubio: «Importar desde Mis Comprobantes (ARCA)» -------------------------
+
+
+def _csv_del_zip(contenido: bytes) -> list[list[str]]:
+    import zipfile
+
+    with zipfile.ZipFile(io.BytesIO(contenido)) as z:
+        nombre = next(n for n in z.namelist() if n.lower().endswith(".csv"))
+        texto = z.read(nombre).decode("utf-8")
+    return [linea.split(";") for linea in texto.strip().split("\n")]
+
+
+def test_factura_a_mis_comprobantes_para_xubio(gemini_responde):
+    """La factura con IVA, impuestos internos y percepción: una fila del CSV de ARCA
+    con el proveedor por CUIT, el IVA 21% y los tributos juntos en «Otros Tributos»."""
+    from backend.app.extraccion.conversor import xubio
+
+    datos = {**FACTURA_CON_TRIBUTOS, "encabezado": {**FACTURA_CON_TRIBUTOS["encabezado"], "cae": "76123456789012"}}
+    gemini_responde(datos)
+    l = a_excel.leer("factura.jpg", _png())
+    assert l.encabezado["cae"] == "76123456789012"  # se guarda aunque no se muestre
+    r = xubio.preparar(l, "Compras", "CLIENTE EJEMPLO SRL")
+    assert r["listo"] and r["avisos"] == []
+    encabezado, fila = _csv_del_zip(r["zip"]["contenido"])
+    d = dict(zip((c.strip('"') for c in encabezado), fila))
+    assert d["Fecha de Emisión"] == "2026-09-02" and d["Tipo de Comprobante"] == "1"
+    assert d["Punto de Venta"] == "3" and d["Número Desde"] == "120455"
+    assert d["Cód. Autorización"] == "76123456789012"
+    # En Compras, el proveedor (emisor) va en las columnas «Receptor» del esqueleto.
+    assert d["Nro. Doc. Receptor"] == "30500010912" and d["Denominación Receptor"] == "DISTRIBUIDORA EJEMPLO SA"
+    assert d["Imp. Neto Gravado IVA 21%"] == "83974,75" and d["IVA 21%"] == "17634,71"
+    assert d["Otros Tributos"] == "6808,52" and d["Imp. Total"] == "108417,98"
+
+
+def test_para_xubio_sin_cae_avisa():
+    from backend.app.extraccion.conversor import xubio
+
+    l = a_excel.Lectura(tipo="comprobante", encabezado={
+        "emisor": "X SA", "emisor_cuit": "30500010912", "tipo": "1 - Factura A", "numero": "00001-00000010", "fecha": "01/09/2026"},
+        totales={"neto_gravado": 100.0, "iva": 21.0, "total": 121.0},
+        iva_alicuotas=[a_excel.AlicuotaIva(alicuota=21, base=100, importe=21)])
+    r = xubio.preparar(l, "Compras", "EMPRESA")
+    assert any("Sin CAE" in a for a in r["avisos"])
+
+
+def test_endpoint_prepara_el_zip_sin_abrir_xubio(entorno, monkeypatch):
+    """/a-excel/xubio/preparar arma el .zip y no toca el bot."""
+    import base64
+
+    from backend.app.bots import xubio as bot
+
+    monkeypatch.setattr(bot, "importar_arca", lambda *a, **k: pytest.fail("no tenía que abrir Xubio"))
+    client, _ = entorno
+    lectura = a_excel.Lectura(tipo="comprobante", encabezado={
+        "emisor": "X SA", "emisor_cuit": "30500010912", "tipo": "1 - Factura A", "numero": "00001-00000010",
+        "fecha": "01/09/2026", "cae": "76123456789012"},
+        totales={"neto_gravado": 100.0, "iva": 21.0, "total": 121.0},
+        iva_alicuotas=[a_excel.AlicuotaIva(alicuota=21, base=100, importe=21)])
+    r = client.post("/api/a-excel/xubio/preparar", json={"lectura": lectura.model_dump(), "operacion": "Compras", "empresa": "EMPRESA"})
+    assert r.status_code == 200, r.text
+    datos = r.json()
+    assert datos["listo"] and datos["avisos"] == []
+    assert datos["zip"]["nombre"].endswith(".zip") and base64.b64decode(datos["zip"]["contenido"])[:2] == b"PK"
