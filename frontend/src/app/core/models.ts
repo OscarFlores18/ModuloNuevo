@@ -109,7 +109,8 @@ export interface ResultadoConversion {
   /** Los comprobantes de cada .zip, para mostrarlos antes de subir. */
   filas?: Partial<Record<'Ventas' | 'Compras', { fecha: string; tipo: string; comprobante: string; cuit: string; razon: string; total: string | number }[]>>;
   /** Un .zip por operación con partidas, cada uno con un solo CSV (lo que pide Xubio). */
-  zips: Partial<Record<'Ventas' | 'Compras', { nombre: string; contenido: string }>>;
+  /** `original`: el .zip que exportó ARCA en el control, que se sube sin tocar. */
+  zips: Partial<Record<'Ventas' | 'Compras', { nombre: string; contenido: string; original?: boolean }>>;
   /** Copia para mirar en Excel: CAE y CUIT como texto. */
   excel: { nombre: string; contenido: string } | null;
   /** Lo que no generó archivo, por ejemplo «Ventas: no hay partidas…». */
@@ -458,6 +459,8 @@ export interface LecturaExcel {
   texto: string;
   /** Lo que cada pasada de OCR leyó distinto. */
   dudas: Record<string, string[]>;
+  /** Lo que se autocorrigió solo: campo -> lo que se había leído. */
+  corregidos?: Record<string, string>;
   avisos: string[];
   verificaciones: Verificacion[];
   /** Solo si el archivo no se pudo leer. */

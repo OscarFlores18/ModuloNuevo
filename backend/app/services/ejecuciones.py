@@ -602,7 +602,7 @@ def cancelar(ej: Ejecucion) -> None:
 
 
 def listar_archivos(carpeta: Path, desde_ts: float | None = None) -> list[dict]:
-    """Los Excel/CSV de la carpeta. Con `desde_ts`, solo los escritos desde ese
+    """Los Excel/CSV de la carpeta (y el .zip con el CSV que exporta ARCA). Con `desde_ts`, solo los escritos desde ese
     momento: la carpeta <Cliente>/<mmaaaa> la comparten todos los controles de ese
     mes, y sin el filtro se mezclaban archivos de otros controles (otras fechas,
     o Compras en un control de solo Ventas)."""
@@ -610,7 +610,7 @@ def listar_archivos(carpeta: Path, desde_ts: float | None = None) -> list[dict]:
         return []
     archivos = []
     for a in sorted(carpeta.iterdir(), key=lambda x: x.name.casefold()):
-        if a.is_file() and a.suffix.lower() in (".xlsx", ".xls", ".csv") and not a.name.startswith("~$"):
+        if a.is_file() and a.suffix.lower() in (".xlsx", ".xls", ".csv", ".zip") and not a.name.startswith("~$"):
             st = a.stat()
             if desde_ts is not None and st.st_mtime < desde_ts - 1:
                 continue
@@ -1258,19 +1258,29 @@ def _archivo_de(cli: ClienteEnCurso, patron: str, extensiones: tuple[str, ...] =
     return None
 
 
-def csv_arca_de(ej: Ejecucion, indice: int, operacion: str) -> Path:
-    """El CSV de Mis Comprobantes que bajó ARCA en este control para la operación."""
+def originales_arca_de(ej: Ejecucion, indice: int, operacion: str) -> list[Path]:
+    """Lo que exportó ARCA con «CSV» en este control para la operación (un .zip por
+    tramo del período), tal cual lo bajó: es lo que se sube a Xubio."""
     if not 0 <= indice < len(ej.clientes):
         raise ErrorEjecucion("Ese cliente no es de esta ejecución.", 404)
-    tipo_arca = "Emitidos" if operacion == "Ventas" else "Recibidos"
-    nombre = _archivo_de(ej.clientes[indice], f"Mis comprobantes - {tipo_arca} - ", (".csv",))
-    if not nombre:
+    cli = ej.clientes[indice]
+    tipo = "emitidos" if operacion == "Ventas" else "recibidos"
+    nombres = [
+        a["nombre"] for a in cli.archivos
+        if a["nombre"].lower().startswith(f"comprobantes_consulta_csv_{tipo}")
+    ]
+    if not nombres:
+        # Controles de ayer: el .zip de ARCA quedó guardado como «Mis comprobantes - … .csv».
+        viejo = _archivo_de(cli, f"Mis comprobantes - {tipo.capitalize()} - ", (".csv",))
+        if viejo and ruta_archivo(ej, indice, viejo).read_bytes()[:2] == b"PK":
+            nombres = [viejo]
+    if not nombres:
         raise ErrorEjecucion(
-            f"Este control no tiene el CSV de ARCA de {operacion} (los controles anteriores a este "
-            "cambio solo bajaban el Excel). Volvé a correr el control para subirlo a Xubio.",
+            f"Este control no tiene el archivo CSV de ARCA de {operacion}. Volvé a correr el "
+            "control para subirlo a Xubio.",
             404,
         )
-    return ruta_archivo(ej, indice, nombre)
+    return [ruta_archivo(ej, indice, n) for n in nombres]
 
 
 def aplicar_cambios(ej: Ejecucion, cambios: list[dict]) -> dict:

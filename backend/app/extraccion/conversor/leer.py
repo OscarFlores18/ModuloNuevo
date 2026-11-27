@@ -18,7 +18,7 @@ from ..modelo import TIPOS, cuit_valido, fecha as fecha_iso, importe, nombre_tip
 from ..texto_factura import _tipo as tipo_del_texto
 from ..texto_factura import cuits as cuits_del_texto
 from .datos import Hoja, IMAGENES, Lectura, MAX_FILAS, MAX_PAGINAS, PLANILLAS
-from .normalizar import MOTORES, Modo, _aplicar_qr, _celda, _desde_json, _desde_texto, completar_desglose, corregir_descripciones, corregir_importes_items, sugerir_productos
+from .normalizar import MOTORES, Modo, _aplicar_qr, _celda, _desde_json, _desde_texto, completar_desglose, completar_tributos, corregir_descripciones, corregir_importes_items, limpiar_nombres, sugerir_productos
 from .validar import _cierra_bien, verificar
 
 logger = logging.getLogger(__name__)
@@ -254,12 +254,22 @@ def leer(nombre: str, contenido: bytes, motor: str | None = None) -> Lectura:
         lectura = _leer_imagen(nombre, contenido, motor)
     else:
         raise ValueError(f"«{nombre}»: formato no soportado (foto, captura, PDF, CSV o Excel).")
+    # Una foto o captura (o un PDF escaneado) se lee con IA u OCR y puede venir con
+    # errores: ahí se autocorrige y se avisa. Un PDF con texto o una planilla traen
+    # los datos tal cual: ni autocorrecciones ni avisos.
+    de_imagen = lectura.metodo in ("ia", "ocr")
     if lectura.tipo == "comprobante":
-        corregir_descripciones(lectura.items)
-        corregir_importes_items(lectura.items, lectura.totales)
+        if de_imagen:
+            corregir_descripciones(lectura.items)
+            corregir_importes_items(lectura.items, lectura.totales)
+        limpiar_nombres(lectura)
         sugerir_productos(lectura.items)
     completar_desglose(lectura)
+    if lectura.tipo == "comprobante" and de_imagen:
+        completar_tributos(lectura)
     lectura.verificaciones = verificar(lectura)
+    if not de_imagen:
+        lectura.verificaciones = [v for v in lectura.verificaciones if v.nivel == "ok"]
     return lectura
 
 

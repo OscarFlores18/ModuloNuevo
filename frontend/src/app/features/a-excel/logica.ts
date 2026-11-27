@@ -80,27 +80,64 @@ export function contar(lectura: LecturaExcel, nivel: NivelVerificacion): number 
 
 /** Sin la duda de un campo: una vez que la persona lo corrigió, ya está mirado. */
 export function sinDuda(lectura: LecturaExcel, campo: string): LecturaExcel {
-  if (!(campo in lectura.dudas)) return lectura;
+  // Lo que el usuario puso a mano deja de figurar como duda o como autocorregido.
+  if (!(campo in lectura.dudas) && !(campo in (lectura.corregidos ?? {}))) return lectura;
   const dudas = { ...lectura.dudas };
+  const corregidos = { ...lectura.corregidos };
   delete dudas[campo];
-  return { ...lectura, dudas };
+  delete corregidos[campo];
+  return { ...lectura, dudas, corregidos };
 }
 
 /** Aplica la sugerencia de una verificación al campo que corresponde. */
 export function usarSugerencia(lectura: LecturaExcel, v: Verificacion): LecturaExcel {
   if (v.sugerencia === null || v.sugerencia === undefined) return lectura;
-  // «iva_N»: el IVA de la fila N del desglose. «iva» con una sola fila (o ninguna): esa fila.
-  const fila = /^iva_(\d+)$/.exec(v.campo)?.[1];
-  const desglose = lectura.iva_alicuotas ?? [];
-  if (fila !== undefined || (v.campo === 'iva' && desglose.length <= 1)) {
-    const i = fila !== undefined ? Number(fila) : 0;
-    const filas = desglose.length ? desglose : [{ alicuota: null, base: lectura.totales['neto_gravado'] ?? null, importe: null }];
-    return conDesglose(lectura, filas.map((f, j) => (j === i ? { ...f, importe: Number(v.sugerencia) } : f)));
-  }
-  if (TOTALES.includes(v.campo)) {
-    return sinDuda({ ...lectura, totales: { ...lectura.totales, [v.campo]: Number(v.sugerencia) } }, v.campo);
-  }
+  if (/^iva_\d+$/.test(v.campo) || TOTALES.includes(v.campo)) return conTotal(lectura, v.campo, Number(v.sugerencia));
   return sinDuda({ ...lectura, encabezado: { ...lectura.encabezado, [v.campo]: String(v.sugerencia) } }, v.campo);
+}
+
+const NOMBRE_GRUPO: Record<GrupoTributo, string> = {
+  impuestos_internos: 'Impuestos internos',
+  percepcion_iibb: 'Percepción IIBB Bs. As.',
+  otros_tributos: 'Otros tributos',
+};
+
+/**
+ * Un importe nuevo donde de verdad cuenta. El IVA, con desglose, se cambia en sus filas;
+ * los tributos, con renglones, en sus renglones (si no, el cambio no hacía nada: el
+ * total sale de las filas y el «Usar» quedaba ahí).
+ */
+export function conTotal(lectura: LecturaExcel, campo: string, valor: number | null): LecturaExcel {
+  const fila = /^iva_(\d+)$/.exec(campo)?.[1];
+  const desglose = lectura.iva_alicuotas ?? [];
+  if (valor !== null && (fila !== undefined || campo === 'iva')) {
+    const filas = desglose.length ? desglose : [{ alicuota: null, base: lectura.totales['neto_gravado'] ?? null, importe: null }];
+    let i = fila !== undefined ? Number(fila) : 0;
+    let nuevo = valor;
+    if (fila === undefined && filas.length > 1) {
+      // El IVA total con varias alícuotas: la diferencia va a la fila que mejor la explica.
+      const dif = valor - filas.reduce((s, f) => s + (f.importe ?? 0), 0);
+      const lejania = (f: AlicuotaIva) =>
+        f.base !== null && f.alicuota !== null ? Math.abs((f.importe ?? 0) + dif - (f.base * f.alicuota) / 100) : Infinity;
+      i = filas.reduce((mejor, f, j) => (lejania(f) < lejania(filas[mejor]) ? j : mejor), filas.length - 1);
+      nuevo = redondear((filas[i].importe ?? 0) + dif);
+    }
+    return sinDuda(conDesglose(lectura, filas.map((f, j) => (j === i ? { ...f, importe: nuevo } : f))), campo);
+  }
+  const renglones = lectura.tributos ?? [];
+  if (renglones.length && (campo === 'impuestos_internos' || campo === 'percepcion_iibb' || campo === 'otros_tributos')) {
+    const delGrupo = renglones.map((t, j) => (grupoTributo(t) === campo ? j : -1)).filter((j) => j >= 0);
+    let filas: TributoLeido[];
+    if (!delGrupo.length) {
+      filas = valor ? [...renglones, { codigo: '', descripcion: NOMBRE_GRUPO[campo], base: null, importe: valor }] : renglones;
+    } else {
+      const ultimo = delGrupo[delGrupo.length - 1];
+      const resto = delGrupo.slice(0, -1).reduce((s, j) => s + (renglones[j].importe ?? 0), 0);
+      filas = renglones.map((t, j) => (j === ultimo ? { ...t, importe: valor === null ? null : redondear(valor - resto) } : t));
+    }
+    return sinDuda(conTributos(lectura, filas), campo);
+  }
+  return sinDuda({ ...lectura, totales: { ...lectura.totales, [campo]: valor } }, campo);
 }
 
 export function itemVacio(): ItemLeido {
@@ -309,6 +346,56 @@ export function recordarEmpresaDeTrabajo(nombre: string): void {
   try { if (nombre) localStorage.setItem(CLAVE_TRABAJO, nombre); } catch { /* sin almacenamiento */ }
 }
 
+// --- Proveedores (y clientes) corregidos a mano ---------------------------------------
+// «FOC FUELS MARKETING SA» con un CUIT mal leído -> «FGC FUELS MARKETING SA» y su CUIT: lo
+// que se corrige una vez queda para las próximas facturas (por CUIT y por nombre leído).
+const CLAVE_CONTRAPARTES = 'cf-contrapartes-v1';
+type Contraparte = { nombre: string; cuit: string };
+
+const claveNombre = (n: string) => 'n:' + n.normalize('NFD').replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+const claveCuit = (c: string) => 'c:' + soloDigitos(c);
+
+function contrapartes(): Record<string, Contraparte> {
+  try { return JSON.parse(localStorage.getItem(CLAVE_CONTRAPARTES) ?? '{}') ?? {}; } catch { return {}; }
+}
+
+/** Guarda la corrección: lo leído (nombre y CUIT) -> lo correcto. */
+export function recordarContraparte(leidoNombre: string, leidoCuit: string, nombre: string, cuit: string): void {
+  if (!nombre.trim()) return;
+  const m = contrapartes();
+  const valor = { nombre: nombre.trim(), cuit: soloDigitos(cuit) };
+  for (const k of [leidoNombre && claveNombre(leidoNombre), soloDigitos(leidoCuit).length === 11 && claveCuit(leidoCuit),
+    claveNombre(nombre), valor.cuit.length === 11 && claveCuit(valor.cuit)]) if (k) m[k] = valor;
+  // Lo anterior que llevaba a este mismo nombre queda con el CUIT nuevo.
+  for (const k of Object.keys(m)) if (m[k].nombre === valor.nombre) m[k] = valor;
+  try { localStorage.setItem(CLAVE_CONTRAPARTES, JSON.stringify(m)); } catch { /* sin almacenamiento */ }
+}
+
+/** Aplica lo recordado al emisor y al receptor; lo cambiado queda como autocorregido (naranja y aviso). */
+export function aplicarContrapartes(l: LecturaExcel): LecturaExcel {
+  const m = contrapartes();
+  let e = l.encabezado;
+  const corregidos = { ...l.corregidos };
+  const avisos: Verificacion[] = [];
+  for (const lado of ['emisor', 'receptor']) {
+    const nombre = e[lado] ?? '';
+    const cuit = e[`${lado}_cuit`] ?? '';
+    const r = (soloDigitos(cuit).length === 11 ? m[claveCuit(cuit)] : undefined) ?? (nombre ? m[claveNombre(nombre)] : undefined);
+    if (!r || (r.nombre === nombre && (!r.cuit || r.cuit === soloDigitos(cuit)))) continue;
+    e = { ...e, [lado]: r.nombre, ...(r.cuit ? { [`${lado}_cuit`]: r.cuit } : {}) };
+    if (r.nombre !== nombre && nombre) corregidos[lado] = nombre;
+    if (r.cuit && r.cuit !== soloDigitos(cuit) && cuit) corregidos[`${lado}_cuit`] = cuit;
+    avisos.push({
+      campo: lado, nivel: 'aviso', sugerencia: null, titulo: `Autocorregí el ${lado} (como lo corregiste antes)`,
+      mensaje: `Se leyó «${nombre}${cuit ? ' · ' + cuit : ''}» y lo dejé como lo corregiste la otra vez.`,
+      datos: [`Leído ${nombre}`, `Ahora ${r.nombre}`],
+    });
+  }
+  if (!avisos.length) return l;
+  const campos = new Set(avisos.map((v) => v.campo));
+  return { ...l, encabezado: e, corregidos, verificaciones: [...avisos, ...l.verificaciones.filter((v) => !campos.has(v.campo) || v.nivel === 'ok')] };
+}
+
 /** La factura desde el lado de la empresa: en una compra la contraparte es el emisor; en una venta, el receptor. */
 export function adaptar(encabezado: Record<string, string>, empresa: string, operacion: Operacion, origen: FacturaDelEstudio['origen']): FacturaDelEstudio {
   const lado = operacion === 'Compras' ? 'emisor' : 'receptor';
@@ -398,12 +485,48 @@ function leerProductos(): Record<string, string[]> {
   }
 }
 
-/** Primero los que ya usó esa empresa (el último arriba), después todos los de Xubio. */
-export function productosSugeridos(empresa: string, operacion: Operacion): string[] {
+/**
+ * Primero los que ya usó esa empresa (el último arriba), después los de Xubio. Con la
+ * lista traída de Xubio (la de esa empresa y esa operación) se ofrece solo esa; sin
+ * ella, la lista base.
+ */
+export function productosSugeridos(empresa: string, operacion: Operacion, deXubio: string[] = []): string[] {
   const usados = empresa ? (leerProductos()[`${empresa}|${operacion}`] ?? []) : [];
   const clave = (x: string) => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
   const vistos = new Set<string>();
+  if (deXubio.length) {
+    const existen = new Set(deXubio.map(clave));
+    return [...usados.filter((x) => existen.has(clave(x))), ...deXubio].filter((x) => !vistos.has(clave(x)) && !!vistos.add(clave(x)));
+  }
   return [...usados, ...PRODUCTOS_BASE[operacion]].filter((x) => !vistos.has(clave(x)) && !!vistos.add(clave(x)));
+}
+
+/**
+ * Lo sugerido (por la IA o recordado), llevado al producto de Xubio que más se le
+ * parece: el mismo nombre o el que comparte más palabras. Sin parecido, ''.
+ */
+export function productoMasParecido(sugerido: string, lista: string[]): string {
+  const clave = (x: string) =>
+    x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9%.]+/g, ' ').trim();
+  const s = clave(sugerido);
+  if (!s || !lista.length) return '';
+  const igual = lista.find((p) => clave(p) === s);
+  if (igual) return igual;
+  const vacias = new Set(['gastos', 'gasto', 'del', 'los', 'las', 'por', 'con', 'para']);
+  const palabras = (x: string) => x.split(' ').filter((w) => w.length > 2 && !vacias.has(w));
+  const ps = palabras(s);
+  let mejor = '';
+  let puntos = 0;
+  for (const p of lista) {
+    const c = clave(p);
+    const comunes = palabras(c).filter((w) => ps.some((x) => x === w || (x.length > 4 && w.length > 4 && (x.startsWith(w) || w.startsWith(x))))).length;
+    // A igual parecido, el más corto (el genérico: «Combustible» antes que «Combustible exento»).
+    if (comunes > puntos || (comunes === puntos && comunes > 0 && p.length < mejor.length)) {
+      mejor = p;
+      puntos = comunes;
+    }
+  }
+  return puntos ? mejor : '';
 }
 
 /** Lo que el usuario eligió para una descripción: la próxima vez se sugiere eso. */

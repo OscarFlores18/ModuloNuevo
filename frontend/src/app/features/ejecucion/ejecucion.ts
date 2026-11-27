@@ -12,6 +12,7 @@ import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { Ayuda } from '../../core/ui/ayuda';
 import { ToastService } from '../../core/ui/toast';
+import { VistaPrevia, VistaPreviaArchivo } from '../../core/ui/vista-previa';
 import {
   ContextoVentana,
   FaltantesDelExcel,
@@ -83,7 +84,7 @@ function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
  */
 @Component({
   selector: 'app-ejecucion',
-  imports: [RouterLink, Alerta, Ayuda],
+  imports: [RouterLink, Alerta, Ayuda, VistaPrevia],
   templateUrl: './ejecucion.html',
 })
 export class EjecucionPantalla {
@@ -774,6 +775,22 @@ export class EjecucionPantalla {
       if (!s.delete(nombre)) s.add(nombre);
       return s;
     });
+  }
+
+  /** «Vista previa»: el archivo como tablas, en una ventana, sin descargarlo. */
+  protected readonly previa = signal<{ nombre: string; vista: VistaPreviaArchivo | null; cargando: boolean; error: string | null } | null>(null);
+
+  protected async verPrevia(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
+    const e = this.ej();
+    if (!e) return;
+    const nombre = archivo.nombre;
+    this.previa.set({ nombre, vista: null, cargando: true, error: null });
+    try {
+      const vista = await this.api.vistaPrevia(e.id, c.indice, nombre);
+      if (this.previa()?.nombre === nombre) this.previa.set({ nombre, vista, cargando: false, error: null });
+    } catch (err) {
+      if (this.previa()?.nombre === nombre) this.previa.set({ nombre, vista: null, cargando: false, error: mensajeDeError(err, `No se pudo abrir «${nombre}».`) });
+    }
   }
 
   /**

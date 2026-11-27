@@ -1,5 +1,5 @@
 import { LecturaExcel } from '../../core/models';
-import { aNumero, aTexto, conDesglose, conTributos, ivaDeItems, nivelDe, revisarDesglose, sumaItems, usarSugerencia } from './logica';
+import { aNumero, aTexto, aplicarContrapartes, conDesglose, conTotal, conTributos, recordarContraparte, ivaDeItems, nivelDe, productoMasParecido, productosSugeridos, revisarDesglose, sumaItems, usarSugerencia } from './logica';
 
 const base: LecturaExcel = {
   archivo: 'tique.jpg', tipo: 'comprobante', metodo: 'ocr', encabezado: { emisor_cuit: '33714077769' },
@@ -14,6 +14,32 @@ describe('Pasar a Excel', () => {
     expect(aNumero('(12,50)')).toBe(-12.5);
     expect(aNumero('')).toBeNull();
     expect(aTexto(83974.75)).toBe('83.974,75');
+  });
+
+  it('«Usar» en un tributo con renglones cambia el renglón (si no, no hacía nada)', () => {
+    const l = conTributos(base, [{ codigo: '', descripcion: 'Percepción IIBB Bs. As.', base: null, importe: 6709.98 }]);
+    const nueva = usarSugerencia(l, { campo: 'percepcion_iibb', nivel: 'error', mensaje: '', sugerencia: 6717.98 });
+    expect(nueva.tributos[0].importe).toBe(6717.98);
+    expect(nueva.totales['percepcion_iibb']).toBe(6717.98);
+    // Sin renglón de ese grupo, se agrega uno.
+    const interno = conTotal(l, 'impuestos_internos', 90.54);
+    expect(interno.tributos.map((t) => t.importe)).toEqual([6709.98, 90.54]);
+  });
+
+  it('«Usar» el IVA con varias alícuotas ajusta la fila que no da con su base', () => {
+    const l = conDesglose(base, [{ alicuota: 21, base: 1000, importe: 210 }, { alicuota: 10.5, base: 1000, importe: 100 }]);
+    const nueva = conTotal(l, 'iva', 315);
+    expect(nueva.iva_alicuotas.map((f) => f.importe)).toEqual([210, 105]);
+    expect(nueva.totales['iva']).toBe(315);
+  });
+
+  it('el proveedor corregido a mano queda corregido en la próxima factura', () => {
+    localStorage.clear();
+    recordarContraparte('FOC FUELS MARKETING $', '30111111118', 'FGC FUELS MARKETING SA', '30714422113');
+    const l = aplicarContrapartes({ ...base, encabezado: { emisor: 'FOC FUELS MARKETING $', emisor_cuit: '30111111118' } });
+    expect(l.encabezado['emisor']).toBe('FGC FUELS MARKETING SA');
+    expect(l.corregidos?.['emisor']).toBe('FOC FUELS MARKETING $');
+    expect(l.verificaciones.some((v) => !!v.titulo?.startsWith('Autocorregí el emisor'))).toBe(true);
   });
 
   it('«Usar» pone la sugerencia en el campo', () => {
@@ -91,5 +117,17 @@ describe('Pasar a Excel', () => {
     expect(sinInternos.totales['percepcion_iibb']).toBe(6717.98);
     const sinNada = conTributos(sinInternos, []);
     expect(sinNada.totales['percepcion_iibb']).toBeNull();
+  });
+
+  it('lleva lo sugerido al producto de Xubio más parecido', () => {
+    const lista = ['COMBUSTIBLE', 'Combustible exento', 'Gastos de limpieza, libreria y refrigerio', 'HONORARIOS PROFESIONALES'];
+    expect(productoMasParecido('Combustible', lista)).toBe('COMBUSTIBLE');
+    expect(productoMasParecido('Gastos de limpieza, librería y refrigerio', lista)).toBe('Gastos de limpieza, libreria y refrigerio');
+    expect(productoMasParecido('Honorarios', lista)).toBe('HONORARIOS PROFESIONALES');
+    expect(productoMasParecido('Alquiler', lista)).toBe('');
+  });
+
+  it('con la lista de Xubio ofrece solo esa', () => {
+    expect(productosSugeridos('', 'Ventas', ['Servicio de Auditoria', 'Intereses por Mora'])).toEqual(['Servicio de Auditoria', 'Intereses por Mora']);
   });
 });

@@ -381,6 +381,7 @@
                           <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
                           <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
                           <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
+                          <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="verPrevia(c, a)" [attr.aria-label]="'Vista previa de ' + a.nombre" title="Ver el archivo acá, sin descargarlo">Vista previa</button>
                           <button type="button" class="mf-btn mf-btn-chico" [class.mf-btn-suave]="a.tipo !== 'auditoria'" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
                             {{ descargando() === clave ? 'Descargando…' : 'Descargar' }}
                           </button>
@@ -448,3 +449,7 @@
   </aside>
 }
 </div>
+
+@if (previa(); as pv) {
+  <app-vista-previa [titulo]="pv.nombre" [vista]="pv.vista" [cargando]="pv.cargando" [error]="pv.error" (cerrar)="previa.set(null)" />
+}

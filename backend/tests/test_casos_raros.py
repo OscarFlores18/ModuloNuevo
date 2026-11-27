@@ -99,9 +99,34 @@ def test_factura_con_tributos_que_no_cierra_avisa_solo_la_cuenta(gemini_responde
     assert _no_ok(l) == ["Los importes no suman el total"]
 
 
+def _hojas(contenido: bytes) -> dict[str, list[list]]:
+    """Las filas de cada hoja, sea .xlsx o el .xls del modelo de Xubio (fechas como datetime)."""
+    if contenido[:8] != bytes.fromhex("D0CF11E0A1B11AE1"):
+        libro = load_workbook(io.BytesIO(contenido))
+        return {h.title: [list(f) for f in h.iter_rows(values_only=True)] for h in libro.worksheets}
+    import xlrd
+
+    libro = xlrd.open_workbook(file_contents=contenido)
+    salida = {}
+    for h in libro.sheets():
+        filas = []
+        for i in range(h.nrows):
+            fila = []
+            for j in range(h.ncols):
+                c = h.cell(i, j)
+                if c.ctype == xlrd.XL_CELL_EMPTY:
+                    fila.append(None)
+                elif c.ctype == xlrd.XL_CELL_DATE:
+                    fila.append(xlrd.xldate_as_datetime(c.value, libro.datemode))
+                else:
+                    fila.append(c.value)
+            filas.append(fila)
+        salida[h.name] = filas
+    return salida
+
+
 def _numeros(contenido: bytes) -> dict[str, set[float]]:
-    libro = load_workbook(io.BytesIO(contenido))
-    return {h.title: {c for f in h.iter_rows(values_only=True) for c in f if isinstance(c, (int, float))} for h in libro.worksheets}
+    return {n: {c for f in filas for c in f if isinstance(c, (int, float))} for n, filas in _hojas(contenido).items()}
 
 
 def test_factura_con_tributos_llega_al_excel(gemini_responde):
@@ -116,8 +141,9 @@ def test_excel_para_xubio_lleva_los_tributos_renglon_por_renglon(gemini_responde
     impuestos del Excel para Xubio salía vacía."""
     gemini_responde(FACTURA_CON_TRIBUTOS)
     l = a_excel.leer("factura.jpg", _png())
-    hojas = _numeros(a_excel.generar(l, "Compras"))
-    assert {90.54, 6717.98} <= hojas["Impuestos y percepciones"]
+    # Compras: como filas del comprobante en «Hoja1». Ventas: en la hoja aparte.
+    assert {90.54, 6717.98} <= _numeros(a_excel.generar(l, "Compras"))["Hoja1"]
+    assert {90.54, 6717.98} <= _numeros(a_excel.generar(l, "Ventas"))["Impuestos y percepciones"]
 
 
 # --- PDF escaneado: la misma cascada que las fotos -----------------------------------
@@ -397,8 +423,7 @@ def test_vencimiento_de_gemini_se_guarda_y_va_al_excel_para_xubio(gemini_respond
     gemini_responde(datos)
     l = a_excel.leer("factura.jpg", _png())
     assert l.encabezado["vencimiento"] == "02/10/2026"
-    libro = load_workbook(io.BytesIO(a_excel.generar(l, "Compras")))
-    fila = [c for f in libro.worksheets[0].iter_rows(min_row=2, max_row=2, values_only=True) for c in f]
+    fila = _hojas(a_excel.generar(l, "Compras"))["Hoja1"][1]
     assert fila[4].strftime("%d/%m/%Y") == "02/09/2026" and fila[5].strftime("%d/%m/%Y") == "02/10/2026"
 
 

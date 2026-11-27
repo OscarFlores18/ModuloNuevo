@@ -1,4 +1,5 @@
 import { HttpClient, HttpErrorResponse } from '@angular/common/http';
+import type { VistaPreviaArchivo } from '../ui/vista-previa';
 import { Injectable, inject } from '@angular/core';
 import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
@@ -67,6 +68,24 @@ export class ApiService {
         .pipe(errorLegible('No se pudo preparar para Xubio.')),
     );
   }
+  /** Los productos de Xubio de la empresa ya traídos (Compras y Ventas). */
+  productosXubio(cliente: string): Promise<ProductosXubio> {
+    return firstValueFrom(
+      this.http.get<ProductosXubio>(`${this.url}/a-excel/xubio/productos`, { params: { cliente } }).pipe(errorLegible('No se pudieron ver los productos de Xubio.')),
+    );
+  }
+  /** Abre Xubio en la empresa y trae sus productos (tarda: entra con el bot). */
+  traerProductosXubio(cliente: string): Promise<ProductosXubio> {
+    return firstValueFrom(
+      this.http.post<ProductosXubio>(`${this.url}/a-excel/xubio/productos`, { cliente }).pipe(errorLegible('No se pudieron traer los productos de Xubio.')),
+    );
+  }
+  /** El .xls del Conversor a Xubio: Compras o Ventas > Importar > Desde Excel, y aprieta «Importar». */
+  subirExcelAXubio(cliente: string, operacion: 'Compras' | 'Ventas', nombre: string, contenido: string): Promise<ResultadoCargaXubio> {
+    return firstValueFrom(
+      this.http.post<ResultadoCargaXubio>(`${this.url}/a-excel/xubio/subir`, { cliente, operacion, nombre, contenido }).pipe(errorLegible('No se pudo subir a Xubio.')),
+    );
+  }
   /** Lee los comprobantes de PDF, fotos, CSV y planillas (los AUX vuelven marcados para convertirAux). */
   extraerComprobantes(archivos: ArchivoSubido[]): Promise<{ archivos: ArchivoLeido[]; comprobantes: ComprobanteExtraido[] }> {
     return firstValueFrom(
@@ -95,9 +114,9 @@ export class ApiService {
     );
   }
 
-  cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string): Promise<ResultadoCargaXubio> {
+  cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string, original?: { nombre: string }): Promise<ResultadoCargaXubio> {
     return firstValueFrom(
-      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo subir a Xubio.')),
+      this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip, original: !!original, nombre: original?.nombre ?? null }).pipe(errorLegible('No se pudo subir a Xubio.')),
     );
   }
 
@@ -160,6 +179,13 @@ export class ApiService {
   faltantesExcel(id: string, indice: number, operacion: string | null): Promise<{ nombre: string; contenido: string }> {
     const params: Record<string, string> = operacion ? { operacion } : {};
     return firstValueFrom(this.http.get<{ nombre: string; contenido: string }>(`${this.url}/ejecuciones/${id}/clientes/${indice}/faltantes-excel`, { params }));
+  }
+
+  /** Un archivo del control como tablas (Excel, CSV o el .zip de ARCA), para la «Vista previa». */
+  vistaPrevia(id: string, indice: number, nombre: string): Promise<VistaPreviaArchivo> {
+    return firstValueFrom(
+      this.http.get<VistaPreviaArchivo>(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}/vista-previa`).pipe(errorLegible('No se pudo abrir la vista previa.')),
+    );
   }
 
   /** Un archivo del control como Blob, para bajarlo por el navegador (la descarga lleva los encabezados de sesión). */
@@ -238,6 +264,17 @@ export interface ResultadoExportar {
   copiados: string[];
   /** Los que no se pudieron copiar (por ejemplo, abiertos en Excel). */
   fallas: { nombre: string; motivo: string }[];
+}
+
+export interface ProductoXubio {
+  nombre: string;
+  codigo: string;
+}
+
+export interface ProductosXubio {
+  Compras: ProductoXubio[];
+  Ventas: ProductoXubio[];
+  actualizado: string | null;
 }
 
 export interface ResultadoCargaXubio {

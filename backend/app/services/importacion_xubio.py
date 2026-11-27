@@ -77,21 +77,93 @@ def preparar(
     """Corre el bot hasta importar en Xubio. Devuelve el resultado o lanza
     ErrorImportacion. Si no quedó claro que importó, la ventana de Chrome queda
     abierta en otro hilo para que la persona revise."""
+    _validar(cliente, operacion, clientes)
+    nombre_csv, contenido = csv_de_operacion(zip_bytes, operacion)
+    return _correr(cliente, operacion, f"{Path(nombre_csv).stem}.zip", zip_para_xubio(nombre_csv, contenido),
+                   "importar_arca", clientes, credenciales, log)
+
+
+def nombre_original(nombre: str, contenido: bytes) -> str:
+    """El nombre con que se sube lo que exportó ARCA: el mismo que le puso ARCA. Solo
+    los controles viejos lo guardaban renombrado («Mis comprobantes - … .csv»): ahí
+    se recupera el de ARCA, que es el del CSV de adentro con .zip."""
+    nombre = Path(nombre).name
+    if nombre.lower().startswith("comprobantes_consulta_csv_"):
+        return nombre
+    try:
+        with zipfile.ZipFile(io.BytesIO(contenido)) as z:
+            adentro = [n for n in z.namelist() if n.lower().endswith(".csv")]
+    except zipfile.BadZipFile as exc:
+        raise ErrorImportacion("El archivo de ARCA no es un .zip válido: volvé a correr el control.") from exc
+    if len(adentro) != 1:
+        raise ErrorImportacion("El .zip de ARCA tiene que traer un solo CSV: volvé a correr el control.")
+    return f"{Path(adentro[0]).stem}.zip"
+
+
+def subir_original(
+    cliente: str,
+    operacion: str,
+    nombre: str,
+    contenido: bytes,
+    clientes: ClientesRepository,
+    credenciales: CredencialesXubioRepository,
+    log=logger.info,
+) -> dict:
+    """El .zip que exportó ARCA en el control, sin abrirlo ni rearmarlo (Xubio no
+    acepta otro), en «Importar desde Mis Comprobantes (ARCA)»."""
+    _validar(cliente, operacion, clientes)
+    return _correr(cliente, operacion, nombre_original(nombre, contenido), contenido,
+                   "importar_arca", clientes, credenciales, log)
+
+
+def subir_excel(
+    cliente: str,
+    operacion: str,
+    nombre: str,
+    xls: bytes,
+    clientes: ClientesRepository,
+    credenciales: CredencialesXubioRepository,
+    log=logger.info,
+) -> dict:
+    """El .xls del Conversor (modelo de Xubio) en Compras o Ventas > Importar >
+    Desde Excel, en la empresa del cliente. Aprieta «Importar» (la persona ya
+    confirmó en la app)."""
+    _validar(cliente, operacion, clientes)
+    if not xls.startswith(bytes.fromhex("D0CF11E0")):
+        raise ErrorImportacion("Xubio pide el Excel en formato 2003 (.xls): generalo de nuevo desde el Conversor.")
+    nombre = Path(nombre).name or f"{operacion}.xls"
+    if not nombre.lower().endswith(".xls"):
+        nombre = f"{Path(nombre).stem}.xls"
+    return _correr(cliente, operacion, nombre, xls, "importar_excel", clientes, credenciales, log)
+
+
+def _validar(cliente: str, operacion: str, clientes: ClientesRepository) -> None:
     if operacion not in ("Ventas", "Compras"):
         raise ErrorImportacion("Operación inválida: Ventas o Compras.")
     if cliente not in clientes.listar_publico():
         raise ErrorImportacion(f"«{cliente}» no está en Clientes.", 404)
     if ejecuciones_srv.activa() is not None:
         raise ErrorImportacion("Hay un control en curso: esperá a que termine para usar Xubio.", 409)
-    nombre_csv, contenido = csv_de_operacion(zip_bytes, operacion)
+
+
+def _correr(
+    cliente: str,
+    operacion: str,
+    nombre_archivo: str,
+    contenido: bytes,
+    accion: str,
+    clientes: ClientesRepository,
+    credenciales: CredencialesXubioRepository,
+    log,
+) -> dict:
     cred = ServicioCredenciales(clientes, credenciales).xubio()
 
     if not _en_curso.acquire(blocking=False):
         raise ErrorImportacion("Ya hay una carga en Xubio abierta: cerrá esa ventana de Chrome primero.", 409)
 
     carpeta = Path(tempfile.mkdtemp(prefix="xubio-importar-"))
-    ruta_zip = carpeta / f"{Path(nombre_csv).stem}.zip"
-    ruta_zip.write_bytes(zip_para_xubio(nombre_csv, contenido))
+    ruta_zip = carpeta / nombre_archivo
+    ruta_zip.write_bytes(contenido)
 
     listo = threading.Event()
     salida: dict = {}
@@ -108,9 +180,7 @@ def preparar(
             # A la vista: la persona ve lo que hace el bot.
             with SesionXubio(cred.usuario, cred.clave, log=anotar, visible=True) as sesion:
                 sesion.cambiar_empresa(cliente)
-                if importar:
-                    salida.update(sesion.importar_arca(operacion, str(ruta_zip)))
-                else:
+                if accion == "importar_arca" and not importar:
                     # Freno: el archivo queda cargado y «Importar» lo aprieta la persona.
                     salida.update(sesion.preparar_importacion_arca(operacion, str(ruta_zip)))
                     salida.update(importado=None, frenado=True, mensaje=(
@@ -119,6 +189,8 @@ def preparar(
                         else "Xubio no habilitó «Importar» con este archivo: revisalo en la ventana de Chrome."
                     ))
                     anotar(f"      [INFO]: {salida['mensaje']}")
+                else:
+                    salida.update(getattr(sesion, accion)(operacion, str(ruta_zip)))
                 listo.set()
                 if salida.get("importado") is not True:
                     # Freno, error o respuesta dudosa: la ventana queda para que la persona mire.

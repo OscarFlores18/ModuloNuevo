@@ -1,4 +1,5 @@
-"""Paso 4, exportar: la `Lectura` ya revisada a un .xlsx.
+"""Paso 4, exportar: la `Lectura` ya revisada a Excel. Con compra o venta, el .xls del
+modelo de importación de Xubio; si no, un .xlsx con lo leído.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from ..modelo import TIPOS, cuit_valido, fecha as fecha_iso, importe, nombre_tip
 from ..texto_factura import _tipo as tipo_del_texto
 from ..texto_factura import cuits as cuits_del_texto
 from .datos import ETIQUETAS_ENCABEZADO, ETIQUETAS_TOTALES, Hoja, Item, Lectura, TOTALES
-from .normalizar import _alicuota_de, _fmt_alicuota, totales_efectivos
+from .normalizar import _alicuota_de, _cantidad, _fmt_alicuota, agrupar_items, totales_efectivos
 from .validar import verificar
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,8 @@ def nombre_excel(lectura: Lectura, operacion: str | None = None, empresa: str = 
     cliente = limpiar_nombre(empresa).rstrip(". ") or base
     fecha = lectura.encabezado.get("fecha", "")
     periodo = f" - {mes_anio(fecha)}" if re.fullmatch(r"\d{2}/\d{2}/\d{4}", fecha) else ""
-    return f"Conversor de facturas {operacion} con AFIP{periodo} - {cliente}.xlsx"
+    # El modelo de Xubio es .xls (Excel 97-2003).
+    return f"Conversor de facturas {operacion} con AFIP{periodo} - {cliente}.xls"
 
 
 class Extras(BaseModel):
@@ -45,6 +47,9 @@ class Extras(BaseModel):
     productos: list[str] = Field(default_factory=list, max_length=2000)
     centros: list[str] = Field(default_factory=list, max_length=2000)
     dto: list[float | None] = Field(default_factory=list, max_length=2000)
+    # Un solo producto para todo el detalle: una fila por alícuota y los artículos en
+    # «PRODUCTOOBSERVACION». Vacío: una fila por ítem.
+    agrupar: str = Field(default="", max_length=60)
 
 
 # El modelo de Xubio «Importar comprobantes» (modelo-importacion-ventas): una fila con
@@ -54,6 +59,25 @@ COLUMNAS_IMPORTACION = [
     "COMPROBANTEASOCIADO", "MONEDA", "COTIZACION", "OBSERVACIONES", "PRODUCTOSERVICIO",
     "CENTRODECOSTO", "PRODUCTOOBSERVACION", "CANTIDAD", "PRECIO", "DESCUENTO", "IMPORTE", "IVA",
 ]
+
+
+# El modelo de Xubio para compras (ej-importacion-compras.xls, hoja «Hoja1»): sin
+# descuento ni comprobante asociado, con fecha fiscal y exento/no gravado; los impuestos
+# internos y las percepciones van como filas más, con su nombre en PRODUCTOSERVICIOPERCEPCION.
+COLUMNAS_COMPRAS = [
+    "NUMERODECONTROL", "PROVEEDOR", "TIPO", "NUMERO", "FECHA", "VENCIMIENTODELPAGO", "MONEDA",
+    "COTIZACION", "FECHAFISCAL", "OBSERVACIONES", "PRODUCTOSERVICIOPERCEPCION", "CENTRODECOSTO",
+    "PRODUCTOOBSERVACION", "CANTIDAD", "PRECIO", "IMPORTE", "IVA", "EXENOGRAV",
+]
+# Nombre de cada impuesto en Xubio. «Impuestos Internos» es el del modelo; los otros
+# tienen que coincidir con los que tiene el estudio en Xubio.
+TRIBUTOS_COMPRAS = (
+    ("impuestos_internos", "Impuestos Internos"),
+    ("percepcion_iibb", "Percepción IIBB Buenos Aires"),
+    ("otros_tributos", "Otros Tributos"),
+)
+# Tique Factura A / B / C (081, 082, 111): en compras, Xubio los importa como tipo 5.
+TIQUES_FACTURA = {81, 82, 111}
 
 
 def _tipo_xubio(tipo: str) -> int | str:
@@ -85,6 +109,57 @@ def _fecha_xubio(texto: str):
         return texto or None
 
 
+def _tipo_compra(tipo: str) -> int | str:
+    m = re.match(r"\s*(\d+)", tipo or "")
+    return 5 if m and int(m.group(1)) in TIQUES_FACTURA else _tipo_xubio(tipo)
+
+
+def _precio_neto(cantidad: float | None, importe: float | None, observacion: str | None) -> tuple:
+    """PRECIO x CANTIDAD tiene que dar el IMPORTE (neto), no el precio con IVA de la foto.
+    Si el unitario no da justo con dos decimales, va como 1 con la cantidad en la observación."""
+    cant = cantidad or 1
+    if importe is None:
+        return cant, None, observacion
+    unitario = round(importe / cant, 2)
+    if round(unitario * cant, 2) == round(importe, 2):
+        return cant, unitario, observacion
+    return 1, importe, f"{_cantidad(cant)}x {observacion or ''}".strip()
+
+
+def filas_compras(lectura: Lectura, extras: Extras | None = None) -> list[list]:
+    """Cabecera, detalle (o el detalle agrupado) y una fila por cada impuesto o percepción."""
+    extras = extras or Extras()
+    e, t = lectura.encabezado, totales_efectivos(lectura)
+    fecha = _fecha_xubio(e.get("fecha", ""))
+    vence = _fecha_xubio(extras.vencimiento or e.get("vencimiento", "")) or fecha
+    filas = [[1, e.get("emisor", ""), _tipo_compra(e.get("tipo", "")), _numero_xubio(lectura), fecha, vence,
+              "pesos argentinos", "", fecha, Path(lectura.archivo).stem[:200]] + [None] * 8]
+    detalle = []  # (producto, centro, observación, cantidad, precio, importe, alícuota)
+    if extras.agrupar.strip() and lectura.items:
+        centro = next((c for c in extras.centros if c), None)
+        detalle = [(extras.agrupar.strip(), centro, obs, 1, suma, suma, a) for a, suma, obs in agrupar_items(lectura.items)]
+    elif lectura.items:
+        for n, it in enumerate(lectura.items):
+            def de(lista, defecto=None):
+                return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
+            cant, precio, obs = _precio_neto(it.cantidad, it.importe, it.descripcion or None)
+            detalle.append((de(extras.productos, it.producto or it.codigo or it.descripcion[:60]), de(extras.centros),
+                            obs, cant, precio, it.importe, it.alicuota))
+    elif t.get("neto_gravado"):
+        neto = t["neto_gravado"]
+        detalle = [(extras.agrupar.strip() or "Según factura", None, None, 1, neto, neto, _alicuota_de(neto, t.get("iva") or 0.0))]
+    # Lo exento y no gravado va en la primera fila del detalle.
+    exento = round((t.get("no_gravado") or 0) + (t.get("exento") or 0), 2) or None
+    for n, (prod, centro, obs, cant, precio, importe, alicuota) in enumerate(detalle):
+        filas.append([1] + [None] * 9 + [prod, centro, obs, cant, precio, importe, alicuota, exento if n == 0 else None])
+    internos_items = round(sum(i.impuestos_internos or 0 for i in lectura.items), 2)
+    for campo, nombre in TRIBUTOS_COMPRAS:
+        valor = t.get(campo) or (internos_items if campo == "impuestos_internos" else None)
+        if valor:
+            filas.append([1] + [None] * 9 + [nombre, None, None, 1, None, valor, None, None])
+    return filas
+
+
 def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> list[list]:
     extras = extras or Extras()
     e, t = lectura.encabezado, lectura.totales
@@ -100,6 +175,11 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
         alicuota=_alicuota_de(t.get("neto_gravado") or 0.0, t.get("iva") or 0.0),
     )]
     filas = [cabecera]
+    if extras.agrupar.strip() and lectura.items:
+        centro = next((c for c in extras.centros if c), None)
+        for alicuota, suma, detalle in agrupar_items(lectura.items):
+            filas.append([1] + [None] * 9 + [extras.agrupar.strip(), centro, detalle, 1, suma, None, suma, alicuota])
+        return filas
     for n, it in enumerate(items):
         def de(lista, defecto=None):
             return lista[n] if n < len(lista) and lista[n] not in ("", None) else defecto
@@ -110,54 +190,61 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
     return filas
 
 
-def _hoja_impuestos(wb, lectura: Lectura) -> None:
-    """El modelo de Xubio no trae columnas para impuestos internos ni percepciones: van
-    en otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos».
+def _hoja_impuestos(lectura: Lectura) -> list[list]:
+    """Ventas: el modelo no trae columnas para impuestos internos ni percepciones; van en
+    otra hoja (la importación lee la primera) para cargarlos en «Percepciones e Impuestos».
     Con los totales efectivos: si los tributos vinieron renglón por renglón, salen de ahí."""
     t = totales_efectivos(lectura)
     internos = [(n + 1, i.descripcion, i.impuestos_internos) for n, i in enumerate(lectura.items) if i.impuestos_internos]
-    if not (internos or t.get("impuestos_internos") or t.get("percepcion_iibb") or t.get("otros_tributos")):
-        return
-    ws = wb.create_sheet("Impuestos y percepciones")
-    ws.append(["CONCEPTO", "ITEM", "DETALLE", "IMPORTE"])
-    for n, desc, v in internos:
-        ws.append(["Impuestos internos", n, desc, v])
+    filas: list[list] = [["Impuestos internos", n, desc, v] for n, desc, v in internos]
     if t.get("impuestos_internos") and not internos:
-        ws.append(["Impuestos internos", None, "Total de la factura", t["impuestos_internos"]])
+        filas.append(["Impuestos internos", None, "Total de la factura", t["impuestos_internos"]])
     if t.get("percepcion_iibb"):
-        ws.append(["Percepción IIBB Bs. As.", None, None, t["percepcion_iibb"]])
+        filas.append(["Percepción IIBB Bs. As.", None, None, t["percepcion_iibb"]])
     if t.get("otros_tributos"):
-        ws.append(["Otros tributos", None, None, t["otros_tributos"]])
-    for celda in ws["D"][1:]:
-        celda.number_format = "#,##0.00"
-    for letra, ancho in zip("ABCD", (26, 8, 40, 14)):
-        ws.column_dimensions[letra].width = ancho
+        filas.append(["Otros tributos", None, None, t["otros_tributos"]])
+    return [["CONCEPTO", "ITEM", "DETALLE", "IMPORTE"], *filas] if filas else []
 
 
-def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> bytes:
-    from openpyxl import Workbook
+def _xls(hojas: list[tuple[str, list[list], set[int], set[int]]]) -> bytes:
+    """Excel 97-2003 (.xls), como los modelos de Xubio: (nombre, filas, columnas de
+    fecha, columnas de importe)."""
+    import xlwt
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Sheet0"
-    encabezado = list(COLUMNAS_IMPORTACION)
-    if operacion == "Compras":
-        encabezado[1], encabezado[5] = "PROVEEDOR", "VENCIMIENTODELPAGO"
-    ws.append(encabezado)
-    for fila in filas_importacion(lectura, operacion, extras):
-        ws.append(fila)
-    for letra in "EF":
-        for celda in ws[letra][1:]:
-            celda.number_format = "dd/mm/yyyy"
-    for letra in "OPQ":
-        for celda in ws[letra][1:]:
-            celda.number_format = "#,##0.00"
-    for i, c in enumerate(encabezado):
-        ws.column_dimensions[chr(65 + i)].width = max(12, len(c) + 2)
-    _hoja_impuestos(wb, lectura)
+    fecha = xlwt.easyxf(num_format_str="dd/mm/yyyy")
+    numero = xlwt.easyxf(num_format_str="#,##0.00")
+    negrita = xlwt.easyxf("font: bold on")
+    wb = xlwt.Workbook(encoding="utf-8")
+    for nombre, filas, fechas, numeros in hojas:
+        ws = wb.add_sheet(nombre)
+        for i, fila in enumerate(filas):
+            for j, valor in enumerate(fila):
+                if valor is None or valor == "":
+                    continue
+                if i == 0:
+                    ws.write(i, j, valor, negrita)
+                elif j in fechas and isinstance(valor, datetime):
+                    ws.write(i, j, valor, fecha)
+                elif j in numeros and isinstance(valor, (int, float)):
+                    ws.write(i, j, valor, numero)
+                else:
+                    ws.write(i, j, valor)
+        for j, titulo in enumerate(filas[0] if filas else []):
+            ws.col(j).width = 256 * max(12, len(str(titulo)) + 2)
     buffer = io.BytesIO()
     wb.save(buffer)
     return buffer.getvalue()
+
+
+def excel_importacion(lectura: Lectura, operacion: str, extras: Extras | None = None) -> bytes:
+    """El .xls con el modelo de importación de Xubio (Compras: «Hoja1»; Ventas: «Sheet0»)."""
+    if operacion == "Compras":
+        # En compras los impuestos internos y las percepciones van como filas del comprobante.
+        return _xls([("Hoja1", [COLUMNAS_COMPRAS, *filas_compras(lectura, extras)], {4, 5, 8}, {14, 15, 17})])
+    hojas = [("Sheet0", [COLUMNAS_IMPORTACION, *filas_importacion(lectura, operacion, extras)], {4, 5}, {14, 15, 16})]
+    if impuestos := _hoja_impuestos(lectura):
+        hojas.append(("Impuestos y percepciones", impuestos, set(), {3}))
+    return _xls(hojas)
 
 
 def generar(lectura: Lectura, operacion: str | None = None, extras: Extras | None = None) -> bytes:

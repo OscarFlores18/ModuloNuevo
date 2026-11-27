@@ -470,8 +470,8 @@ export class ConvertirPantalla {
       return resto;
     });
     try {
-      // Solo el .zip de esta operación (un único CSV en la raíz).
-      const res = await this.api.cargarEnXubio(empresa, op, zip.contenido);
+      // El .zip de esta operación; si vino del control, el de ARCA tal cual.
+      const res = await this.api.cargarEnXubio(empresa, op, zip.contenido, zip.original ? { nombre: zip.nombre } : undefined);
       const dijo = res.mensaje ? ` Xubio: «${res.mensaje}».` : '';
       if (res.frenado) {
         // Freno: el archivo quedó cargado y «Importar» lo aprieta la persona. No se

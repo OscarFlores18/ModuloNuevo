@@ -752,6 +752,8 @@ class SesionArca:
         fecha_hasta_actual = fecha_hasta
         excels_parciales: list[str] = []
         csv_parciales: list[str] = []
+        # Lo que exporta ARCA con «CSV» (un .zip), guardado tal cual: es lo que se sube a Xubio.
+        originales_csv: list[str] = []
         primer_vuelta = True
         reintentos_periodo = 0
 
@@ -867,10 +869,10 @@ class SesionArca:
                             with servicio.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info_csv:
                                 boton_csv.click()
                             download_c = download_info_csv.value
-                            nombre_temp_csv = f"ParcialCSV_{len(csv_parciales)+1}_{download_c.suggested_filename}"
-                            ruta_parcial_csv = os.path.join(directorio_guardado, nombre_temp_csv)
-                            download_c.save_as(ruta_parcial_csv)
-                            csv_parciales.append(ruta_parcial_csv)
+                            # Con el nombre y el contenido que puso ARCA: Xubio no acepta otro.
+                            ruta_original = _ruta_libre(directorio_guardado, download_c.suggested_filename)
+                            download_c.save_as(ruta_original)
+                            originales_csv.append(ruta_original)
                         else:
                             self.log("      [AVISO]: ARCA no mostró el botón «CSV»: no se bajó el CSV para Xubio.")
                     except Exception as exc:
@@ -963,6 +965,14 @@ class SesionArca:
                     "movimientos, volvé a correr el control."
                 )
 
+        if originales_csv:
+            resultado.archivos.extend(originales_csv)
+            if len(originales_csv) > 1:
+                self.log(
+                    f"      [AVISO]: ARCA entregó el CSV {tipo_comprobante} en {len(originales_csv)} partes "
+                    "(el período se pidió en tramos): para Xubio hay que subir cada una."
+                )
+
         if bajar_csv and csv_parciales:
             nombre_csv_final = (
                 f"Mis comprobantes - {tipo_comprobante} - {cliente_limpio} - "
@@ -994,6 +1004,17 @@ class SesionArca:
 
         servicio.wait_for_timeout(1500)
         return resultado
+
+
+def _ruta_libre(carpeta: str, nombre: str) -> str:
+    """``carpeta/nombre``; si ya existe (dos tramos en el mismo minuto), «nombre (2)»."""
+    ruta = os.path.join(carpeta, nombre)
+    base, ext = os.path.splitext(nombre)
+    n = 2
+    while os.path.exists(ruta):
+        ruta = os.path.join(carpeta, f"{base} ({n}){ext}")
+        n += 1
+    return ruta
 
 
 def ejecutar_extraccion(

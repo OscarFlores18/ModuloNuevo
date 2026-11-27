@@ -944,3 +944,91 @@ def _variantes_importe(v: float) -> list[float]:
 
 def _fmt_alicuota(a: float | None) -> str:
     return "" if a is None else f"{a:g}".replace(".", ",") + "%"
+
+
+# --- Autocorrecciones que se avisan (quedan en «corregidos») ---------------------------
+
+_BASURA_NOMBRE = re.compile(r"[$#@*|~^_=+<>{}\[\]\/%!?¡¿;:]")
+_SOCIEDAD = re.compile(r"\b(S\.?\s?A\.?(\s?U\.?)?|S\.?\s?R\.?\s?L\.?|S\.?\s?A\.?\s?S\.?|S\.?\s?C\.?\s?A\.?|S\.?\s?H\.?)\s*$", re.I)
+_MENCIONA_IIBB = re.compile(r"\b(?:iibb|ii\.?\s*bb|ing(?:resos)?\.?\s*brutos|arba)\b", re.I)
+
+
+def _esqueleto(nombre: str) -> str:
+    """Las letras del nombre sin sociedad ni basura («FOC FUELS MARKETING»)."""
+    sin = _SOCIEDAD.sub("", _BASURA_NOMBRE.sub(" ", nombre))
+    return re.sub(r"[^A-Z0-9]", "", sin.upper())
+
+
+def completar_tributos(lectura: Lectura) -> None:
+    """Si el total no cierra y hay un solo tributo leído (percepción u otros), ese tributo
+    es lo que falta para el total (6.709,98 leído -> 6.717,98). Si la factura nombra
+    Ingresos Brutos y solo se leyó «Otros tributos», es la percepción IIBB. Con los
+    tributos renglón por renglón, lo mismo con el único renglón."""
+    if lectura.tributos:
+        if len(lectura.tributos) != 1 or lectura.tributos[0].importe is None:
+            return
+        t = totales_efectivos(lectura)
+        fila = lectura.tributos[0]
+        campo = grupo_tributo(fila)
+        if t.get("total") is None or _cierra(t):
+            return
+        resto = round(t["total"] - sum(t.get(k) or 0 for k in TOTALES if k not in ("total", campo)), 2)
+        if resto > 0 and abs(resto - fila.importe) <= 0.1 * resto:
+            lectura.corregidos[campo] = _fmt(fila.importe)
+            fila.importe = resto
+            lectura.totales[campo] = resto
+        return
+    t = lectura.totales
+    antes = {k: t.get(k) for k in ("percepcion_iibb", "otros_tributos")}
+    iibb, otros = t.get("percepcion_iibb") or 0, t.get("otros_tributos") or 0
+    if otros and not iibb and _MENCIONA_IIBB.search(lectura.texto or "") \
+            and not re.search(r"\b(caba|agip|ciudad\s+aut)", lectura.texto or "", re.I):
+        t["percepcion_iibb"], t["otros_tributos"] = otros, 0.0
+        iibb, otros = otros, 0
+    if t.get("total") is not None and not _cierra(t) and bool(iibb) != bool(otros):
+        campo = "percepcion_iibb" if iibb else "otros_tributos"
+        resto = round(t["total"] - sum(t.get(k) or 0 for k in TOTALES if k not in ("total", campo)), 2)
+        if resto > 0 and abs(resto - t[campo]) <= 0.1 * resto:
+            t[campo] = resto
+    for campo, valor in antes.items():
+        if valor and t.get(campo) != valor:
+            lectura.corregidos[campo] = _fmt(valor)
+    if antes["otros_tributos"] and not antes["percepcion_iibb"] and t.get("percepcion_iibb"):
+        lectura.corregidos.pop("otros_tributos", None)
+        lectura.corregidos["percepcion_iibb"] = "Otros tributos " + _fmt(antes["otros_tributos"])
+
+
+def limpiar_nombres(lectura: Lectura) -> None:
+    """Emisor y receptor que cada pasada leyó distinto solo por caracteres sueltos
+    («FOC FUELS MARKETING $» / «… SA»): se queda con el más limpio (sin símbolos y con
+    la sociedad), saca la duda y guarda lo leído en «corregidos»."""
+    for campo in ("emisor", "receptor"):
+        valores = lectura.dudas.get(campo)
+        if not valores or len(valores) < 2:
+            continue
+        base = _esqueleto(valores[0])
+        if not base or any(difflib.SequenceMatcher(None, base, _esqueleto(v)).ratio() < 0.85 for v in valores[1:]):
+            continue
+        limpio = min(valores, key=lambda v: (len(_BASURA_NOMBRE.findall(v)), not _SOCIEDAD.search(v), -len(v)))
+        leido = lectura.encabezado.get(campo, "")
+        if leido == limpio:
+            leido = next(v for v in valores if v != limpio)
+        lectura.encabezado[campo] = limpio
+        lectura.corregidos[campo] = leido
+        del lectura.dudas[campo]
+
+
+def _cantidad(c: float | None) -> str:
+    c = 1 if c is None else c
+    return str(int(c)) if float(c).is_integer() else f"{c:.3f}".rstrip("0").replace(".", ",")
+
+
+def agrupar_items(items: list[Item]) -> list[tuple[float | None, float, str]]:
+    """Por alícuota: (alícuota, suma de los importes netos, «1x AGUA…; 2x ENTRAÑA»), con
+    las cantidades leídas. El IVA de cada alícuota queda igual."""
+    grupos: dict[float | None, tuple[float, list[str]]] = {}
+    for it in items:
+        suma, detalle = grupos.get(it.alicuota, (0.0, []))
+        detalle.append(f"{_cantidad(it.cantidad)}x {it.descripcion.strip() or 'Sin descripción'}")
+        grupos[it.alicuota] = (round(suma + (it.importe or 0), 2), detalle)
+    return [(a, suma, "; ".join(d)) for a, (suma, d) in grupos.items()]

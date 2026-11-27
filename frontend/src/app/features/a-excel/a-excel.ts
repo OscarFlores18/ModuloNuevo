@@ -1,8 +1,9 @@
-import { Component, HostListener, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Component, HostListener, OnDestroy, computed, effect, inject, signal } from '@angular/core';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
 import { descargarBlob } from '../../core/descargar';
 import { AlicuotaIva, ItemLeido, LecturaExcel, NivelVerificacion, TributoLeido, Verificacion, mensajeDeError } from '../../core/models';
-import { ApiService } from '../../core/services/api.service';
+import { ApiService, ProductosXubio } from '../../core/services/api.service';
+import { AlertasService } from '../../core/ui/alertas.service';
 import { Alerta } from '../../core/ui/alerta';
 import { Ayuda } from '../../core/ui/ayuda';
 import { Encabezado } from '../../core/ui/encabezado';
@@ -12,8 +13,21 @@ import { ToastService } from '../../core/ui/toast';
 import {
   ACEPTA, ALICUOTAS_IVA, CAMPOS_ENCABEZADO, CAMPOS_TOTALES, EmpresaEstudio, FORMATOS_A_EXCEL, FacturaDelEstudio, Operacion, aNumero, aTexto, adaptar, contar,
   cuitConGuiones, detectarEmpresa, empresaDeTrabajo, recordarEmpresaDeTrabajo, itemVacio, nivelDe, sinCae, sinDuda, sumaItems, usarSugerencia,
-  alicuotaLibre, conDesglose, conTributos, grupoTributo, nombreAlicuota, productosSugeridos, revisarDesglose,
+  alicuotaLibre, conDesglose, conTotal, conTributos, grupoTributo, nombreAlicuota, productosSugeridos, revisarDesglose,
+  aplicarContrapartes, recordarContraparte, productoMasParecido, productoRecordado, recordarProducto, recordarProductoDeItem,
 } from './logica';
+import { borrar, borrarTodo, conDemora, guardar, recuperar } from './guardado';
+
+/** Lo elegido en pantalla para cada archivo que no sale de la lectura. */
+interface Extras {
+  /** El producto de Xubio de cada ítem, elegido a mano (vacío: el sugerido). */
+  productos: string[];
+  /** Un solo producto para todo el detalle; vacío: uno por ítem; sin definir: según la operación. */
+  agrupar?: string;
+}
+
+type Vista = { url: string; seguro: SafeResourceUrl; tipo: 'imagen' | 'pdf' };
+type Elegido = Record<string, { empresa: string; operacion: Operacion | null }>;
 
 /** Los totales que salen de las filas de «Otros tributos». */
 const TRIBUTOS = ['impuestos_internos', 'percepcion_iibb', 'otros_tributos'];
@@ -197,6 +211,21 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .cf-tabla tfoot td { padding: 10px 6px; border-bottom: 0; background: var(--cf-fondo); font-weight: 600; }
     .cf-tabla-hoja td { white-space: nowrap; }
     .cf-mas-filas { margin: 0; padding: 8px 16px; font-size: .82rem; color: var(--cf-tenue); }
+    .cf-agrupar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 16px; border-bottom: 1px solid var(--cf-borde); background: var(--cf-acento-suave); font-size: .86rem; }
+    .cf-agrupar label { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+    .cf-agrupar .cf-in { width: 300px; max-width: 100%; height: 32px; font-weight: 600; }
+    .cf-agrupar small { color: var(--cf-suave); }
+    .cf-grupo-t { margin: 8px 0 2px; font-weight: 600; font-size: .86rem; } .cf-grupo-t.error { color: var(--cf-error); } .cf-grupo-t.aviso { color: var(--cf-aviso); }
+    .cf-lista-xubio { margin: 0; padding: 6px 16px; color: var(--cf-suave, #64748b); font-size: .82rem; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .cf-link { border: 0; background: none; padding: 0; color: #2563eb; text-decoration: underline; cursor: pointer; font: inherit; } .cf-link:disabled { color: #94a3b8; cursor: default; }
+    .cf-auto-aviso { margin: 0; padding: 8px 16px; border-left: 3px solid #f59e0b; background: var(--cf-aviso-fondo); color: var(--cf-aviso); font-size: .84rem; }
+    /* El menú de productos: fijo, para que no lo corte el scroll de la tabla. */
+    .cf-menu { position: fixed; z-index: 50; display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; padding: 6px; border: 1px solid var(--cf-borde-in); border-radius: 10px; background: #fff; box-shadow: 0 10px 28px rgba(15, 23, 42, .18); }
+    .cf-menu button { padding: 6px 10px; border: 0; border-radius: 6px; background: none; color: var(--cf-texto); text-align: left; font-size: .86rem; cursor: pointer; }
+    .cf-menu button:hover { background: var(--cf-acento-suave); color: var(--cf-acento); }
+    .cf-menu button.activo { background: var(--cf-acento); color: #fff; }
+    .cf-menu-t { margin: 6px 10px 2px; font-size: .72rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--cf-tenue); }
+    .cf-menu-vacio { margin: 4px 10px; font-size: .82rem; color: var(--cf-tenue); }
 
     .cf-lectura { font-size: .86rem; color: var(--cf-suave); }
     .cf-lectura summary { cursor: pointer; padding: 4px 0; }
@@ -300,9 +329,9 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
           @if (!l.error) {
             <div class="cf-res-acciones">
               @if (l.tipo === 'comprobante') {
-                <button type="button" class="mf-btn mf-btn-suave" (click)="prepararXubio()" [disabled]="!estudio() || preparando() || verificando()" [attr.aria-busy]="preparando()"
-                  [title]="estudio() ? 'Arma el archivo para «Importar desde Mis Comprobantes (ARCA)» de Xubio' : 'Elegí primero la empresa'">
-                  @if (preparando()) { <span class="cf-spinner" aria-hidden="true"></span> Preparando… } @else { Preparar para Xubio }
+                <button type="button" class="mf-btn mf-btn-suave" (click)="subirAXubio()" [disabled]="!estudio() || subiendo() || generando() || verificando()" [attr.aria-busy]="subiendo()"
+                  [title]="estudio() ? 'Arma el Excel y lo importa en ' + estudio()!.empresa + ' (' + estudio()!.operacion + ' > Importar > Desde Excel)' : 'Elegí primero la empresa'">
+                  @if (subiendo()) { <span class="cf-spinner" aria-hidden="true"></span> Subiendo a Xubio… } @else { Subir a Xubio }
                 </button>
               }
               <button type="button" class="mf-btn" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
@@ -339,31 +368,34 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                 <p class="cf-estado-t">✓ Todo cuadra{{ l.tipo === 'comprobante' ? ': las cuentas dan y no falta nada.' : '.' }}</p>
               } @else {
                 <p class="cf-estado-t">{{ aMirar().length }} {{ aMirar().length === 1 ? 'cosa para revisar' : 'cosas para revisar' }}</p>
-                <ul>
-                  @for (v of aMirar(); track $index) {
-                    @let c = corta(v);
-                    <li [class]="v.nivel">
-                      <span class="cf-ic" aria-hidden="true">{{ v.nivel === 'error' ? '✕' : '!' }}</span>
-                      <p [title]="v.mensaje">
-                        <span class="sr-only">{{ v.nivel === 'error' ? 'Error: ' : 'Revisar: ' }}</span>{{ c.titulo || c.mensaje }}
-                        @if (c.datos?.length) { <span class="cf-datos"> · {{ c.datos!.join(' · ') }}</span> }
-                      </p>
-                      @for (o of c.opciones ?? []; track o) {
-                        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">{{ o }}</button>
-                      }
-                      @if (v.sugerencia !== null && v.sugerencia !== undefined) {
-                        <button type="button" class="mf-btn mf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
-                      }
-                    </li>
-                  }
-                </ul>
+                @for (g of gruposAMirar(); track g.titulo) {
+                  <p class="cf-grupo-t" [class]="g.nivel">{{ g.titulo }}</p>
+                  <ul>
+                    @for (v of g.items; track $index) {
+                      @let c = corta(v);
+                      <li [class]="v.nivel">
+                        <span class="cf-ic" aria-hidden="true">{{ v.nivel === 'error' ? '✕' : '✎' }}</span>
+                        <p [title]="v.mensaje">
+                          <span class="sr-only">{{ v.nivel === 'error' ? 'Error: ' : 'Revisar: ' }}</span>{{ c.titulo || c.mensaje }}
+                          @if (c.datos?.length) { <span class="cf-datos"> · {{ c.datos!.join(' · ') }}</span> }
+                        </p>
+                        @for (o of c.opciones ?? []; track o) {
+                          <!-- Lo que dio cada lectura: la primera es la recomendada. -->
+                          <button type="button" class="mf-btn mf-btn-chico" [class.mf-btn-suave]="!$first" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">Usar {{ o }}</button>
+                        }
+                        @if (v.sugerencia !== null && v.sugerencia !== undefined) {
+                          <button type="button" class="mf-btn mf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
+                        }
+                      </li>
+                    }
+                  </ul>
+                }
               }
             </div>
 
             @if (paraXubio(); as x) {
-              <div class="cf-xubio" [class.aviso]="!x.listo || x.avisos.length" role="status">
-                @if (x.listo) { <p>✓ Listo para Xubio: se descargó «{{ x.nombre }}». Falta que el bot lo cargue (todavía no está conectado).</p> }
-                @for (a of x.avisos; track $index) { <p>{{ a }}</p> }
+              <div class="cf-xubio" [class.aviso]="!x.ok" role="status">
+                <p>{{ x.texto }}</p>
               </div>
             }
           }
@@ -510,6 +542,30 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
             @if (l.tipo === 'comprobante') {
               <section class="cf-bloque" aria-labelledby="cf-det-t">
                 <div class="cf-bloque-cab"><h3 id="cf-det-t">Detalle</h3><p>{{ l.items.length }} {{ l.items.length === 1 ? 'ítem' : 'ítems' }}</p></div>
+                @if (l.items.length) {
+                  <div class="cf-agrupar">
+                    <label><input type="checkbox" [checked]="!!agrupado()" (change)="agruparEn($any($event.target).checked ? sugeridoAgrupar() : '')" /> Agrupar en un solo producto</label>
+                    @if (agrupado()) {
+                      <input class="cf-in" [value]="agrupado()" autocomplete="off" aria-label="Producto para todo el detalle"
+                        (focus)="abrirMenu('agrupar', $event)" (input)="filtro.set($any($event.target).value)" (blur)="cerrarMenu()"
+                        (change)="agruparEn($any($event.target).value || sugeridoAgrupar())" />
+                      <small>Una fila por alícuota; los artículos y sus cantidades van en Observaciones.</small>
+                    }
+                  </div>
+                }
+                <p class="cf-lista-xubio">
+                  @if (trayendo() === estudio()?.empresa) {
+                    <span class="cf-spinner" aria-hidden="true"></span> Trayendo los productos de Xubio de {{ estudio()?.empresa }}…
+                  } @else if (listaXubio().length) {
+                    {{ listaXubio().length }} productos de {{ estudio()?.operacion === 'Ventas' ? 'venta' : 'compra' }} de Xubio ({{ estudio()?.empresa }}){{ actualizadoXubio() ? ' · ' + actualizadoXubio() : '' }}
+                  } @else if (estudio()) {
+                    Sin la lista de Xubio de {{ estudio()?.empresa }}: se usa la general.
+                  }
+                  @if (estudio() && trayendo() !== estudio()?.empresa) {
+                    <button type="button" class="cf-link" (click)="traerProductos(estudio()!.empresa)" [disabled]="!!trayendo()">{{ listaXubio().length ? 'Actualizar' : 'Traer de Xubio' }}</button>
+                  }
+                </p>
+                @if (!agrupado() && autoAviso(); as a) { <p class="cf-auto-aviso" role="status">✎ En naranja: {{ a }}. Revisalo antes de bajar el Excel.</p> }
                 <div class="cf-tabla-caja">
                   <table class="cf-tabla" aria-labelledby="cf-det-t">
                     <thead><tr><th scope="col">Código</th><th scope="col">Descripción</th><th scope="col">Producto</th><th scope="col" class="num">Cantidad</th><th scope="col" class="num">Precio</th><th scope="col" class="num">IVA %</th><th scope="col" class="num">Importe</th><th scope="col"><span class="sr-only">Quitar</span></th></tr></thead>
@@ -518,7 +574,12 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                         <tr>
                           <td style="width: 90px"><input class="cf-in" [value]="x.codigo" (change)="cambiarItem(i, 'codigo', $any($event.target).value)" [attr.aria-label]="'Código del ítem ' + (i + 1)" /></td>
                           <td><input class="cf-in" [class.aviso]="!!x.leido && x.leido !== x.descripcion" [attr.title]="x.leido && x.leido !== x.descripcion ? 'Corregido solo: decía «' + x.leido + '»' : x.descripcion || null" [value]="x.descripcion" (change)="cambiarItem(i, 'descripcion', $any($event.target).value)" [attr.aria-label]="'Descripción del ítem ' + (i + 1)" /></td>
-                          <td style="width: 210px"><input class="cf-in" [attr.title]="x.producto || null" [value]="x.producto ?? ''" [attr.list]="'cf-productos'" (change)="cambiarItem(i, 'producto', $any($event.target).value)" [attr.aria-label]="'Producto del ítem ' + (i + 1)" /></td>
+                          <td style="width: 230px">
+                            <input class="cf-in" [class.aviso]="!agrupado() && autoProducto(i)" [value]="agrupado() || productoDe(i)" [disabled]="!!agrupado()" placeholder="Elegí o escribí" autocomplete="off"
+                              [attr.title]="autoProducto(i) ? 'Autocompletado (' + origenSugerido(i) + '): revisalo' : productoDe(i) || null"
+                              (focus)="abrirMenu(i, $event)" (input)="filtro.set($any($event.target).value)" (blur)="cerrarMenu()"
+                              (change)="ponerProducto(i, $any($event.target).value)" [attr.aria-label]="'Producto del ítem ' + (i + 1)" />
+                          </td>
                           <td style="width: 90px"><input class="cf-in num" inputmode="decimal" [value]="cantidadTexto(x.cantidad)" (change)="cambiarItem(i, 'cantidad', $any($event.target).value)" [attr.aria-label]="'Cantidad del ítem ' + (i + 1)" /></td>
                           <td style="width: 120px"><input class="cf-in num" inputmode="decimal" [value]="texto(x.precio)" (change)="cambiarItem(i, 'precio', $any($event.target).value)" [attr.aria-label]="'Precio del ítem ' + (i + 1)" /></td>
                           <td style="width: 74px"><input class="cf-in num" inputmode="decimal" [value]="x.alicuota ?? ''" (change)="cambiarItem(i, 'alicuota', $any($event.target).value)" [attr.aria-label]="'IVA % del ítem ' + (i + 1)" /></td>
@@ -537,8 +598,22 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                       </tr>
                     </tfoot>
                   </table>
-                  <datalist id="cf-productos">@for (p of productos; track p) { <option [value]="p"></option> }</datalist>
                 </div>
+                @if (menu(); as m) {
+                  @let actualMenu = m.i === 'agrupar' ? agrupado() : productoDe(m.i);
+                  <div class="cf-menu" role="listbox" aria-label="Productos de Xubio" [style.top.px]="m.top" [style.left.px]="m.left" [style.width.px]="m.ancho" [style.max-height.px]="m.alto">
+                    @if (m.i !== 'agrupar' && sugerido(m.i); as s) {
+                      <p class="cf-menu-t">Sugerido · {{ origenSugerido(m.i) }}</p>
+                      <button type="button" role="option" [class.activo]="actualMenu === s" (mousedown)="$event.preventDefault()" (click)="elegirDelMenu(m.i, s)">★ {{ s }}</button>
+                    }
+                    <p class="cf-menu-t">Productos de Xubio</p>
+                    @for (p of productosFiltrados(); track p) {
+                      <button type="button" role="option" [class.activo]="actualMenu === p" (mousedown)="$event.preventDefault()" (click)="elegirDelMenu(m.i, p)">{{ p }}</button>
+                    } @empty {
+                      <p class="cf-menu-vacio">Ninguno coincide: queda lo que escribiste.</p>
+                    }
+                  </div>
+                }
               </section>
             }
           </section>
@@ -550,18 +625,33 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
 export class PasarAExcel implements OnDestroy {
   private readonly api = inject(ApiService);
   private readonly toast = inject(ToastService);
+  private readonly alertas = inject(AlertasService);
   private readonly sanitizer = inject(DomSanitizer);
 
   protected readonly acepta = ACEPTA;
   protected readonly roles = ['emisor', 'receptor'] as const;
   /** Tipo, número y fecha (emisor y receptor van aparte, cada uno en su lado). */
   protected readonly camposComprobante = CAMPOS_ENCABEZADO.filter((c) => !/^(emisor|receptor)/.test(c.id));
-  protected readonly preparando = signal(false);
-  /** archivo → lo que dio «Preparar para Xubio» (se borra al cambiar algo de la factura). */
-  private readonly xubio = signal<Record<string, { listo: boolean; avisos: string[]; nombre: string }>>({});
+  protected readonly subiendo = signal(false);
+  /** archivo → lo que contestó Xubio al subirlo (se borra al cambiar algo de la factura). */
+  private readonly xubio = signal<Record<string, { ok: boolean; texto: string }>>({});
   protected readonly paraXubio = computed(() => {
     const l = this.actual();
     return l ? (this.xubio()[l.archivo] ?? null) : null;
+  });
+  /** empresa → sus productos de Xubio (Compras y Ventas), traídos por el bot. */
+  private readonly listas = signal<Record<string, ProductosXubio>>({});
+  /** La empresa cuyos productos se están trayendo de Xubio. */
+  protected readonly trayendo = signal<string | null>(null);
+  private readonly pedidas = new Set<string>();
+  /** Los nombres de la lista de Xubio de la empresa y la operación de la factura. */
+  protected readonly listaXubio = computed(() => {
+    const f = this.estudio();
+    return f ? (this.listas()[f.empresa]?.[f.operacion] ?? []).map((p) => p.nombre) : [];
+  });
+  protected readonly actualizadoXubio = computed(() => {
+    const a = this.listas()[this.estudio()?.empresa ?? '']?.actualizado;
+    return a ? 'al ' + new Date(a).toLocaleDateString('es-AR') : '';
   });
   protected readonly camposTotales = CAMPOS_TOTALES;
 
@@ -573,8 +663,9 @@ export class PasarAExcel implements OnDestroy {
   protected readonly encima = signal(false);
   protected readonly error = signal<string | null>(null);
   /** archivo → vista previa (object URL de la imagen o del PDF). */
-  private readonly vistas = signal<Record<string, { url: string; seguro: SafeResourceUrl; tipo: 'imagen' | 'pdf' }>>({});
-  private temporizador: ReturnType<typeof setTimeout> | null = null;
+  private readonly vistas = signal<Record<string, Vista>>({});
+  /** archivo → espera para volver a verificarlo (cada archivo la suya: cambiar de pestaña no la pierde). */
+  private readonly temporizadores = new Map<string, ReturnType<typeof setTimeout>>();
 
   protected readonly actual = computed(() => this.lecturas()[this.indice()] ?? null);
   protected readonly vista = computed(() => {
@@ -645,6 +736,17 @@ export class PasarAExcel implements OnDestroy {
       total: total === null || total === undefined ? '—' : '$ ' + aTexto(total),
     };
   });
+  /** Lo que se autorrellenó (para revisar) y lo que no se leyó bien (para completar a mano). */
+  protected readonly gruposAMirar = computed(() => {
+    // Autorrellenado: lo que el lector corrigió o completó solo («Autocorregí…», redondeos).
+    const esAuto = (v: Verificacion) => v.nivel !== 'error' && /^(Autocorreg|Redondeo)/i.test(v.titulo || v.mensaje);
+    const auto = this.aMirar().filter(esAuto);
+    const mal = this.aMirar().filter((v) => !esAuto(v));
+    return [
+      { titulo: 'No se leyeron bien: completalos vos mirando la foto', nivel: mal.some((v) => v.nivel === 'error') ? 'error' : 'aviso', items: mal },
+      { titulo: 'Se autorrellenaron: revisá que estén bien', nivel: 'aviso', items: auto },
+    ].filter((g) => g.items.length);
+  });
   protected readonly hayErrores = computed(() => this.aMirar().some((v) => v.nivel === 'error'));
   protected readonly puedeAgregarAlicuota = computed(() => alicuotaLibre(this.actual()?.iva_alicuotas ?? []) !== null);
   protected readonly nombreAlicuota = nombreAlicuota;
@@ -673,13 +775,151 @@ export class PasarAExcel implements OnDestroy {
   /** Los clientes del estudio con sus CUIT; vacío si Clientes está bloqueado o no hay. */
   protected readonly empresas = signal<EmpresaEstudio[]>([]);
   /** Lo que se eligió a mano por archivo (manda sobre lo detectado). */
-  private readonly elegido = signal<Record<string, { empresa: string; operacion: Operacion | null }>>({});
+  private readonly elegido = signal<Elegido>({});
   protected readonly cuit = cuitConGuiones;
   protected readonly nivelFn = (campo: string) => this.nivel(campo);
-  /** Los productos para elegir en el detalle (los de la empresa del estudio). */
-  protected get productos(): string[] {
+  /** Para que las sugerencias se actualicen al recordar un producto. */
+  private readonly recordados = signal(0);
+  /** Los productos de Xubio para elegir en el detalle: primero los que ya usó la empresa. */
+  protected readonly productos = computed(() => {
+    this.recordados();
     const f = this.estudio();
-    return productosSugeridos(f?.empresa ?? '', f?.operacion ?? 'Compras');
+    return productosSugeridos(f?.empresa ?? '', f?.operacion ?? 'Compras', this.listaXubio());
+  });
+  /** Lo que se va escribiendo en el producto: filtra el menú. */
+  protected readonly filtro = signal('');
+  protected readonly productosFiltrados = computed(() => {
+    const clave = (x: string) => x.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const f = clave(this.filtro().trim());
+    const todos = this.productos();
+    // Recién abierto (con el producto ya puesto) se ven todos; al escribir, los que coinciden.
+    return !f || todos.some((p) => clave(p) === f) ? todos : todos.filter((p) => clave(p).includes(f));
+  });
+
+  /** archivo → lo elegido en pantalla (productos y agrupar). */
+  private readonly extrasPorArchivo = signal<Record<string, Extras>>({});
+  protected readonly extras = computed<Extras>(() => {
+    const l = this.actual();
+    return (l && this.extrasPorArchivo()[l.archivo]) || { productos: [] };
+  });
+
+  /** Lo sugerido para el ítem: lo que se eligió antes para esa descripción o lo que propuso la IA. */
+  protected sugerido(i: number): string {
+    const x = this.actual()?.items[i];
+    if (!x) return '';
+    const crudo = productoRecordado(this.estudio()?.empresa ?? '', x.descripcion) || x.producto || '';
+    const lista = this.listaXubio();
+    // Con la lista de Xubio, solo productos que existen ahí (si no, Xubio no lo importa).
+    return lista.length ? productoMasParecido(crudo, lista) : crudo;
+  }
+
+  protected origenSugerido(i: number): string {
+    const x = this.actual()?.items[i];
+    return x && productoRecordado(this.estudio()?.empresa ?? '', x.descripcion) ? 'lo que elegiste la otra vez' : 'según la descripción';
+  }
+
+  /** El producto que se ve: el elegido o, si no, el sugerido (autocompletado, en naranja). */
+  protected productoDe(i: number): string {
+    return this.extras().productos[i] || this.sugerido(i);
+  }
+
+  protected autoProducto(i: number): boolean {
+    return !this.extras().productos[i] && !!this.sugerido(i);
+  }
+
+  /** «autocompleté 8 productos». Las descripciones e importes corregidos ya se avisan arriba. */
+  protected readonly autoAviso = computed(() => {
+    this.extras();
+    this.recordados();
+    const n = (this.actual()?.items ?? []).filter((_, i) => this.autoProducto(i)).length;
+    return n ? `autocompleté ${n === 1 ? 'el producto' : n + ' productos'} con lo sugerido` : '';
+  });
+
+  /** En una compra con varios artículos, por defecto todo va como un solo producto. */
+  protected readonly agrupado = computed(() => {
+    const l = this.actual();
+    const elegido = this.extras().agrupar;
+    if (elegido !== undefined) return elegido;
+    return this.estudio()?.operacion === 'Compras' && (l?.items.length ?? 0) > 1 ? this.sugeridoAgrupar() : '';
+  });
+
+  /** El producto que más se repite entre los sugeridos del detalle. */
+  protected sugeridoAgrupar(): string {
+    const cuenta = new Map<string, number>();
+    (this.actual()?.items ?? []).forEach((_, i) => {
+      const p = this.sugerido(i);
+      if (p) cuenta.set(p, (cuenta.get(p) ?? 0) + 1);
+    });
+    const [mejor] = [...cuenta].sort((a, b) => b[1] - a[1])[0] ?? [];
+    const generico = 'Gastos de limpieza, libreria y refrigerio';
+    const lista = this.listaXubio();
+    return mejor ?? (lista.length ? productoMasParecido(generico, lista) || lista[0] : generico);
+  }
+
+  protected agruparEn(nombre: string): void {
+    this.cambiarExtras((e) => ({ ...e, agrupar: nombre.trim() }));
+  }
+
+  /** `aprender`: elegido del menú. Escrito a mano solo se aprende si es un producto conocido (no «comb» a medio escribir). */
+  protected ponerProducto(i: number, nombre: string, aprender = false): void {
+    const producto = nombre.trim();
+    const conocido = aprender || this.productos().some((p) => p.toLowerCase() === producto.toLowerCase());
+    this.cambiarExtras((e) => {
+      const productos = [...e.productos];
+      productos[i] = producto;
+      return { ...e, productos };
+    });
+    if (!conocido) return;
+    const empresa = this.estudio()?.empresa ?? '';
+    // Lo elegido para esa descripción se sugiere la próxima vez.
+    recordarProductoDeItem(empresa, this.actual()?.items[i]?.descripcion ?? '', producto);
+    if (empresa && producto) recordarProducto(empresa, producto, this.estudio()?.operacion ?? 'Compras');
+    this.recordados.update((n) => n + 1);
+  }
+
+  private cambiarExtras(f: (e: Extras) => Extras): void {
+    const l = this.actual();
+    if (l) this.extrasPorArchivo.update((m) => ({ ...m, [l.archivo]: f(this.extras()) }));
+  }
+
+  /** El menú de productos abierto debajo de un campo (fijo, para que no lo corte el scroll). */
+  protected readonly menu = signal<{ i: number | 'agrupar'; top: number; left: number; ancho: number; alto: number } | null>(null);
+  private cierre: ReturnType<typeof setTimeout> | null = null;
+
+  protected abrirMenu(i: number | 'agrupar', ev: FocusEvent): void {
+    if (this.cierre) clearTimeout(this.cierre);
+    const r = (ev.target as HTMLElement).getBoundingClientRect();
+    const ancho = Math.max(r.width, 320);
+    // Abajo del campo; si no entra, arriba.
+    const abajo = window.innerHeight - r.bottom - 12;
+    const arriba = r.top - 12;
+    const alto = Math.min(300, Math.max(abajo, arriba));
+    const top = abajo >= Math.min(300, 220) || abajo >= arriba ? r.bottom + 4 : r.top - 4 - alto;
+    this.filtro.set('');
+    this.menu.set({ i, top, left: Math.max(8, Math.min(r.left, window.innerWidth - ancho - 8)), ancho, alto });
+  }
+
+  protected cerrarMenu(): void {
+    this.cierre = setTimeout(() => this.menu.set(null), 150);
+  }
+
+  protected elegirDelMenu(i: number | 'agrupar', producto: string): void {
+    if (i === 'agrupar') this.agruparEn(producto);
+    else this.ponerProducto(i, producto, true);
+    this.menu.set(null);
+    // Lo escrito para filtrar («comb») no tiene que pisar lo elegido al salir del campo.
+    const campo = document.activeElement as HTMLInputElement | null;
+    if (campo?.tagName === 'INPUT') campo.value = producto;
+    campo?.blur();
+  }
+
+  @HostListener('window:scroll')
+  protected alDesplazar(): void {
+    // Fijo en la pantalla: si la página se mueve, quedaría lejos del campo.
+    if (this.menu()) {
+      this.menu.set(null);
+      (document.activeElement as HTMLElement | null)?.blur();
+    }
   }
   protected readonly textoSinCae = sinCae;
   protected readonly corta = corta;
@@ -734,6 +974,54 @@ export class PasarAExcel implements OnDestroy {
       (cs) => this.empresas.set(cs.map((c) => ({ nombre: c.nombre, cuits: [c.arca.cuit_representado, c.arca.cuit_login].filter(Boolean) }))),
       () => this.empresas.set([]),
     );
+    void this.restaurar();
+    // Cada cambio queda guardado en el navegador: recargar o irse a otra pantalla no borra nada.
+    const guardarEstado = conDemora(() =>
+      void guardar('estado', { lecturas: this.lecturas(), indice: this.indice(), elegido: this.elegido(), extras: this.extrasPorArchivo() }),
+    );
+    effect(() => {
+      const empresa = this.estudio()?.empresa;
+      if (empresa && !this.pedidas.has(empresa)) {
+        this.pedidas.add(empresa);
+        void this.cargarProductos(empresa);
+      }
+    });
+    effect(() => {
+      this.lecturas(); this.indice(); this.elegido(); this.extrasPorArchivo();
+      if (this.restaurado()) guardarEstado();
+    });
+  }
+
+  /** Hasta recuperar lo guardado no se guarda nada (si no, se pisaría con la página vacía). */
+  private readonly restaurado = signal(false);
+
+  private async restaurar(): Promise<void> {
+    type Estado = { lecturas: LecturaExcel[]; indice: number; elegido: Elegido; extras: Record<string, Extras> };
+    const e = await recuperar<Estado>('estado');
+    if (e?.lecturas?.length && !this.lecturas().length) {
+      const vistas: Record<string, Vista> = {};
+      for (const l of e.lecturas) {
+        const a = await recuperar<{ blob: Blob; tipo: 'imagen' | 'pdf' }>('archivo:' + l.archivo);
+        if (a?.blob) vistas[l.archivo] = this.vistaDe(a.blob, a.tipo);
+      }
+      this.vistas.set(vistas);
+      // Lo guardado por una versión anterior puede no traer el desglose ni los tributos.
+      // Y un PDF con texto o una planilla guardados antes pueden traer avisos que ya no van.
+      this.lecturas.set(e.lecturas.map((l) => ({
+        ...l, iva_alicuotas: l.iva_alicuotas ?? [], tributos: l.tributos ?? [],
+        verificaciones: deImagen(l) ? l.verificaciones : l.verificaciones.filter((v) => v.nivel === 'ok'),
+      })));
+      this.indice.set(Math.min(e.indice ?? 0, e.lecturas.length - 1));
+      this.elegido.set(e.elegido ?? {});
+      this.extrasPorArchivo.set(e.extras ?? {});
+    }
+    this.restaurado.set(true);
+  }
+
+  private vistaDe(blob: Blob, tipo: 'imagen' | 'pdf'): Vista {
+    const url = URL.createObjectURL(blob);
+    // El PDF va en un iframe: Angular pide marcar la URL (es un blob: de esta misma página).
+    return { url, seguro: this.sanitizer.bypassSecurityTrustResourceUrl(url), tipo };
   }
 
   protected elegirEmpresa(nombre: string): void {
@@ -759,23 +1047,83 @@ export class PasarAExcel implements OnDestroy {
     });
   }
 
-  /** Arma el .zip para «Importar desde Mis Comprobantes (ARCA)» y lo descarga. No abre Xubio. */
-  protected async prepararXubio(): Promise<void> {
+  /** Los productos de Xubio de la empresa: los ya traídos o, si no hay, los trae el bot. */
+  private async cargarProductos(empresa: string): Promise<void> {
+    try {
+      const guardados = await this.api.productosXubio(empresa);
+      if (guardados.Compras.length || guardados.Ventas.length) {
+        this.listas.update((m) => ({ ...m, [empresa]: guardados }));
+        return;
+      }
+    } catch {
+      return;
+    }
+    await this.traerProductos(empresa);
+  }
+
+  protected async traerProductos(empresa: string): Promise<void> {
+    if (this.trayendo()) return;
+    this.trayendo.set(empresa);
+    try {
+      const r = await this.api.traerProductosXubio(empresa);
+      this.listas.update((m) => ({ ...m, [empresa]: r }));
+    } catch (err) {
+      this.toast.error('No se pudieron traer los productos de Xubio', mensajeDeError(err, ''));
+    } finally {
+      this.trayendo.set(null);
+    }
+  }
+
+  /** El Excel de Xubio (el mismo que «Descargar Excel»): los productos elegidos y el agrupado. */
+  private async armarExcel(l: LecturaExcel): Promise<{ nombre: string; contenido: string }> {
+    const est = this.estudio();
+    const extras = {
+      condicion: 'Cuenta Corriente', vencimiento: '', productos: l.items.map((_, i) => this.productoDe(i)), centros: [], dto: [],
+      agrupar: this.agrupado(),
+    };
+    return this.api.generarAExcel(l, est ? { operacion: est.operacion, empresa: est.empresa, extras } : {});
+  }
+
+  /** Arma el .xls y el bot lo importa en Xubio (Compras o Ventas > Importar > Desde Excel). */
+  protected async subirAXubio(): Promise<void> {
     const l = this.actual();
     const f = this.estudio();
-    if (!l || !f) return;
-    this.preparando.set(true);
+    if (!l || !f || this.subiendo()) return;
+    const sinProducto = this.agrupado() ? 0 : l.items.filter((_, i) => !this.productoDe(i)).length;
+    const errores = this.aMirar().filter((v) => v.nivel === 'error').length;
+    const avisos = [
+      `El bot abre Xubio, entra a ${f.empresa} y en ${f.operacion} > Importar > Desde Excel carga el archivo y aprieta «Importar».`,
+      'No se puede deshacer: si ya la subiste, no lo hagas de nuevo (quedaría repetida).',
+    ];
+    if (errores) avisos.unshift(`Quedan ${errores} ${errores === 1 ? 'dato mal leído' : 'datos mal leídos'} sin corregir.`);
+    if (sinProducto) avisos.unshift(`${sinProducto} ${sinProducto === 1 ? 'ítem no tiene' : 'ítems no tienen'} producto de Xubio.`);
+    const seguir = await this.alertas.confirmar(
+      `Subir a Xubio como ${f.operacion === 'Compras' ? 'compra' : 'venta'}`,
+      `${l.archivo} → ${f.empresa}`,
+      'Importar en Xubio',
+      avisos,
+    );
+    if (!seguir) return;
+    this.subiendo.set(true);
+    const poner = (ok: boolean, texto: string) => this.xubio.update((m) => ({ ...m, [l.archivo]: { ok, texto } }));
     try {
-      const r = await this.api.prepararXubioAExcel(l, f.operacion, f.empresa);
-      if (r.zip) {
-        const bytes = Uint8Array.from(atob(r.zip.contenido), (c) => c.charCodeAt(0));
-        descargarBlob(r.zip.nombre, new Blob([bytes], { type: 'application/zip' }));
+      const excel = await this.armarExcel(l);
+      const r = await this.api.subirExcelAXubio(f.empresa, f.operacion, excel.nombre, excel.contenido);
+      const dijo = r.mensaje ? ` Xubio: «${r.mensaje}».` : '';
+      if (r.importado === true) {
+        poner(true, `✓ Importada en Xubio (${f.empresa}, ${f.operacion}).${dijo}`);
+        this.toast.ok('Importada en Xubio', `${f.operacion} · ${f.empresa}`);
+      } else if (r.importado === null) {
+        poner(false, `Se apretó «Importar» pero no se pudo confirmar el resultado.${dijo} Fijate en Xubio (la ventana quedó abierta) antes de subirla de nuevo.`);
+        this.toast.aviso('Revisá en Xubio', 'No se pudo confirmar si se importó.');
+      } else {
+        poner(false, `Xubio no la importó.${dijo} Revisá la ventana de Chrome.`);
+        this.toast.error('Xubio no la importó', r.mensaje || f.operacion);
       }
-      this.xubio.update((m) => ({ ...m, [l.archivo]: { listo: r.listo, avisos: r.avisos, nombre: r.zip?.nombre ?? '' } }));
     } catch (err) {
-      this.toast.error('No se pudo preparar para Xubio', mensajeDeError(err, ''));
+      poner(false, mensajeDeError(err, 'No se pudo subir a Xubio.'));
     } finally {
-      this.preparando.set(false);
+      this.subiendo.set(false);
     }
   }
 
@@ -894,6 +1242,7 @@ export class PasarAExcel implements OnDestroy {
       const { [l.archivo]: _, ...resto } = this.vistas();
       this.vistas.set(resto);
     }
+    void borrar('archivo:' + l.archivo);
     this.lecturas.update((ls) => ls.filter((_, j) => j !== i));
     const n = this.lecturas().length;
     if (this.indice() >= n) this.indice.set(Math.max(0, n - 1));
@@ -902,7 +1251,9 @@ export class PasarAExcel implements OnDestroy {
   protected limpiar(): void {
     Object.values(this.vistas()).forEach((v) => URL.revokeObjectURL(v.url));
     this.vistas.set({});
+    void borrarTodo();
     this.lecturas.set([]);
+    this.extrasPorArchivo.set({});
     this.indice.set(0);
     this.error.set(null);
   }
@@ -936,15 +1287,17 @@ export class PasarAExcel implements OnDestroy {
         const tipo = /\.pdf$/i.test(a.name) ? 'pdf' : /\.(jpe?g|png|webp|bmp)$/i.test(a.name) ? 'imagen' : null;
         if (!tipo) continue;
         if (vistas[a.name]) URL.revokeObjectURL(vistas[a.name].url);
-        const url = URL.createObjectURL(a);
-        // El PDF va en un iframe: Angular pide marcar la URL (es un blob: de esta misma página).
-        vistas[a.name] = { url, seguro: this.sanitizer.bypassSecurityTrustResourceUrl(url), tipo };
+        vistas[a.name] = this.vistaDe(a, tipo);
+        void guardar('archivo:' + a.name, { blob: a, tipo });
       }
       this.vistas.set(vistas);
       // Los nuevos reemplazan a los del mismo nombre; el primero nuevo queda a la vista.
       const nombres = new Set(lecturas.map((l) => l.archivo));
       const resto = this.lecturas().filter((l) => !nombres.has(l.archivo));
-      this.lecturas.set([...resto, ...lecturas]);
+      // Lo que se leyó de nuevo arranca sin lo elegido antes para ese archivo.
+      this.extrasPorArchivo.update((m) => Object.fromEntries(Object.entries(m).filter(([k]) => !nombres.has(k))));
+      // El proveedor o cliente corregido a mano otra vez queda como se corrigió.
+      this.lecturas.set([...resto, ...lecturas.map(aplicarContrapartes)]);
       this.indice.set(resto.length);
     } catch (err) {
       this.error.set(mensajeDeError(err, 'No se pudieron leer los archivos.'));
@@ -956,50 +1309,65 @@ export class PasarAExcel implements OnDestroy {
   // --- Corregir -----------------------------------------------------------------------
 
   private reemplazar(nueva: LecturaExcel): void {
-    const i = this.indice();
     this.olvidarXubio(nueva.archivo);
-    this.lecturas.update((ls) => ls.map((l, j) => (j === i ? nueva : l)));
-    this.reverificar();
+    this.lecturas.update((ls) => ls.map((l) => (l.archivo === nueva.archivo ? nueva : l)));
+    this.reverificar(nueva.archivo);
   }
 
-  /** Un rato después del último cambio, la verificación otra vez en el backend. */
-  private reverificar(): void {
-    if (this.temporizador) clearTimeout(this.temporizador);
-    this.temporizador = setTimeout(async () => {
-      const i = this.indice();
-      const l = this.lecturas()[i];
+  /** Un rato después del último cambio, la verificación otra vez en el backend (de ese archivo). */
+  private reverificar(archivo: string): void {
+    const previo = this.temporizadores.get(archivo);
+    if (previo) clearTimeout(previo);
+    this.temporizadores.set(archivo, setTimeout(async () => {
+      this.temporizadores.delete(archivo);
+      const l = this.lecturas().find((x) => x.archivo === archivo);
       if (!l) return;
       this.verificando.set(true);
       try {
-        const { verificaciones } = await this.api.verificarAExcel(l);
-        this.lecturas.update((ls) => ls.map((x, j) => (j === i ? { ...x, verificaciones } : x)));
+        const { verificaciones: todas } = await this.api.verificarAExcel(l);
+        // Los avisos son para lo leído de una foto o captura; un PDF con texto o una planilla vienen tal cual.
+        const verificaciones = deImagen(l) ? todas : todas.filter((v) => v.nivel === 'ok');
+        // Si mientras tanto cambió otra vez, se espera a la próxima verificación.
+        this.lecturas.update((ls) => ls.map((x) => (x === l ? { ...x, verificaciones } : x)));
       } catch (err) {
         this.toast.error('No se pudo verificar', mensajeDeError(err, ''));
       } finally {
         this.verificando.set(false);
       }
-    }, 350);
+    }, 350));
   }
 
   protected usar(v: Verificacion): void {
     const l = this.actual();
-    if (l) this.reemplazar(usarSugerencia(l, v));
+    // El aviso usado se va enseguida (sin esperar a que el backend vuelva a verificar).
+    if (l) this.reemplazar(sinAviso(usarSugerencia(l, v), v.campo));
   }
 
   protected cambiarEncabezado(campo: string, valor: string): void {
     const l = this.actual();
-    if (l) this.reemplazar(sinDuda({ ...l, encabezado: { ...l.encabezado, [campo]: valor.trim() } }, campo));
+    if (!l) return;
+    // Proveedor o cliente corregido a mano: se recuerda para las próximas facturas.
+    const lado = campo.replace(/_cuit$/, '');
+    if (lado === 'emisor' || lado === 'receptor') {
+      const e = { ...l.encabezado, [campo]: valor.trim() };
+      const leido = l.corregidos?.[lado] ?? l.encabezado[lado] ?? '';
+      const leidoCuit = l.corregidos?.[`${lado}_cuit`] ?? l.encabezado[`${lado}_cuit`] ?? '';
+      recordarContraparte(leido, leidoCuit, e[lado] ?? '', e[`${lado}_cuit`] ?? '');
+    }
+    this.reemplazar(sinDuda({ ...l, encabezado: { ...l.encabezado, [campo]: valor.trim() } }, campo));
   }
 
   /** Entre lo que dieron las lecturas, el valor que eligió el usuario. */
   protected elegirLectura(campo: string, valor: string): void {
-    if (CAMPOS_TOTALES.some((c) => c.id === campo)) this.cambiarTotal(campo, valor);
+    const l = this.actual();
+    if (l) this.lecturas.update((ls) => ls.map((x) => (x === l ? sinAviso(x, campo) : x)));
+    if (campo === 'iva' || /^iva_\d+$/.test(campo) || CAMPOS_TOTALES.some((c) => c.id === campo)) this.cambiarTotal(campo, valor);
     else this.cambiarEncabezado(campo, valor);
   }
 
   protected cambiarTotal(campo: string, valor: string): void {
     const l = this.actual();
-    if (l) this.reemplazar(sinDuda({ ...l, totales: { ...l.totales, [campo]: aNumero(valor) } }, campo));
+    if (l) this.reemplazar(conTotal(l, campo, aNumero(valor)));
   }
 
   protected cambiarItem(i: number, campo: keyof ItemLeido, valor: string): void {
@@ -1093,12 +1461,11 @@ export class PasarAExcel implements OnDestroy {
     if (!l) return;
     this.generando.set(true);
     try {
-      const est = this.estudio();
-      // Los productos del detalle van al Excel para Xubio.
-      const extras = { condicion: 'Cuenta Corriente', vencimiento: '', productos: l.items.map((x) => x.producto ?? ''), centros: [], dto: [] };
-      const r = await this.api.generarAExcel(l, est ? { operacion: est.operacion, empresa: est.empresa, extras } : {});
+      const r = await this.armarExcel(l);
       const bytes = Uint8Array.from(atob(r.contenido), (c) => c.charCodeAt(0));
-      descargarBlob(r.nombre, new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+      // El modelo de Xubio es .xls (Excel 97-2003); lo demás, .xlsx.
+      const tipo = /\.xls$/i.test(r.nombre) ? 'application/vnd.ms-excel' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      descargarBlob(r.nombre, new Blob([bytes], { type: tipo }));
       this.toast.ok('Excel listo', r.nombre);
     } catch (err) {
       this.toast.error('No se pudo armar el Excel', mensajeDeError(err, ''));
@@ -1106,6 +1473,16 @@ export class PasarAExcel implements OnDestroy {
       this.generando.set(false);
     }
   }
+}
+
+/** Lo leído de una foto, captura o PDF escaneado (IA u OCR): solo ahí hay avisos. */
+function deImagen(l: LecturaExcel): boolean {
+  return l.metodo === 'ia' || l.metodo === 'ocr';
+}
+
+/** Sin los avisos de un campo que se acaba de corregir (la verificación nueva dirá si queda algo). */
+function sinAviso(l: LecturaExcel, campo: string): LecturaExcel {
+  return { ...l, verificaciones: l.verificaciones.filter((v) => v.campo !== campo || v.nivel === 'ok') };
 }
 
 /** El archivo en base64 (sin el prefijo «data:…;base64,»). */
