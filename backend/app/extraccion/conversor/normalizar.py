@@ -188,7 +188,19 @@ def _encabezado(texto: str, lineas: list[str]) -> dict[str, str]:
     if m := re.search(r"Fecha[^\d\n]{0,25}(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})", texto, re.IGNORECASE) or re.search(r"\b(\d{2}/\d{2}/\d{4})\b", texto):
         iso = fecha_iso(m.group(1))
         e["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else m.group(1)
+    if v := _vencimiento_de_texto(texto):
+        e["vencimiento"] = v
     return e
+
+
+def _vencimiento_de_texto(texto: str) -> str | None:
+    """«Fecha de Vto. para el pago: 15/12/2026» o «Vencimiento: …»; nunca el «Vto. de CAE»."""
+    for m in re.finditer(r"(?:\bvto\b|\bvenc\w*)([^\d\n]{0,30})(\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4})", texto, re.IGNORECASE):
+        if "cae" in m.group(1).lower():
+            continue
+        iso = fecha_iso(m.group(2))
+        return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else m.group(2)
+    return None
 
 
 _ALICUOTA = re.compile(r"\(\s*(\d{1,2}[.,]\d{1,2})\s*\)|\b(\d{1,2}(?:[.,]\d{1,2})?)\s*%")
@@ -453,6 +465,9 @@ def _desde_json(lectura: Lectura, datos: dict, metodo: Literal["ia", "ocr"]) -> 
     if f := str(g.get("fecha") or "").strip():
         iso = fecha_iso(f)
         e["fecha"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else f
+    if v := str(_primero(g, "fecha_vencimiento", "vencimiento") or "").strip():
+        iso = fecha_iso(v)
+        e["vencimiento"] = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}" if iso else v
     # El CAE no se muestra, pero se guarda: lo pide la importación de Xubio.
     if len(cae := re.sub(r"\D", "", str(_primero(g, "cae", "codigo_autorizacion") or ""))) == 14:
         e["cae"] = cae

@@ -153,7 +153,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .cf-campo { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: .82rem; font-weight: 600; color: var(--cf-suave); }
 
     /* Comprobante */
-    .cf-comp { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.2fr) minmax(0, 1fr); gap: 12px; padding: 14px 16px; }
+    .cf-comp { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 14px 16px; }
     .cf-partes { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-top: 1px solid var(--cf-borde); }
     .cf-parte { min-width: 0; margin: 0; padding: 14px 16px; border: 0; display: flex; flex-direction: column; gap: 10px; }
     .cf-parte + .cf-parte { border-left: 1px solid var(--cf-borde); }

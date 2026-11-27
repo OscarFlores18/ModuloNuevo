@@ -22,6 +22,7 @@ export const CAMPOS_ENCABEZADO: { id: string; etiqueta: string; ancho: number; a
   { id: 'tipo', etiqueta: 'Tipo de comprobante', ancho: 2 },
   { id: 'numero', etiqueta: 'Número', ancho: 2, ayuda: '00001-00000001' },
   { id: 'fecha', etiqueta: 'Fecha', ancho: 2, ayuda: 'DD/MM/AAAA' },
+  { id: 'vencimiento', etiqueta: 'Vencimiento', ancho: 2, ayuda: 'DD/MM/AAAA' },
 ];
 
 /** Bases y totales (el IVA va aparte, por alícuota). */

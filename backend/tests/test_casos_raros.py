@@ -387,3 +387,24 @@ def test_clave_invalida_corta_sin_probar_otros_modelos(monkeypatch):
     with pytest.raises(errors.ClientError):
         gemini._pedir(cliente, types, errors, b"jpeg")
     assert pedidos == ["primero"]
+
+
+# --- Fecha de vencimiento del pago (no la del CAE) ------------------------------------
+
+
+def test_vencimiento_de_gemini_se_guarda_y_va_al_excel_para_xubio(gemini_responde):
+    datos = {**FACTURA_CON_TRIBUTOS, "encabezado": {**FACTURA_CON_TRIBUTOS["encabezado"], "fecha_vencimiento": "2026-10-02"}}
+    gemini_responde(datos)
+    l = a_excel.leer("factura.jpg", _png())
+    assert l.encabezado["vencimiento"] == "02/10/2026"
+    libro = load_workbook(io.BytesIO(a_excel.generar(l, "Compras")))
+    fila = [c for f in libro.worksheets[0].iter_rows(min_row=2, max_row=2, values_only=True) for c in f]
+    assert fila[4].strftime("%d/%m/%Y") == "02/09/2026" and fila[5].strftime("%d/%m/%Y") == "02/10/2026"
+
+
+def test_vencimiento_del_texto_salta_el_vto_del_cae():
+    from backend.app.extraccion.conversor.normalizar import _vencimiento_de_texto
+
+    texto = "Fecha de Emisión: 02/09/2026\nFecha de Vto. de CAE: 12/09/2026\nFecha de Vto. para el pago: 02/10/2026"
+    assert _vencimiento_de_texto(texto) == "02/10/2026"
+    assert _vencimiento_de_texto("CAE N°: 76123456789012  Fecha de Vto. de CAE: 12/09/2026") is None

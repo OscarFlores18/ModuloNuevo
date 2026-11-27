@@ -82,7 +82,8 @@ Leé la imagen y devolvé SOLO un JSON válido con esta forma, sin texto antes n
     "tipo_comprobante": "código ARCA - nombre, p. ej. '81 - Tique Factura A'",
     "punto_venta": "5 dígitos",
     "numero_comprobante": "8 dígitos",
-    "fecha": "DD/MM/AAAA"
+    "fecha": "DD/MM/AAAA",
+    "fecha_vencimiento": "DD/MM/AAAA (vencimiento del pago, no el del CAE)" o null
   },
   "importes": {
     "neto_gravado": 0.00,

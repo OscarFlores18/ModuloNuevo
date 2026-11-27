@@ -65,6 +65,7 @@ ETIQUETAS_ENCABEZADO = {
     "tipo": "Tipo de comprobante",
     "numero": "Número",
     "fecha": "Fecha",
+    "vencimiento": "Vencimiento",
 }
 
 

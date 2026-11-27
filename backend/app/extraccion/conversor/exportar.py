@@ -92,7 +92,7 @@ def filas_importacion(lectura: Lectura, operacion: str, extras: Extras | None = 
     fecha = _fecha_xubio(e.get("fecha", ""))
     cabecera = [
         1, e.get(lado, ""), _tipo_xubio(e.get("tipo", "")), _numero_xubio(lectura), fecha,
-        _fecha_xubio(extras.vencimiento) if extras.vencimiento else fecha,
+        _fecha_xubio(extras.vencimiento or e.get("vencimiento", "")) or fecha,
         "", "Pesos Argentinos", "", Path(lectura.archivo).stem[:200],
     ] + [None] * 8
     items = lectura.items or [Item(
