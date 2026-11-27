@@ -24,7 +24,7 @@
     <!-- 1. Clientes -->
     <section class="mf-panel !py-3" aria-labelledby="t-clientes" data-tour="clientes">
       <div class="mf-panel-titulo !mb-2">
-        <h2 id="t-clientes" class="!text-base"><span class="mf-paso-num" aria-hidden="true">1</span>Clientes</h2>
+        <h2 id="t-clientes" class="!text-lg"><span class="mf-paso-num" aria-hidden="true">1</span>Clientes</h2>
         @if (sesion.esSupervisor()) {
           <a routerLink="/clientes" class="mf-btn mf-btn-suave mf-btn-mini ml-auto">
             <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4 12.5-12.5z" /></svg>
@@ -101,7 +101,7 @@
       <!-- 2. Período y operaciones -->
       <section class="mf-panel !py-3" aria-labelledby="t-parametros" data-tour="periodo">
         <div class="mf-panel-titulo !mb-2">
-          <h2 id="t-parametros" class="!text-base"><span class="mf-paso-num" aria-hidden="true">2</span>Período y operaciones</h2>
+          <h2 id="t-parametros" class="!text-lg"><span class="mf-paso-num" aria-hidden="true">2</span>Período y operaciones</h2>
         </div>
 
         <fieldset class="m-0 border-0 p-0" formGroupName="periodo">
@@ -161,7 +161,7 @@
       <!-- 3. Xubio: una línea si la contraseña ya está guardada -->
       <section class="mf-panel !py-3" aria-labelledby="t-xubio" formGroupName="xubio" data-tour="xubio">
         <div class="mf-panel-titulo !mb-2">
-          <h2 id="t-xubio" class="!text-base"><span class="mf-paso-num" aria-hidden="true">3</span>Cuenta de Xubio<app-ayuda texto="El usuario del estudio en Xubio. El bot entra con esa cuenta y elige la empresa por el nombre del cliente." /></h2>
+          <h2 id="t-xubio" class="!text-lg"><span class="mf-paso-num" aria-hidden="true">3</span>Cuenta de Xubio<app-ayuda texto="El usuario del estudio en Xubio. El bot entra con esa cuenta y elige la empresa por el nombre del cliente." /></h2>
         </div>
         @if (guardadaXubio() && !cambiandoClave()) {
           <div class="nc-xubio-lista" role="status">

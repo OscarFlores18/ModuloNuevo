@@ -45,25 +45,19 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
   imports: [Encabezado, Alerta, Ayuda, VistaArchivo],
   styles: `
     :host {
-      --cf-texto: #0f172a; --cf-suave: #475569; --cf-tenue: #64748b; --cf-borde: #e2e8f0; --cf-borde-in: #cbd5e1;
-      --cf-fondo: #f8fafc; --cf-acento: #1d4ed8; --cf-acento-suave: #eff6ff;
+      /* Los colores de la app (styles.css): mismo texto, bordes y azul que las demás pantallas. */
+      --cf-texto: var(--color-texto); --cf-suave: #475569; --cf-tenue: var(--color-tenue); --cf-borde: var(--color-borde); --cf-borde-in: #c3cfe4;
+      --cf-fondo: var(--color-panel-alt); --cf-acento: var(--color-acento); --cf-acento-suave: #eff6ff;
       --cf-error: #b91c1c; --cf-error-fondo: #fef2f2; --cf-aviso: #92400e; --cf-aviso-fondo: #fffbeb; --cf-ok: #15803d; --cf-ok-fondo: #f0fdf4;
       display: flex; flex-direction: column; gap: 16px; flex: 1 0 auto; color: var(--cf-texto); font-size: .92rem;
       /* Los textos solo para lectores de pantalla (.sr-only, absolutos) quedan adentro del área que
          se desplaza: sin esto se ubicaban contra la ventana y estiraban la página con un espacio vacío. */
       position: relative;
     }
-    button { font: inherit; }
+    button:not(.mf-btn) { font: inherit; }
     :is(button, select, input, [role='button']):focus-visible { outline: 2px solid var(--cf-acento); outline-offset: 2px; }
 
-    /* Botones */
-    .cf-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 38px; padding: 0 16px; border: 1px solid transparent; border-radius: 8px; font-weight: 600; cursor: pointer; white-space: nowrap; }
-    .cf-btn:disabled { opacity: .5; cursor: not-allowed; }
-    .cf-btn-prim { background: var(--cf-acento); color: #fff; }
-    .cf-btn-prim:hover:not(:disabled) { background: #1e40af; }
-    .cf-btn-sec { background: #fff; color: var(--cf-texto); border-color: var(--cf-borde-in); }
-    .cf-btn-sec:hover:not(:disabled) { background: var(--cf-fondo); }
-    .cf-btn-chico { min-height: 30px; padding: 0 10px; font-size: .84rem; }
+    /* Botones: los de la app (.mf-btn, styles.css). */
     .cf-link { border: 0; background: none; padding: 0; color: var(--cf-acento); font-weight: 600; cursor: pointer; }
     .cf-link:hover { text-decoration: underline; }
     .cf-x { display: inline-grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; }
@@ -73,7 +67,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     @keyframes cf-gira { to { transform: rotate(360deg); } }
 
     /* Sin archivos */
-    .cf-inicio { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 680px; margin: 24px auto auto; padding: 48px 24px; background: #fff; border: 2px dashed var(--cf-borde-in); border-radius: 14px; text-align: center; cursor: pointer; }
+    .cf-inicio { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; max-width: 680px; margin: 24px auto auto; padding: 48px 24px; background: #fff; border: 2px dashed var(--cf-borde-in); border-radius: 12px; text-align: center; cursor: pointer; }
     .cf-inicio:hover, .cf-inicio.encima { border-color: var(--cf-acento); background: var(--cf-acento-suave); }
     .cf-inicio-i { width: 40px; height: 40px; margin-bottom: 4px; color: var(--cf-acento); }
     .cf-inicio-t { font-size: 1.15rem; font-weight: 700; }
@@ -99,7 +93,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .cf-leyendo { display: inline-flex; align-items: center; gap: 6px; color: var(--cf-suave); font-size: .86rem; }
 
     /* 2. Resumen */
-    .cf-resumen { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 20px; padding: 18px 20px; background: #fff; border: 1px solid var(--cf-borde); border-radius: 14px; }
+    .cf-resumen { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 20px; padding: 18px 20px; background: #fff; border: 1px solid var(--cf-borde); border-radius: 12px; }
     .cf-res-meta { margin: 0 0 4px; font-size: .84rem; color: var(--cf-tenue); }
     .cf-res-titulo { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0; font-size: 1.2rem; font-weight: 700; line-height: 1.3; }
     .cf-flecha { color: var(--cf-tenue); font-weight: 400; }
@@ -136,7 +130,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .cf-grilla.sin-vista { grid-template-columns: minmax(0, 1fr); }
     @media (max-width: 1000px) { .cf-grilla { grid-template-columns: minmax(0, 1fr); } }
     .cf-form { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
-    .cf-bloque { background: #fff; border: 1px solid var(--cf-borde); border-radius: 14px; overflow: hidden; }
+    .cf-bloque { background: #fff; border: 1px solid var(--cf-borde); border-radius: 12px; overflow: hidden; }
     .cf-bloque-cab { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; padding: 12px 16px; border-bottom: 1px solid var(--cf-borde); }
     .cf-bloque-cab h3 { margin: 0; font-size: 1rem; font-weight: 700; }
     .cf-bloque-cab p { margin: 0; font-size: .82rem; color: var(--cf-tenue); }
@@ -211,7 +205,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
   `,
   template: `
     <app-encabezado
-      titulo="Conversor De Facturas"
+      titulo="Conversor de facturas"
       bajada="Subí la factura (foto, PDF o planilla): la leo, revisás lo que haga falta y la bajás a Excel o la preparás para Xubio."
     />
 
@@ -240,7 +234,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
           <span class="cf-inicio-s">Las fotos tardan unos segundos.</span>
         } @else {
           <svg class="cf-inicio-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M7 9l5-5 5 5M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" /></svg>
-          <strong class="cf-inicio-t">Soltá acá tus facturas</strong>
+          <strong class="cf-inicio-t">Arrastrá tus facturas acá</strong>
           <span id="cf-inicio-s" class="cf-inicio-s">o hacé clic para elegirlas · también podés pegar una captura con <kbd>Ctrl</kbd> + <kbd>V</kbd></span>
           <span class="cf-inicio-f">Fotos, PDF, CSV o Excel · hasta 20 por vez</span>
         }
@@ -277,7 +271,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
         <div class="cf-archivos-fin">
           @if (leyendo()) { <span class="cf-leyendo" aria-live="polite"><span class="cf-spinner" aria-hidden="true"></span> Leyendo…</span> }
           @if (lecturas().length > 1) { <button type="button" class="cf-link" (click)="limpiar()" [disabled]="leyendo()">Quitar todos</button> }
-          <button type="button" class="cf-btn cf-btn-sec cf-btn-chico" (click)="abrirSelector(entrada)" [disabled]="leyendo()">+ Agregar</button>
+          <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="abrirSelector(entrada)" [disabled]="leyendo()">+ Agregar</button>
         </div>
       </nav>
       @if (error(); as err) { <app-alerta nivel="error" [mensajes]="[err]" [descartable]="true" (cerrado)="error.set(null)" /> }
@@ -306,12 +300,12 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
           @if (!l.error) {
             <div class="cf-res-acciones">
               @if (l.tipo === 'comprobante') {
-                <button type="button" class="cf-btn cf-btn-sec" (click)="prepararXubio()" [disabled]="!estudio() || preparando() || verificando()" [attr.aria-busy]="preparando()"
+                <button type="button" class="mf-btn mf-btn-suave" (click)="prepararXubio()" [disabled]="!estudio() || preparando() || verificando()" [attr.aria-busy]="preparando()"
                   [title]="estudio() ? 'Arma el archivo para «Importar desde Mis Comprobantes (ARCA)» de Xubio' : 'Elegí primero la empresa'">
                   @if (preparando()) { <span class="cf-spinner" aria-hidden="true"></span> Preparando… } @else { Preparar para Xubio }
                 </button>
               }
-              <button type="button" class="cf-btn cf-btn-prim" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
+              <button type="button" class="mf-btn" (click)="generar()" [disabled]="generando() || verificando()" [attr.aria-busy]="generando()" data-tour="ax-generar">
                 @if (generando()) { <span class="cf-spinner" aria-hidden="true"></span> Armando… } @else { Descargar Excel }
               </button>
             </div>
@@ -355,10 +349,10 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                         @if (c.datos?.length) { <span class="cf-datos"> · {{ c.datos!.join(' · ') }}</span> }
                       </p>
                       @for (o of c.opciones ?? []; track o) {
-                        <button type="button" class="cf-btn cf-btn-sec cf-btn-chico" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">{{ o }}</button>
+                        <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="elegirLectura(v.campo, o)" [title]="'Usar «' + o + '»'">{{ o }}</button>
                       }
                       @if (v.sugerencia !== null && v.sugerencia !== undefined) {
-                        <button type="button" class="cf-btn cf-btn-prim cf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
+                        <button type="button" class="mf-btn mf-btn-chico" (click)="usar(v)">Usar {{ formatear(v.sugerencia) }}</button>
                       }
                     </li>
                   }

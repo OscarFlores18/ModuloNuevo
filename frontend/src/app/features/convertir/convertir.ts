@@ -94,7 +94,7 @@ interface ArchivoElegido {
     <div class="fx-grilla">
     <section class="mf-panel" aria-labelledby="t-elegir" data-tour="elegir">
       <div class="fx-cab">
-        <h2 id="t-elegir" class="m-0 text-lg font-bold">1. Elegí los archivos<app-ayuda texto="Los Excel «AUX - Control de facturas…» del control van directo. Las facturas en PDF, fotos, capturas, CSV o planillas propias se leen y las revisás antes de subirlas (de las fotos se lee el QR de ARCA y el texto con OCR)." /></h2>
+        <h2 id="t-elegir" class="m-0 text-lg font-bold"><span class="mf-paso-num" aria-hidden="true">1</span>Elegí los archivos<app-ayuda texto="Los Excel «AUX - Control de facturas…» del control van directo. Las facturas en PDF, fotos, capturas, CSV o planillas propias se leen y las revisás antes de subirlas (de las fotos se lee el QR de ARCA y el texto con OCR)." /></h2>
         <p class="mf-sub m-0 mt-1">Los Excel del control («AUX - Control de facturas…») o comprobantes sueltos: PDF, fotos (JPG, PNG), capturas, CSV o planillas. Pueden ser de varios clientes.</p>
       </div>
 
@@ -183,7 +183,7 @@ interface ArchivoElegido {
     <section class="mf-panel" aria-labelledby="t-resultado" data-tour="resultado">
       <div class="fx-cab-der">
         <div class="min-w-0 flex-1">
-          <h2 id="t-resultado" class="m-0 text-lg font-bold">2. Subilos a Xubio<app-ayuda texto="«Subir a Xubio» abre Xubio en esta PC, carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y aprieta «Importar». Te avisa lo que contestó Xubio." /></h2>
+          <h2 id="t-resultado" class="m-0 text-lg font-bold"><span class="mf-paso-num" aria-hidden="true">2</span>Subilos a Xubio<app-ayuda texto="«Subir a Xubio» abre Xubio en esta PC, carga el archivo en «Importar desde Mis Comprobantes (ARCA)» y aprieta «Importar». Te avisa lo que contestó Xubio." /></h2>
           <p class="mf-sub m-0 mt-1">El bot los carga en Xubio por vos, o descargás el archivo para importarlo a mano.</p>
         </div>
         @if (precarga(); as p) {

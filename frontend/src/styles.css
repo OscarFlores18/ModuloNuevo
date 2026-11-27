@@ -3275,7 +3275,7 @@ app-clientes > section:has(#t-candado) {
 }
 
 app-clientes #t-candado {
-  font-size: 1.3rem;
+  font-size: 1.125rem; /* como los títulos de sección: el de la pantalla es el más grande */
   font-weight: 700;
 }
 
@@ -3312,4 +3312,14 @@ input::-ms-clear {
   letter-spacing: 0;
   vertical-align: middle;
   color: rgb(255 255 255 / 85%);
+}
+
+/* --- Título de cada pantalla (app-encabezado): el texto más grande de la página,
+   por encima de los títulos de sus secciones (17px). Igual en todas las pantallas. */
+h2.mf-titulo-pantalla {
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  color: var(--color-texto);
 }

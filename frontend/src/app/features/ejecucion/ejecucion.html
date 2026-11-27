@@ -32,7 +32,7 @@
     <div class="ej-cab-fila">
       <div class="ej-cab-info">
         <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 id="t-ejecucion" class="m-0 text-xl font-bold first-letter:uppercase">{{ titulo() }}</h2>
+          <h2 id="t-ejecucion" class="mf-titulo-pantalla m-0 first-letter:uppercase">{{ titulo() }}</h2>
           @if (!activa()) { <span [class]="ins.clase" class="ej-pildora"><span class="mf-punto" [class.mf-latido]="ins.latido" aria-hidden="true"></span>{{ ins.texto }}</span> }
         </div>
         <p class="mf-sub m-0 mt-1">{{ bajada() }}</p>

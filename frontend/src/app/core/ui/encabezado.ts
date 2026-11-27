@@ -9,7 +9,7 @@ import { Component, input } from '@angular/core';
   host: { class: 'flex flex-wrap items-end justify-between gap-4' },
   template: `
     <div class="min-w-0">
-      <h2 class="m-0 text-xl font-semibold">{{ titulo() }}</h2>
+      <h2 class="mf-titulo-pantalla m-0">{{ titulo() }}</h2>
       @if (bajada()) { <p class="mf-sub m-0 mt-0.5">{{ bajada() }}</p> }
     </div>
     <div class="flex min-w-0 flex-wrap items-center gap-2"><ng-content /></div>
