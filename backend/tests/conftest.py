@@ -61,3 +61,14 @@ def cliente_demo(entorno):
     )
     assert respuesta.status_code == 201, respuesta.text
     return client
+
+
+@pytest.fixture(autouse=True)
+def _gemini_con_tres_modelos(monkeypatch):
+    """Los tests de Gemini cuentan con tres modelos (el principal y dos de respaldo) y
+    sin memoria de cupos agotados entre un test y otro."""
+    from backend.app.extraccion import gemini
+
+    monkeypatch.setattr(gemini, "RESPALDOS", ("gemini-3.5-flash", "gemini-3.1-flash-lite"))
+    monkeypatch.setattr(gemini, "RAPIDO", "gemini-3.1-flash-lite")
+    monkeypatch.setattr(gemini, "_sin_cupo_hasta", {})

@@ -147,8 +147,31 @@ def _json_de(texto: str) -> dict:
 # Si un modelo está saturado (503), falla del lado de Google (500) o tarda
 # demasiado, se reintenta una vez y se pasa al siguiente. El «lite» es el que mejor
 # aguanta los picos de demanda (respondió en 2 s cuando los otros daban 503).
-RESPALDOS = ("gemini-3.5-flash", "gemini-3.1-flash-lite")
+# El cupo gratuito es por modelo y por día (20 pedidos cada uno): con varios de
+# respaldo, la app sigue leyendo aunque el primero se haya quedado sin cupo.
+RESPALDOS = (
+    "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite",
+)
+# El que antes contesta: con plazo (hay OCR local para seguir) se prueba primero.
+RAPIDO = "gemini-3.1-flash-lite"
 PAUSAS_S = (2,)
+# Modelo → hasta cuándo (time.monotonic) no tiene cupo del día: se saltea.
+_sin_cupo_hasta: dict[str, float] = {}
+
+
+def _es_por_dia(exc) -> bool:
+    return "PerDay" in str(exc)
+
+
+def _demora_s(exc) -> float | None:
+    m = re.search(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", str(exc))
+    return float(m.group(1)) if m else None
+
+
+def _con_cupo(modelos: list[str]) -> list[str]:
+    ahora = time.monotonic()
+    return [m for m in modelos if _sin_cupo_hasta.get(m, 0) <= ahora]
 
 
 # Sin plazo (no hay OCR local para seguir): si todos los modelos dan el límite por
@@ -162,8 +185,8 @@ def espera_por_cupo(exc) -> float | None:
     texto = str(exc)
     if "PerDay" in texto:
         return None
-    m = re.search(r"retryDelay['\"]?\s*[:=]\s*['\"]?(\d+(?:\.\d+)?)s", texto)
-    return min(float(m.group(1)) + 1 if m else 30.0, numero("GEMINI_ESPERA_CUPO_S", ESPERA_CUPO_S))
+    demora = _demora_s(exc)
+    return min(demora + 1 if demora is not None else 30.0, numero("GEMINI_ESPERA_CUPO_S", ESPERA_CUPO_S))
 
 
 def _pedir(cliente, types, errors, jpeg: bytes, plazo_s: float | None = None):
@@ -184,7 +207,9 @@ def _pedir_una_vuelta(cliente, types, errors, jpeg: bytes, plazo_s: float | None
     modelos = list(dict.fromkeys([modelo(), *RESPALDOS]))
     if plazo_s:
         # Con plazo, primero el más rápido: el resto suele tardar más que el plazo.
-        modelos = list(dict.fromkeys([RESPALDOS[-1], *modelos]))
+        modelos = list(dict.fromkeys([RAPIDO, *modelos]))
+    if not (modelos := _con_cupo(modelos)):
+        raise GeminiNoDisponible("Gemini: se usó todo el cupo gratuito del día de todos los modelos. Se renueva mañana.")
     fin = time.monotonic() + plazo_s if plazo_s else None
     ultimo: Exception | None = None
     for m in modelos:
@@ -209,10 +234,19 @@ def _pedir_una_vuelta(cliente, types, errors, jpeg: bytes, plazo_s: float | None
                 )
             except errors.APIError as exc:
                 if exc.code == 429:
-                    # El cupo gratuito es por modelo: sin reintentar, al siguiente.
-                    if not isinstance(ultimo, errors.APIError) or ultimo.code != 429:
+                    # El cupo gratuito es por modelo: sin reintentar, al siguiente. Sin
+                    # cupo del día, se saltea hasta que se renueve.
+                    if _es_por_dia(exc):
+                        _sin_cupo_hasta[m] = time.monotonic() + (_demora_s(exc) or 3600)
+                    # De los 429, el que importa es el «por minuto» (se puede esperar).
+                    if not isinstance(ultimo, errors.APIError) or ultimo.code != 429 or (_es_por_dia(ultimo) and not _es_por_dia(exc)):
                         ultimo = exc
-                    logger.info("Gemini %s sin cupo (429).", m)
+                    logger.info("Gemini %s sin cupo (429%s).", m, ", del día" if _es_por_dia(exc) else "")
+                    break
+                if exc.code == 404:
+                    # El modelo ya no existe (o no para esta clave): al siguiente.
+                    ultimo = ultimo or exc
+                    logger.info("Gemini %s no está disponible (404).", m)
                     break
                 if exc.code not in (500, 503, 504):
                     raise
@@ -267,6 +301,8 @@ def leer_imagen(imagen, plazo_s: float | None = None) -> dict:
         if exc.code in (400, 401, 403) and re.search(r"api.?key|permission|unauth", str(exc.message or ""), re.I):
             raise GeminiNoDisponible("Gemini: la clave (GEMINI_API_KEY) no es válida o no tiene permiso.") from exc
         raise GeminiNoDisponible(f"Gemini no pudo leer la imagen (error {exc.code}).") from exc
+    except GeminiNoDisponible:
+        raise
     except Exception as exc:  # sin internet, tiempo agotado…
         logger.warning("Gemini no respondió: %s", exc)
         if isinstance(exc, TimeoutError) or "timed out" in str(exc).lower() or "timeout" in type(exc).__name__.lower():

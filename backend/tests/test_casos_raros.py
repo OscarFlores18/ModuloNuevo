@@ -235,3 +235,35 @@ def test_con_ocr_local_no_espera_el_cupo(monkeypatch):
     cliente, _ = _cliente_con_cupo([_sin_cupo()] * 3)
     with pytest.raises(errors.ClientError):
         gemini._pedir(cliente, types, errors, b"jpeg", plazo_s=15)
+
+
+def test_modelo_sin_cupo_del_dia_se_saltea_hasta_que_se_renueva(monkeypatch):
+    """Caso real: gemini-3.8-flash con sus 20 pedidos del día usados. El siguiente
+    pedido ya no lo prueba: va directo al de respaldo."""
+    from google.genai import errors, types
+
+    monkeypatch.setattr(gemini, "modelo", lambda: "primero")
+    cliente, pedidos = _cliente_con_cupo([_sin_cupo("PerDayPerProjectPerModel", "17699s"), "uno", "dos"])
+    assert gemini._pedir(cliente, types, errors, b"jpeg") == "uno"
+    assert gemini._pedir(cliente, types, errors, b"jpeg") == "dos"
+    assert pedidos == ["primero", "gemini-3.5-flash", "gemini-3.5-flash"]
+
+
+def test_modelo_que_ya_no_existe_pasa_al_siguiente(monkeypatch):
+    from google.genai import errors, types
+
+    monkeypatch.setattr(gemini, "modelo", lambda: "viejo")
+    no_existe = errors.ClientError(404, {"error": {"code": 404, "message": "not found", "status": "NOT_FOUND"}})
+    cliente, pedidos = _cliente_con_cupo([no_existe, "respuesta"])
+    assert gemini._pedir(cliente, types, errors, b"jpeg") == "respuesta"
+
+
+def test_todos_sin_cupo_del_dia_lo_dice_claro(monkeypatch):
+    from google.genai import errors, types
+
+    monkeypatch.setattr(gemini, "modelo", lambda: "primero")
+    cliente, _ = _cliente_con_cupo([_sin_cupo("PerDay", "3600s")] * 3)
+    with pytest.raises(errors.ClientError):
+        gemini._pedir(cliente, types, errors, b"jpeg")
+    with pytest.raises(gemini.GeminiNoDisponible, match="cupo gratuito del día de todos"):
+        gemini._pedir(cliente, types, errors, b"jpeg")
