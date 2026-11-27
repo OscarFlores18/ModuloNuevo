@@ -208,7 +208,14 @@ export class EjecucionPantalla {
   protected readonly pendientes = computed(() => this.tareas().length);
   protected readonly gruposTareas = computed(() => {
     const visibles = this.tareasVista();
-    return GRUPOS.map((g) => ({ ...g, tareas: visibles.filter((t) => t.grupo === g.id) })).filter((g) => g.tareas.length);
+    let desde = 0;
+    return GRUPOS.map((g) => ({ ...g, tareas: visibles.filter((t) => t.grupo === g.id) }))
+      .filter((g) => g.tareas.length)
+      .map((g) => {
+        const conNumero = { ...g, desde };  // el número de orden sigue de un grupo al otro
+        desde += g.tareas.length;
+        return conNumero;
+      });
   });
   /** Para el filtro: los clientes que tienen tareas. */
   protected readonly clientesConTareas = computed(() => [...new Set(this.tareas().map((t) => t.cliente))]);

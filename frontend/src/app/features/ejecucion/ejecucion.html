@@ -133,16 +133,14 @@
     <section class="mf-panel tr-panel" [class.tr-panel-listo]="!pendientes()" role="tabpanel" aria-labelledby="tab-tareas" id="t-tareas" [attr.aria-busy]="aplicando()">
       <header class="tr-cab">
         <div class="min-w-0 flex-1">
-          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientesVista() ? 'Hacelas en este orden' : 'Todo hecho · Excel actualizado' }}<app-ayuda texto="Hacelas en este orden: primero lo grave, después lo de Xubio y al final lo que solo el cliente puede aclarar. Cada tarea desaparece cuando el próximo control la da por buena." /></h2>
-          <p class="mf-sub m-0 mt-0.5" aria-live="polite">
+          <h2 class="m-0 text-lg font-bold" id="t-tareas-titulo">{{ pendientesVista() ? 'Hacelas en este orden' : 'Todo hecho · Excel actualizado' }}</h2>
+          <p class="mf-sub m-0 mt-0.5" aria-live="polite" [hidden]="!aplicando() && !nSel && pendientesVista()">
             @if (aplicando()) {
               <span class="tr-aplicando"><span class="ej-spinner" aria-hidden="true"></span> Aplicando cambios y re-chequeando el control...</span>
             } @else if (nSel) {
               <strong class="tr-pendiente-aplicar">{{ nSel }} {{ nSel === 1 ? 'cambio seleccionado listo' : 'cambios seleccionados listos' }} para aplicar</strong>
             } @else if (!pendientesVista()) {
               Los cambios aplicados quedaron en el mismo Excel y el control se re-chequeó.
-            } @else {
-              {{ pendientesVista() === 1 ? '1 tarea' : pendientesVista() + ' tareas' }}, de la más urgente a la que puede esperar.
             }
           </p>
         </div>
@@ -186,11 +184,11 @@
         </div>
       }
 
-      @for (g of gruposTareas(); track g.id; let ng = $index) {
+      @for (g of gruposTareas(); track g.id) {
         <div class="tr-grupo" [attr.data-grupo]="g.id">
-          <h3 class="tr-grupo-titulo"><span class="tr-grupo-num">{{ ng + 1 }}</span>{{ g.titulo }} <small>{{ g.ayuda }}</small></h3>
           <ul class="tr-lista">
             @for (tarea of g.tareas; track tarea.clave; let i = $index) {
+              @let numero = g.desde + i + 1;
               @let nCambios = cambiosDe(tarea.advertencia).length;
               @let idCheck = 'tr-' + g.id + '-' + i;
               @let faltantes = faltantesDe(tarea.advertencia);
@@ -200,14 +198,14 @@
                 <li class="tr-tarea tr-faltantes">
                   <div class="tr-falt-cab">
                     <div class="tr-texto">
-                      <span class="tr-orden">Faltantes en IVA {{ tarea.operacion }} <span class="tr-falt-num">({{ faltantes.length }} {{ faltantes.length === 1 ? 'comprobante' : 'comprobantes' }})</span></span>
-                      <span class="tr-meta"><strong>{{ tarea.cliente }}</strong> · {{ nTildadas }} de {{ faltantes.length }} {{ nTildadas === 1 ? 'tildado' : 'tildados' }} para subir</span>
+                      <span class="tr-orden"><span class="tr-num">{{ numero }}</span>Faltantes en IVA {{ tarea.operacion }} <span class="tr-falt-num">({{ faltantes.length }} {{ faltantes.length === 1 ? 'comprobante' : 'comprobantes' }})</span></span>
+                      <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (nTildadas < faltantes.length) { · {{ nTildadas }} de {{ faltantes.length }} {{ nTildadas === 1 ? 'tildado' : 'tildados' }} para subir}</span>
                     </div>
                     <span class="tr-acciones">
                       @if (puedeSubir(tarea.advertencia)) {
                         <button type="button" class="mf-btn mf-btn-ok" (click)="subirAXubio(tarea.advertencia)"
                           [disabled]="!perspectiva.canEdit() || !nTildadas"
-                          [title]="perspectiva.motivoBloqueo() ?? (nTildadas ? 'Lleva los tildados a «Subir a Xubio», listos para cargar' : 'Tildá al menos un comprobante')">⬆ Subir {{ nTildadas }} a Xubio</button>
+                          [title]="perspectiva.motivoBloqueo() ?? (nTildadas ? 'Lleva los tildados a «Subir a Xubio», listos para cargar' : 'Tildá al menos un comprobante')">Subir {{ nTildadas }} a Xubio</button>
                       } @else if (destinoVisible(tarea); as d) {
                         <button type="button" class="mf-btn mf-btn-suave mf-btn-chico" (click)="irA(tarea)">{{ d.texto }}</button>
                       }
@@ -253,7 +251,7 @@
                 <input type="checkbox" class="tr-check tr-check-aplicar" [id]="idCheck" [checked]="nElegidos === nCambios" [indeterminate]="nElegidos > 0 && nElegidos < nCambios"
                   [disabled]="!perspectiva.canEdit() || aplicando()" [attr.title]="perspectiva.motivoBloqueo() ?? 'Elegir para que la app lo corrija con el dato de ARCA'" (change)="alternarCambios(tarea.advertencia, $event)" />
                 <label class="tr-texto" [for]="idCheck">
-                  <span class="tr-orden">{{ tarea.orden }}</span>
+                  <span class="tr-orden"><span class="tr-num">{{ numero }}</span>{{ tarea.orden }}</span>
                   <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ nElegidos }} de {{ nCambios }} {{ nCambios === 1 ? 'seleccionado' : 'seleccionados' }} para aplicar</span>
                 </label>
                 <span class="tr-acciones">
@@ -263,7 +261,7 @@
               } @else {
               <li class="tr-tarea">
                 <div class="tr-texto">
-                  <span class="tr-orden">{{ tarea.orden }}</span>
+                  <span class="tr-orden"><span class="tr-num">{{ numero }}</span>{{ tarea.orden }}</span>
                   <span class="tr-meta"><strong>{{ tarea.cliente }}</strong>@if (tarea.operacion) { · {{ tarea.operacion }}} — {{ tarea.porque }}</span>
                 </div>
                 <span class="tr-acciones">

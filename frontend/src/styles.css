@@ -2351,14 +2351,6 @@ details[open] > summary .ej-chevron {
 
 /* --- Qué hay que hacer (pantalla del control) ------------------------------------ */
 
-.tr-panel {
-  border-left: 4px solid var(--color-aviso);
-}
-
-.tr-panel-listo {
-  border-left-color: var(--color-ok);
-}
-
 .tr-cab {
   display: flex;
   flex-wrap: wrap;
@@ -2367,7 +2359,25 @@ details[open] > summary .ej-chevron {
 }
 
 .tr-grupo {
-  margin-top: 16px;
+  margin-top: 12px;
+}
+
+/* El número de orden de cada tarea: discreto, sin color de alarma. */
+.tr-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-right: 8px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--color-panel-alt);
+  border: 1px solid var(--color-borde);
+  color: var(--color-tenue);
+  font-size: 0.75rem;
+  font-weight: 700;
+  vertical-align: 1px;
 }
 
 .mf-panel .tr-grupo-titulo {
@@ -2734,10 +2744,6 @@ label.tr-texto {
 
 .tr-grupo[data-grupo='prioridad'] .tr-grupo-num {
   background: #2563eb;
-}
-
-.tr-grupo[data-grupo='prioridad'] .tr-tarea {
-  border-left: 3px solid #2563eb;
 }
 
 /* --- Qué hay que hacer: las tareas no aprietan el texto contra los botones ---- */

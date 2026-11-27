@@ -82,12 +82,6 @@
 
   <footer class="mf-pie">
     <span>Control de Facturas{{ version() ? ' · versión ' + version() : '' }}{{ compilado() ? ' · armada el ' + compilado() : '' }}</span>
-    <span class="mf-sep">·</span>
-    <span>{{ enEstaPc() ? 'Los bots usan Google Chrome de esta computadora' : 'Los bots corren en el servidor' }}</span>
-    @if (!sesion.conectado()) {
-      <span class="mf-sep">·</span>
-      <span>Modo local</span>
-    }
   </footer>
 </main>
 

@@ -123,11 +123,16 @@ export function tareasDe(advertencias: readonly Advertencia[]): Tarea[] {
       cliente: a.cliente,
       operacion: a.operacion,
       orden: o.orden,
-      porque: a.detalle || a.titulo,
+      porque: sinLoNormal(a.detalle) || a.titulo,
       destino: o.destino,
       advertencia: a,
     });
   }
   // Las partidas de ARCA no encontradas en el Libro IVA van siempre arriba (grupo «Prioridad»).
   return tareas.sort((x, y) => orden[x.grupo] - orden[y.grupo]);
+}
+
+/** Sin las aclaraciones de lo que es normal («9 son tiques…: ARCA no los informa, es normal.»): no piden nada. */
+export function sinLoNormal(texto: string | null | undefined): string {
+  return (texto ?? '').replace(/[^.]*?es normal\.\s*/g, '').trim();
 }
