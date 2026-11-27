@@ -80,7 +80,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .ax-limpiar { display: block; margin: 10px 0 0 auto; color: var(--ax-tenue); }
     .ax-pend { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 10px 0 0; font-size: .85rem; color: var(--ax-error); }
     .ax-descargar { flex: none; display: inline-flex; align-items: center; gap: 8px; padding: 8px 16px; }
-    .ax-inicio:focus-visible, .ax-fila:focus-visible, .ax-x:focus-visible, .ax-link:focus-visible, .ax-seg button:focus-visible, .ax-quitar:focus-visible, .ax-mas:focus-visible { outline: 2px solid var(--ax-acento); outline-offset: 2px; }
+    .ax-inicio:focus-visible, .ax-fila:focus-visible, .ax-x:focus-visible, .ax-link:focus-visible, .ax-quitar:focus-visible, .ax-mas:focus-visible { outline: 2px solid var(--ax-acento); outline-offset: 2px; }
     .ax-punto { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ax-borde-in); }
     .ax-punto.aviso { background: #f59e0b; } .ax-punto.error { background: #dc2626; }
     .ax-empresa { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--ax-borde); font-size: .85rem; }
@@ -95,11 +95,10 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     @media (max-width: 900px) { .ax-grilla { grid-template-columns: minmax(0, 1fr); } }
     .ax-ver-cab { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; margin-bottom: 10px; }
     .ax-ver-cab h2 { margin: 0; font-size: 1.05rem; font-weight: 600; }
-    .ax-seg { display: inline-flex; border: 1px solid var(--ax-borde-in); border-radius: 6px; overflow: hidden; }
-    .ax-seg button { border: 0; background: #fff; padding: 5px 14px; font: inherit; font-size: .85rem; font-weight: 600; color: var(--ax-tenue); cursor: pointer; }
-    .ax-seg button + button { border-left: 1px solid var(--ax-borde-in); }
-    .ax-seg button[aria-pressed="true"] { background: var(--ax-texto); color: #fff; }
-    .ax-seg button:disabled { cursor: not-allowed; opacity: .5; }
+    .ax-op { flex: 1 1 320px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; padding: 8px 12px; border: 1px solid var(--ax-borde); border-radius: 8px; background: var(--ax-fondo); font-size: .88rem; }
+    .ax-op.aviso { border-color: #fcd34d; background: #fffbeb; }
+    .ax-op-tipo { font-weight: 700; }
+    .ax-op-frase { flex: 1 1 240px; color: #334155; }
     .ax-ver { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
     .ax-ver li { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; padding: 6px 10px; border-left: 3px solid var(--ax-borde-in); background: var(--ax-fondo); border-radius: 0 6px 6px 0; font-size: .84rem; line-height: 1.35; }
     .ax-ver li.error { border-left-color: #dc2626; } .ax-ver li.aviso { border-left-color: #f59e0b; } .ax-ver li.ok { border-left-color: #22c55e; color: var(--ax-ok); }
@@ -265,17 +264,7 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                       @for (e of empresas(); track e.nombre) { <option [value]="e.nombre" [selected]="estudio()?.empresa === e.nombre">{{ e.nombre }}</option> }
                     </select>
                   </label>
-                  @if (estudio(); as f) {
-                    @if (f.origen === 'receptor' || f.origen === 'emisor') {
-                      <p>Es el {{ f.origen }} de la factura, así que es {{ f.operacion === 'Compras' ? 'una compra' : 'una venta' }}.</p>
-                    } @else if (f.origen === 'trabajo') {
-                      <p class="aviso">La factura no nombra a ningún cliente: la tomé como compra de {{ f.empresa }}.</p>
-                    } @else {
-                      <p class="aviso">{{ avisoManual() }}</p>
-                    }
-                  } @else {
-                    <p class="aviso">{{ empresas().length ? 'Ninguna CUIT es de un cliente: elegí la empresa si corresponde.' : 'No se pudieron ver los clientes del estudio.' }}</p>
-                  }
+                  @if (!empresas().length) { <p class="aviso">No se pudieron ver los clientes del estudio.</p> }
                 </div>
               }
             }
@@ -297,12 +286,18 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
                   Verificá lo que leí
                   <app-ayuda texto="Solo te aviso lo que no cierra (las cuentas, un CUIT mal) o lo que falta. Si la cuenta da el valor correcto, aparece «Usar»." />
                 </h2>
-                @if (l.tipo === 'comprobante') {
-                  <div class="ax-seg" role="group" aria-label="¿Es compra o venta?" [attr.title]="estudio() ? null : 'Elegí primero la empresa'">
-                    <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Compras'" [disabled]="!estudio()" (click)="elegirOperacion('Compras')">Compra</button>
-                    <button type="button" [attr.aria-pressed]="estudio()?.operacion === 'Ventas'" [disabled]="!estudio()" (click)="elegirOperacion('Ventas')">Venta</button>
-                  </div>
-                }
+              @if (l.tipo === 'comprobante') {
+                <div class="ax-op" [class.aviso]="!estudio() || estudio()!.origen === 'manual' || estudio()!.origen === 'trabajo'" role="status">
+                  @if (estudio(); as f) {
+                    <span class="ax-op-tipo">{{ f.operacion === 'Compras' ? 'Compra' : 'Venta' }}</span>
+                    <span class="ax-op-frase">{{ fraseOperacion() }}</span>
+                    <button type="button" class="ax-link" (click)="elegirOperacion(f.operacion === 'Compras' ? 'Ventas' : 'Compras')">Es {{ f.operacion === 'Compras' ? 'venta' : 'compra' }}</button>
+                  } @else {
+                    <span class="ax-op-tipo">¿Compra o venta?</span>
+                    <span class="ax-op-frase">{{ empresas().length ? 'Ninguna CUIT de la factura es de un cliente: elegí la empresa arriba y te digo cuál es.' : 'Sin la lista de clientes no puedo saberlo.' }}</span>
+                  }
+                </div>
+              }
               </div>
               @if (l.avisos.length && sinDatos(l)) { <app-alerta class="mb-2 block" nivel="aviso" [mensajes]="l.avisos" /> }
 
@@ -615,6 +610,19 @@ export class PasarAExcel implements OnDestroy {
     const operacion = manual.operacion ?? (mismaEmpresa ? detectada!.operacion : 'Compras');
     const origen = mismaEmpresa && operacion === detectada!.operacion ? detectada!.origen : 'manual';
     return adaptar(l.encabezado, manual.empresa, operacion, origen);
+  });
+
+  /** Compra o venta, dicho en una frase: quién es quién y de dónde se sacó. */
+  protected readonly fraseOperacion = computed(() => {
+    const f = this.estudio();
+    if (!f) return '';
+    const otro = f.contraparte.nombre || (f.operacion === 'Compras' ? 'el emisor' : 'consumidor final');
+    switch (f.origen) {
+      case 'receptor': return `${f.empresa} recibió la factura: le compró a ${otro}.`;
+      case 'emisor': return `${f.empresa} emitió la factura: le vendió a ${otro}.`;
+      case 'trabajo': return `La factura no nombra a ningún cliente: la tomé como compra de ${f.empresa}, la empresa con la que venís trabajando.`;
+      default: return this.avisoManual() || `${f.empresa}, elegida a mano.`;
+    }
   });
 
   /** Por qué lo elegido a mano no coincide con la factura. */
