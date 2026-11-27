@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 from ..modelo import TIPOS, cuit_valido, fecha as fecha_iso, importe, nombre_tipo, norm
 from ..texto_factura import _tipo as tipo_del_texto
 from ..texto_factura import cuits as cuits_del_texto
-from .datos import ALICUOTAS, AlicuotaIva, ETIQUETAS_ENCABEZADO, Hoja, Item, Lectura, MAX_FILAS, TOLERANCIA, TOTALES, Tributo
+from .datos import ALICUOTAS, AlicuotaIva, ETIQUETAS_ENCABEZADO, ETIQUETAS_TOTALES, Hoja, Item, Lectura, MAX_FILAS, TOLERANCIA, TOTALES, Tributo
 
 logger = logging.getLogger(__name__)
 
@@ -538,11 +538,29 @@ def totales_efectivos(lectura: Lectura) -> dict[str, float | None]:
         for x in lectura.tributos:
             g = grupo_tributo(x)
             grupos[g] = round(grupos.get(g, 0) + (x.importe or 0), 2)
-        for g in ("impuestos_internos", "percepcion_iibb"):
-            if g in grupos:
-                t[g] = grupos[g]
-        t["otros_tributos"] = grupos.get("otros_tributos", 0.0) or None
+        # Con renglones, los renglones mandan: un tributo borrado deja de sumar.
+        for g in GRUPOS_TRIBUTO:
+            t[g] = grupos.get(g) or None
     return t
+
+
+GRUPOS_TRIBUTO = ("impuestos_internos", "percepcion_iibb", "otros_tributos")
+
+
+def _tributos_sueltos_a_renglones(lectura: Lectura) -> None:
+    """Si vinieron renglones de tributos y además un total suelto de un grupo sin
+    renglón (p. ej. impuestos internos leídos aparte), ese total pasa a ser un
+    renglón: así los renglones tienen todo y nada se pierde ni se cuenta dos veces."""
+    if not lectura.tributos:
+        return
+    grupos = {grupo_tributo(x) for x in lectura.tributos}
+    # «Otros tributos» suelto no: casi siempre es «Importe total otros tributos», la
+    # suma de los renglones (y si el OCR lo leyó mal, inventaría un tributo).
+    for g in ("impuestos_internos", "percepcion_iibb"):
+        suelto = lectura.totales.get(g)
+        if not suelto or g in grupos:
+            continue
+        lectura.tributos.append(Tributo(descripcion=ETIQUETAS_TOTALES[g], importe=suelto))
 
 
 def completar_desglose(lectura: Lectura) -> Lectura:
@@ -550,6 +568,7 @@ def completar_desglose(lectura: Lectura) -> Lectura:
     con el neto si da alguna. Con desglose, el IVA total es la suma de las filas."""
     if lectura.tipo != "comprobante":
         return lectura
+    _tributos_sueltos_a_renglones(lectura)
     lectura.totales = t = totales_efectivos(lectura)
     if not lectura.iva_alicuotas and t.get("iva"):
         neto = t.get("neto_gravado")

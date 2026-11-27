@@ -137,3 +137,37 @@ def test_pdf_escaneado_sin_gemini_usa_el_ocr_local(monkeypatch):
     monkeypatch.setattr(paso_leer, "_leer_local", lambda nombre, imagen, lectura, *a, **k: lectura.model_copy(update={"metodo": "ocr"}))
     l = a_excel.leer("escaneada.pdf", _pdf_escaneado())
     assert l.metodo == "ocr"
+
+
+# --- Tributos: los renglones mandan ---------------------------------------------------
+
+
+def test_borrar_un_renglon_de_tributo_deja_de_sumar():
+    """Bug: al borrar el renglón de impuestos internos, su importe seguía en el total."""
+    l = a_excel.Lectura(
+        tipo="comprobante",
+        totales={"neto_gravado": 1000.0, "iva": 210.0, "impuestos_internos": 50.0, "percepcion_iibb": 30.0, "total": 1290.0},
+        tributos=[a_excel.Tributo(descripcion="PERCEPCION IIBB BS AS", importe=30.0)],
+    )
+    t = a_excel.totales_efectivos(l)
+    assert t["impuestos_internos"] is None and t["percepcion_iibb"] == 30.0
+
+
+def test_total_suelto_sin_renglon_pasa_a_renglon(gemini_responde):
+    """Impuestos internos leídos aparte y la percepción en renglón: no se pierde ninguno."""
+    datos = {**FACTURA_CON_TRIBUTOS, "totales": {
+        **FACTURA_CON_TRIBUTOS["totales"], "impuestos_internos": 90.54,
+        "desglose_tributos": [FACTURA_CON_TRIBUTOS["totales"]["desglose_tributos"][1]],
+    }}
+    gemini_responde(datos)
+    l = a_excel.leer("factura.jpg", _png())
+    assert [(x.descripcion, x.importe) for x in l.tributos] == [("PERCEPCION IIBB BS AS", 6717.98), ("Impuestos internos", 90.54)]
+    assert _no_ok(l) == []
+
+
+def test_otros_tributos_que_es_la_suma_no_se_duplica(gemini_responde):
+    datos = {**FACTURA_CON_TRIBUTOS, "totales": {**FACTURA_CON_TRIBUTOS["totales"], "otros_tributos": 6808.52}}
+    gemini_responde(datos)
+    l = a_excel.leer("factura.jpg", _png())
+    assert len(l.tributos) == 2 and l.totales["otros_tributos"] is None
+    assert _no_ok(l) == []
