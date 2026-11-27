@@ -50,6 +50,8 @@ PAUSA_ENTRE_CLIENTES_S = int(os.getenv("MODULONUEVO_PAUSA_S", "3"))
 # Se consulta el portal cada ARCA_PING_MIN minutos y se renueva el login a los
 # ARCA_RENOVAR_MIN minutos, antes de que el portal la venza por su cuenta.
 ARCA_PING_MIN = int(os.getenv("MODULONUEVO_ARCA_PING_MIN", "9"))
+# Antes de reabrir Mis Comprobantes cuando ARCA tarda en responder.
+ARCA_ESPERA_REINTENTO_S = float(os.getenv("MODULONUEVO_ARCA_ESPERA_REINTENTO_S", "5"))
 ARCA_RENOVAR_MIN = int(os.getenv("MODULONUEVO_ARCA_RENOVAR_MIN", "50"))
 
 # Navegador de los bots. Por defecto corre oculto (headless): los controles no

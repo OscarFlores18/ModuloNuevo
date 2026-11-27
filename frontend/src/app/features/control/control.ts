@@ -78,6 +78,9 @@ interface UltimoControl {
   fecha: string;
 }
 
+/** Clientes que tienen que saltar a la vista en las listas (van en amarillo). */
+const CLIENTES_DESTACADOS = new Set(['MATERIALES SAN FERNANDO S.A.']);
+
 const CLAVE_ULTIMO = 'cf-ultimo-control';
 
 function leerUltimo(): UltimoControl | null {
@@ -338,6 +341,10 @@ export class NuevoControl {
   private pedidoControles = 0;
 
   /** Una etiqueta por operación elegida: «1er control», «2do control»… */
+  protected destacado(nombre: string): boolean {
+    return CLIENTES_DESTACADOS.has(nombre.trim().toUpperCase());
+  }
+
   protected etiquetasControl(nombre: string): { texto: string; titulo: string; repetido: boolean }[] {
     const c = this.controles()[nombre];
     const o = this.valor().operaciones;

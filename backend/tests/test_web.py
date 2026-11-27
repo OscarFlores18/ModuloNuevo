@@ -85,6 +85,7 @@ class _GestorFalso:
 @pytest.fixture
 def sin_pausa(monkeypatch):
     monkeypatch.setattr(config, "PAUSA_ENTRE_CLIENTES_S", 0)
+    monkeypatch.setattr(config, "ARCA_ESPERA_REINTENTO_S", 0)
     monkeypatch.setattr(ejecuciones_srv, "GestorSesiones", _GestorFalso)
     monkeypatch.setattr(
         ejecuciones_srv, "procesar_cruce", lambda *a, **k: {"ok": True}
@@ -385,3 +386,47 @@ def test_auditoria_se_omite_si_fallo_arca_y_reabre_si_falta_el_filtro(cliente_de
     assert cruces == []
     errores = [a for a in detalle["advertencias"] if a["tipo"] == "paso_error"]
     assert [e["titulo"] for e in errores] == ["ARCA · Ventas: falló"]
+
+
+def test_auditoria_se_omite_si_xubio_no_bajo_ese_libro(cliente_demo, sin_pausa, tmp_path, monkeypatch):
+    """Xubio baja Ventas pero falla Compras (el bot anota el error y sigue): solo
+    se cruza Ventas; Compras no se audita contra un Libro IVA vacío."""
+    cruces: list[str] = []
+
+    class _XubioSinCompras(_SesionXubioFalsa):
+        def descargar(self, nombre_cliente, fecha_desde, fecha_hasta, ventas, compras, carpeta):
+            archivo = Path(carpeta) / "IVA VENTAS.xlsx"
+            archivo.write_bytes(b"xubio")
+            return BotResult(
+                archivos=[str(archivo)],
+                errores=[{"code": "bot_error", "mensaje": "Timeout", "paso": "xubio", "detalle": {"tipo": "Compras"}}],
+            )
+
+    class _Gestor(_GestorFalso):
+        def xubio(self, usuario, password):
+            return _XubioSinCompras()
+
+    monkeypatch.setattr(ejecuciones_srv, "GestorSesiones", _Gestor)
+    monkeypatch.setattr(ejecuciones_srv, "procesar_cruce", lambda *a, **k: cruces.append(a[1]))
+    pedido = {
+        "clientes": ["Acme"],
+        "desde": "01/03/2025",
+        "hasta": "31/03/2025",
+        "ventas": True,
+        "compras": True,
+        "pasos": {"arca": True, "xubio": True, "auditoria": True},
+        "carpeta": str(tmp_path / "salidas"),
+        "xubio": {"usuario": "operador", "clave": "clave-xubio"},
+    }
+    ejecucion_id = cliente_demo.post("/api/ejecuciones", json=pedido).json()["id"]
+    for _ in range(200):
+        detalle = cliente_demo.get(f"/api/ejecuciones/{ejecucion_id}").json()
+        if detalle["estado"] in {"finalizada", "cancelada", "error"}:
+            break
+        time.sleep(0.02)
+
+    pasos = {p["id"]: p for p in detalle["detalle_clientes"][0]["pasos"]}
+    assert pasos["auditoria_ventas"]["estado"] == "ok"
+    assert pasos["auditoria_compras"]["estado"] == "omitido"
+    assert "Libro IVA Compras" in pasos["auditoria_compras"]["mensaje"]
+    assert "Ventas" in cruces and "Compras" not in cruces

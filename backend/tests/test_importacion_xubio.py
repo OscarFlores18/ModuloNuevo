@@ -134,7 +134,12 @@ class _Clientes:
 
 
 def _bot_falso(monkeypatch, llamadas):
+    import threading
+
     monkeypatch.setattr(srv, "VENTANA_ABIERTA_S", 0)
+    # El hilo del bot suelta el candado un instante después de responder: cada
+    # test con el suyo, para no chocar con el anterior.
+    monkeypatch.setattr(srv, "_en_curso", threading.Lock())
 
     class Pagina:
         def wait_for_event(self, *a, **k):

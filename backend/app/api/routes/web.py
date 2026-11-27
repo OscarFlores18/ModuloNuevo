@@ -737,6 +737,22 @@ def descargar_archivo_ejecucion(
     return FileResponse(archivo, filename=archivo.name)
 
 
+@router.get("/ejecuciones/{ejecucion_id}/clientes/{indice}/archivos/{nombre}/vista")
+def ver_archivo_ejecucion(ejecucion_id: str, indice: int, nombre: str) -> dict:
+    """El archivo como tabla (hojas y filas), para mirarlo sin descargarlo."""
+    from ...core import vista_archivo
+
+    try:
+        ej = ejecuciones_srv.obtener(ejecucion_id)
+        archivo = ejecuciones_srv.ruta_archivo(ej, indice, nombre)
+    except ejecuciones_srv.ErrorEjecucion as exc:
+        raise _http_error(exc) from exc
+    try:
+        return vista_archivo.vista(archivo)
+    except vista_archivo.SinVista as exc:
+        raise HTTPException(status_code=415, detail={"mensaje": str(exc)}) from exc
+
+
 _AUX_CONTROL = re.compile(r"^AUX - Control de facturas (Ventas|Compras)\b.*\.xlsx?$", re.IGNORECASE)
 
 

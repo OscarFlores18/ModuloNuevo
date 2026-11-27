@@ -12,6 +12,7 @@ import { Alerta } from '../../core/ui/alerta';
 import { AlertasService } from '../../core/ui/alertas.service';
 import { Ayuda } from '../../core/ui/ayuda';
 import { ToastService } from '../../core/ui/toast';
+import { VistaArchivo, VistaDeArchivo } from '../../core/ui/vista-archivo';
 import {
   ContextoVentana,
   FaltantesDelExcel,
@@ -58,6 +59,8 @@ interface ClienteVista {
   pendientes: number;
   carpeta: string;
   archivos: ArchivoGenerado[];
+  /** Los archivos en bloques: Excel, CSV y el resto (cada uno con su título). */
+  gruposArchivos: GrupoArchivos[];
   origen: ClienteEjecucion;
 }
 
@@ -83,7 +86,7 @@ function problemasDe(pasos: readonly PasoEjecucion[]): Problema[] {
  */
 @Component({
   selector: 'app-ejecucion',
-  imports: [RouterLink, Alerta, Ayuda],
+  imports: [RouterLink, Alerta, Ayuda, VistaArchivo],
   templateUrl: './ejecucion.html',
 })
 export class EjecucionPantalla {
@@ -549,6 +552,7 @@ export class EjecucionPantalla {
         pendientes: this.pendientesDe(c.nombre),
         carpeta: c.carpeta,
         archivos,
+        gruposArchivos: agruparArchivos(archivos),
         origen: c,
       };
     }),
@@ -776,6 +780,35 @@ export class EjecucionPantalla {
     });
   }
 
+  /** El ojo: el archivo como tabla, sin descargar nada. */
+  protected readonly vistaAbierta = signal(false);
+  protected readonly vistaNombre = signal('');
+  protected readonly vistaDatos = signal<VistaDeArchivo | null>(null);
+  protected readonly vistaCargando = signal(false);
+
+  protected async ver(c: ClienteVista, archivo: ArchivoGenerado): Promise<void> {
+    const e = this.ej();
+    if (!e) return;
+    this.vistaNombre.set(archivo.nombre);
+    this.vistaDatos.set(null);
+    this.vistaCargando.set(true);
+    this.vistaAbierta.set(true);
+    try {
+      const v = await this.api.vistaArchivo(e.id, c.indice, archivo.nombre);
+      // Si mientras tanto se abrió otro, este ya no va.
+      if (this.vistaNombre() === archivo.nombre) this.vistaDatos.set(v);
+    } catch (err) {
+      this.vistaAbierta.set(false);
+      this.toast.error('No se pudo ver el archivo', mensajeDeError(err, `No se pudo abrir «${archivo.nombre}».`));
+    } finally {
+      this.vistaCargando.set(false);
+    }
+  }
+
+  protected sePuedeVer(nombre: string): boolean {
+    return /\.(xlsx|xlsm|xls|csv|txt)$/i.test(nombre);
+  }
+
   /**
    * Descarga del navegador, igual que en «Subir a Xubio»: va a Descargas y en la
    * app de escritorio se ve en el panel de descargas de arriba a la derecha.
@@ -885,6 +918,22 @@ function correccionesHechas(c: Corregido | undefined): CorreccionElegida[] {
 }
 
 /** Primero el AUX (el que se abre para revisar) y después lo que bajaron ARCA y Xubio. */
+export interface GrupoArchivos {
+  titulo: string;
+  archivos: ArchivoGenerado[];
+}
+
+/** Excel y CSV por separado: en una lista sola se mezclaban los de ARCA. */
+export function agruparArchivos(archivos: ArchivoGenerado[]): GrupoArchivos[] {
+  const grupos: GrupoArchivos[] = [
+    { titulo: 'Excel', archivos: archivos.filter((a) => /\.(xlsx|xlsm|xls)$/i.test(a.nombre)) },
+    { titulo: 'CSV', archivos: archivos.filter((a) => /\.(csv|txt)$/i.test(a.nombre)) },
+  ];
+  const vistos = new Set(grupos.flatMap((g) => g.archivos));
+  grupos.push({ titulo: 'Otros', archivos: archivos.filter((a) => !vistos.has(a)) });
+  return grupos.filter((g) => g.archivos.length);
+}
+
 function ordenarArchivos(archivos: ArchivoGenerado[]): ArchivoGenerado[] {
   return [...archivos].sort((a, b) => (ORDEN_ARCHIVO[a.tipo] ?? 9) - (ORDEN_ARCHIVO[b.tipo] ?? 9) || a.nombre.localeCompare(b.nombre, 'es'));
 }

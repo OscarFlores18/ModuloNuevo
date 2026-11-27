@@ -540,6 +540,16 @@ input[type='checkbox'] {
   cursor: default;
 }
 
+.nc-destacado,
+.nc-destacado.mf-item-elegido {
+  background: #fefce8;
+  box-shadow: inset 3px 0 0 #fcd34d;
+}
+
+.nc-destacado:hover {
+  background: #fef9c3;
+}
+
 .mf-icono-btn {
   display: inline-flex;
   align-items: center;
@@ -1611,6 +1621,26 @@ details[open] > summary .ej-chevron {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
+}
+
+.ej-archivos-grupo {
+  margin: 0;
+  padding: 10px 12px 4px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-tenue);
+  border-top: 1px solid var(--color-borde);
+}
+
+.ej-archivos-grupo:first-of-type {
+  border-top: 0;
+}
+
+.ej-archivos-grupo span {
+  font-weight: 500;
+  letter-spacing: 0;
 }
 
 .ej-archivos li + li {

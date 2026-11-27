@@ -48,7 +48,7 @@
           <ul class="nc-lista-alta m-0 list-none overflow-y-auto px-1.5 pb-1.5" aria-label="Clientes disponibles">
             @for (c of disponibles(); track c.nombre) {
               <li>
-                <button type="button" class="mf-item !py-1" (click)="agregar(c.nombre)" [attr.aria-label]="'Sumar ' + c.nombre">
+                <button type="button" class="mf-item !py-1" [class.nc-destacado]="destacado(c.nombre)" (click)="agregar(c.nombre)" [attr.aria-label]="'Sumar ' + c.nombre">
                   <span class="min-w-0 flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
                   <span class="mono mf-tenue text-xs">{{ c.arca.cuit_representado | cuit }}</span>
                   @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">!</span> }
@@ -77,7 +77,7 @@
           </div>
           <ol class="nc-lista-alta nc-lista-elegidos m-0 list-none space-y-0.5 overflow-y-auto p-1.5" aria-label="Clientes a procesar, en orden">
             @for (c of elegidos(); track c.nombre; let i = $index, primero = $first, ultimo = $last) {
-              <li class="mf-item mf-item-elegido !py-1 flex-wrap">
+              <li class="mf-item mf-item-elegido !py-1 flex-wrap" [class.nc-destacado]="destacado(c.nombre)">
                 <span class="mono w-5 shrink-0 text-center text-xs font-bold text-acento">{{ i + 1 }}</span>
                 <span class="min-w-[4.5rem] flex-1 truncate font-semibold" [title]="c.nombre">{{ c.nombre }}</span>
                 @if (c.faltantes.length) { <span class="mf-badge mf-badge-aviso" [title]="'Falta: ' + c.faltantes.join(', ')">Faltan datos</span> }

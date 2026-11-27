@@ -374,19 +374,27 @@
                     </button>
                   </div>
                   @if (carpetaAbierta(c.nombre)) {
+                    @for (g of c.gruposArchivos; track g.titulo) {
+                    <p class="ej-archivos-grupo">{{ g.titulo }} <span>· {{ g.archivos.length }}</span></p>
                     <ul class="ej-archivos">
-                      @for (a of c.archivos; track a.nombre) {
+                      @for (a of g.archivos; track a.nombre) {
                         @let clave = c.indice + '/' + a.nombre;
                         <li>
                           <span class="mf-badge" [class.mf-badge-ok]="a.tipo === 'auditoria'" [class.mf-badge-acento]="a.tipo === 'arca' || a.tipo === 'xubio'">{{ etiquetaArchivo[a.tipo] }}</span>
                           <span class="min-w-0 flex-1 truncate font-semibold" [title]="a.nombre">{{ a.nombre }}</span>
                           <span class="tabular-nums">{{ tamanoLegible(a.tamano) }}</span>
+                          @if (sePuedeVer(a.nombre)) {
+                            <button type="button" class="mf-btn mf-btn-suave mf-btn-chico ej-ver" (click)="ver(c, a)" [attr.aria-label]="'Ver ' + a.nombre" title="Ver sin descargar">
+                              <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>
+                            </button>
+                          }
                           <button type="button" class="mf-btn mf-btn-chico" [class.mf-btn-suave]="a.tipo !== 'auditoria'" (click)="descargar(c, a)" [disabled]="descargando() === clave" [attr.aria-label]="'Descargar ' + a.nombre">
                             {{ descargando() === clave ? 'Descargando…' : 'Descargar' }}
                           </button>
                         </li>
                       }
                     </ul>
+                    }
                   }
                 </div>
               } @else if (!activa() && !c.problemas.length && !c.pendientes) {
@@ -448,3 +456,5 @@
   </aside>
 }
 </div>
+
+<app-vista-archivo [abierta]="vistaAbierta()" [nombre]="vistaNombre()" [vista]="vistaDatos()" [cargando]="vistaCargando()" (cerrado)="vistaAbierta.set(false)" />

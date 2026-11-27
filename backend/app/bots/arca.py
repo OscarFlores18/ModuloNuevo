@@ -678,14 +678,18 @@ class SesionArca:
                     raise SesionVencida(
                         "ARCA pidió volver a iniciar sesión al cargar el período."
                     ) from exc
+                causa = (str(exc).splitlines() or [type(exc).__name__])[0][:160]
                 if intento == 3:
-                    raise TimeoutDescarga(
+                    self._guardar_diagnostico(servicio, "arca-filtro-fechas")
+                    # Filtro trabado (ARCA lento o algo encima): quien abrió el
+                    # servicio lo cierra, lo vuelve a abrir y reintenta.
+                    raise FiltroNoDisponible(
                         "El filtro de fechas de ARCA no respondió después de 3 intentos. "
                         "ARCA puede estar lento: probá de nuevo en unos minutos.",
-                        detalle={"rango": rango_fechas},
+                        detalle={"rango": rango_fechas, "causa": causa},
                     ) from exc
                 self.log(
-                    f"      [AVISO]: El filtro de fechas de ARCA todavía no estaba listo. "
+                    f"      [AVISO]: El filtro de fechas de ARCA todavía no estaba listo ({causa}). "
                     f"Reintento {intento + 1}/3..."
                 )
                 servicio.wait_for_timeout(2000)

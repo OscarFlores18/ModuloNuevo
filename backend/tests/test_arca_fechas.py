@@ -70,8 +70,12 @@ def test_reintenta_si_el_campo_no_estaba_listo():
 
 def test_si_nunca_responde_da_un_error_claro():
     sesion, _ = _sesion()
-    with pytest.raises(TimeoutDescarga, match="no respondió después de 3 intentos"):
+    # FiltroNoDisponible (un TimeoutDescarga): el control reabre Mis Comprobantes y reintenta.
+    from backend.app.bots.arca import FiltroNoDisponible
+
+    with pytest.raises(FiltroNoDisponible, match="no respondió después de 3 intentos") as error:
         sesion._escribir_rango(_Pagina(), _CampoFecha(fallas=99), "01/04/2026 - 30/04/2026")
+    assert "Timeout 3000ms" in error.value.detalle["causa"]
 
 
 def test_si_arca_no_toma_el_periodo_lo_avisa():

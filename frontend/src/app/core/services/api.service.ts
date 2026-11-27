@@ -4,6 +4,7 @@ import { Observable, TimeoutError, catchError, firstValueFrom, throwError, timeo
 import { environment } from '../../../environments/environment';
 import { AccionPausa, Ajustes, CambioElegido, ResultadoAplicar, Cliente, ErrorApi, ClienteEntrada, ControlesPorCliente, DetalleEjecucion, FaltantesExcel, PedidoEjecucion, ResumenEjecucion, ResultadoConversion, ArchivoSubido, ArchivoLeido, ComprobanteExtraido, LecturaExcel, Verificacion } from '../models';
 import type { BloqueRegistro } from '../../features/ejecucion/ventana-errores';
+import type { VistaDeArchivo } from '../ui/vista-archivo';
 
 /** Los pedidos a la API, sin estado. Las pantallas usan los stores. */
 @Injectable({ providedIn: 'root' })
@@ -181,6 +182,14 @@ export class ApiService {
   }
 
   /** Un archivo del control como Blob, para bajarlo por el navegador (la descarga lleva los encabezados de sesión). */
+  /** El Excel o CSV del control como tabla (el ojo de «Archivos»), sin descargarlo. */
+  vistaArchivo(id: string, indice: number, nombre: string): Promise<VistaDeArchivo> {
+    return firstValueFrom(
+      this.http
+        .get<VistaDeArchivo>(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}/vista`)
+        .pipe(errorLegible('No se pudo abrir el archivo.')),
+    );
+  }
   archivo(id: string, indice: number, nombre: string): Promise<Blob> {
     return firstValueFrom(this.http.get(`${this.url}/ejecuciones/${id}/clientes/${indice}/archivos/${encodeURIComponent(nombre)}`, { responseType: 'blob' }));
   }

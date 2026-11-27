@@ -35,6 +35,7 @@ from pathlib import Path
 from ..auditor import procesar_cruce
 from ..auditor.corregir_libro import LibroIlegible, corregir_libro
 from ..bots.arca import FiltroNoDisponible
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from ..bots.sesiones import GestorSesiones
 from ..core import config
 from ..core.errors import (
@@ -846,6 +847,8 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
             inicio_cliente = inicios.setdefault(indice, time.time())
 
             servicio_arca = None
+            # Libros de Xubio («Ventas»/«Compras») que no se pudieron bajar.
+            xubio_fallidos: set[str] = set()
 
             def hacer_arca(sesion, tipo, _cuit_repres=cuit_repres, _cli=cli.nombre):
                 nonlocal servicio_arca
@@ -873,7 +876,9 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             # Xubio» deja solo las filas faltantes, sin reescribirlas).
                             bajar_csv=True,
                         )
-                    except (SesionVencida, FiltroNoDisponible) as exc:
+                    except (SesionVencida, FiltroNoDisponible, PlaywrightTimeout) as exc:
+                        # PlaywrightTimeout: ARCA lento (no abrió la pestaña o no
+                        # respondió un clic): se reabre Mis Comprobantes como con el filtro.
                         if intento == 2:
                             raise
                         try:
@@ -889,9 +894,11 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             sesion.renovar()
                         else:
                             ej.registrar(
-                                "      [AVISO]: ARCA quedó en una pantalla sin filtro de fechas. "
+                                "      [AVISO]: ARCA está tardando en responder. "
                                 "Se vuelve a abrir Mis Comprobantes y se reintenta..."
                             )
+                            # Un respiro: con ARCA lento, reabrir al instante vuelve a fallar.
+                            time.sleep(config.ARCA_ESPERA_REINTENTO_S)
                 return None
 
             def correr_pasos_arca(gestor, _pasos=[x for x in cli.pasos if x.id.startswith("arca_") and toca(x)]):
@@ -932,7 +939,7 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                         url = sesion.cambiar_empresa(cli.nombre)
                         if isinstance(url, str) and es_url_de_xubio(url):
                             cli.xubio_url = url
-                        return sesion.descargar(
+                        resultado = sesion.descargar(
                             cli.nombre,
                             p["desde"],
                             p["hasta"],
@@ -940,6 +947,13 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                             p["compras"],
                             str(carpeta),
                         )
+                        # El bot anota la falla de un libro y sigue con el otro:
+                        # se guarda cuál falló para no auditar contra un libro vacío.
+                        for e in getattr(resultado, "errores", None) or []:
+                            tipo_fallido = (e.get("detalle") or {}).get("tipo")
+                            if tipo_fallido:
+                                xubio_fallidos.add(tipo_fallido)
+                        return resultado
 
                     if _correr_paso(ej, paso, hacer_xubio) is not None:
                         gestor.descartar_xubio()
@@ -963,12 +977,17 @@ def _correr(ej: Ejecucion, xubio_clave: str, servicio: ServicioCredenciales) -> 
                     continue
                 operacion = "Ventas" if paso.id == "auditoria_ventas" else "Compras"
                 # Sin la descarga de ARCA o de Xubio no hay nada que cruzar: el
-                # paso queda omitido en vez de sumar un segundo error.
+                # paso queda omitido en vez de cruzar contra un libro vacío (eso
+                # daría todo como faltante). Cuenta también el «aviso»: el bot
+                # registró un error aunque no haya cortado.
                 fallidos = [
                     x.etiqueta
                     for x in cli.pasos
-                    if x.id in (f"arca_{operacion.lower()}", "xubio") and x.estado == "error"
+                    if (x.id == f"arca_{operacion.lower()}" and x.estado in ("error", "aviso"))
+                    or (x.id == "xubio" and x.estado == "error")
                 ]
+                if operacion in xubio_fallidos:
+                    fallidos.append(f"Xubio (Libro IVA {operacion})")
                 if fallidos:
                     paso.estado = "omitido"
                     paso.mensaje = f"No se cruzó: falló {' y '.join(fallidos)}."
