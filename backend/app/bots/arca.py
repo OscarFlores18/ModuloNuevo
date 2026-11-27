@@ -857,17 +857,26 @@ class SesionArca:
                 excels_parciales.append(ruta_parcial_excel)
 
                 if bajar_csv:
-                    boton_csv = servicio.locator(
-                        'button[title="Exportar como CSV"], button:has-text("CSV")'
-                    ).first
-                    if boton_csv.is_visible():
-                        with servicio.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info_csv:
-                            boton_csv.click()
-                        download_c = download_info_csv.value
-                        nombre_temp_csv = f"ParcialCSV_{len(csv_parciales)+1}_{download_c.suggested_filename}"
-                        ruta_parcial_csv = os.path.join(directorio_guardado, nombre_temp_csv)
-                        download_c.save_as(ruta_parcial_csv)
-                        csv_parciales.append(ruta_parcial_csv)
+                    # El CSV es para «Subir a Xubio»: si no baja, el control sigue
+                    # (con el Excel alcanza para auditar).
+                    try:
+                        boton_csv = servicio.locator(
+                            'button[title="Exportar como CSV"], button:has-text("CSV")'
+                        ).first
+                        if boton_csv.is_visible():
+                            with servicio.expect_download(timeout=config.PLAYWRIGHT_DESCARGA_MS) as download_info_csv:
+                                boton_csv.click()
+                            download_c = download_info_csv.value
+                            nombre_temp_csv = f"ParcialCSV_{len(csv_parciales)+1}_{download_c.suggested_filename}"
+                            ruta_parcial_csv = os.path.join(directorio_guardado, nombre_temp_csv)
+                            download_c.save_as(ruta_parcial_csv)
+                            csv_parciales.append(ruta_parcial_csv)
+                        else:
+                            self.log("      [AVISO]: ARCA no mostró el botón «CSV»: no se bajó el CSV para Xubio.")
+                    except Exception as exc:
+                        if self._es_sesion_vencida(servicio):
+                            raise SesionVencida("ARCA pidió volver a iniciar sesión durante la descarga.") from exc
+                        self.log(f"      [AVISO]: No se pudo bajar el CSV de ARCA (para Xubio): {exc}")
 
                 fecha_desde_actual = sumar_un_dia(fecha_hasta_actual)
                 fecha_hasta_actual = fecha_hasta
@@ -960,16 +969,16 @@ class SesionArca:
                 f"{mes_anio_desde} al {mes_anio_hasta}.csv"
             )
             ruta_final_csv = os.path.join(directorio_guardado, nombre_csv_final)
+            # Las partes tal cual las mandó ARCA, con el encabezado una sola vez:
+            # «Subir a Xubio» sube las líneas de este archivo sin reescribirlas.
+            from ..auditor.csv_original import unir_partes
+
+            partes = []
+            for archivo_f in csv_parciales:
+                with open(archivo_f, "rb") as f_in:
+                    partes.append(f_in.read())
             with open(ruta_final_csv, "wb") as master_csv:
-                for idx, archivo_f in enumerate(csv_parciales):
-                    with open(archivo_f, "rb") as f_in:
-                        contenido = f_in.read()
-                        if idx == 0:
-                            master_csv.write(contenido)
-                        else:
-                            lineas = contenido.split(b"\n")
-                            if len(lineas) > 2:
-                                master_csv.write(b"\n".join(lineas[2:]))
+                master_csv.write(unir_partes(partes))
             resultado.archivos.append(ruta_final_csv)
 
         if not resultado.archivos:

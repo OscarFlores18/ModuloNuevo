@@ -1092,15 +1092,16 @@ export class PasarAExcel implements OnDestroy {
     const sinProducto = this.agrupado() ? 0 : l.items.filter((_, i) => !this.productoDe(i)).length;
     const errores = this.aMirar().filter((v) => v.nivel === 'error').length;
     const avisos = [
-      `El bot abre Xubio, entra a ${f.empresa} y en ${f.operacion} > Importar > Desde Excel carga el archivo y aprieta «Importar».`,
-      'No se puede deshacer: si ya la subiste, no lo hagas de nuevo (quedaría repetida).',
+      `El bot abre Xubio, entra a ${f.empresa} y carga el archivo en ${f.operacion} > Importar > Desde Excel.`,
+      'La ventana de Chrome queda abierta: revisalo ahí y apretá «Importar».',
+      'Importar no se deshace: si ya la subiste, no lo hagas de nuevo (quedaría repetida).',
     ];
     if (errores) avisos.unshift(`Quedan ${errores} ${errores === 1 ? 'dato mal leído' : 'datos mal leídos'} sin corregir.`);
     if (sinProducto) avisos.unshift(`${sinProducto} ${sinProducto === 1 ? 'ítem no tiene' : 'ítems no tienen'} producto de Xubio.`);
     const seguir = await this.alertas.confirmar(
       `Subir a Xubio como ${f.operacion === 'Compras' ? 'compra' : 'venta'}`,
       `${l.archivo} → ${f.empresa}`,
-      'Importar en Xubio',
+      'Cargar en Xubio',
       avisos,
     );
     if (!seguir) return;
@@ -1110,7 +1111,11 @@ export class PasarAExcel implements OnDestroy {
       const excel = await this.armarExcel(l);
       const r = await this.api.subirExcelAXubio(f.empresa, f.operacion, excel.nombre, excel.contenido);
       const dijo = r.mensaje ? ` Xubio: «${r.mensaje}».` : '';
-      if (r.importado === true) {
+      if (r.frenado) {
+        // El archivo quedó cargado y «Importar» lo aprieta la persona en Chrome.
+        poner(r.boton_importar_habilitado, r.mensaje);
+        if (r.boton_importar_habilitado) this.toast.info('Archivo cargado en Xubio', `${f.operacion} · ${f.empresa}: revisalo y apretá «Importar» en Chrome.`);
+      } else if (r.importado === true) {
         poner(true, `✓ Importada en Xubio (${f.empresa}, ${f.operacion}).${dijo}`);
         this.toast.ok('Importada en Xubio', `${f.operacion} · ${f.empresa}`);
       } else if (r.importado === null) {

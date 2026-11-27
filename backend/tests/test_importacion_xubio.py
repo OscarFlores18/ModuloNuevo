@@ -40,7 +40,8 @@ def test_endpoint_rechaza_cliente_desconocido(cliente_demo):
 
 
 def test_endpoint_corre_el_bot_e_importa(cliente_demo, monkeypatch):
-    """Con el bot simulado: entra a la empresa, carga el .zip, importa y devuelve lo que dijo Xubio."""
+    """Con MODULONUEVO_XUBIO_IMPORTAR=1: entra a la empresa, carga el .zip, importa y devuelve lo que dijo Xubio."""
+    monkeypatch.setenv("MODULONUEVO_XUBIO_IMPORTAR", "1")
     llamadas = []
 
     class SesionFalsa:
@@ -80,6 +81,50 @@ def test_endpoint_corre_el_bot_e_importa(cliente_demo, monkeypatch):
     assert llamadas == [("empresa", cliente), ("zip", "Compras", [f"{PREFIJO_CSV} Compras - X.csv"])]
 
 
+def test_por_defecto_frena_antes_de_importar(cliente_demo, monkeypatch):
+    """Sin la variable: carga el archivo y no aprieta «Importar» (la persona lo revisa)."""
+    monkeypatch.delenv("MODULONUEVO_XUBIO_IMPORTAR", raising=False)
+    monkeypatch.setattr(srv, "VENTANA_ABIERTA_S", 0)
+
+    class Pagina:
+        def wait_for_event(self, *a, **k):
+            pass
+
+    class SesionFalsa:
+        def __init__(self, *a, **k):
+            self._page = Pagina()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            pass
+
+        def cambiar_empresa(self, nombre):
+            pass
+
+        def importar_arca(self, *a):
+            pytest.fail("no tenía que apretar «Importar»")
+
+        def preparar_importacion_arca(self, operacion, ruta_zip):
+            return {"archivo_cargado": True, "boton_importar_habilitado": True}
+
+    monkeypatch.setattr(srv, "SesionXubio", SesionFalsa)
+
+    class Cred:
+        usuario, clave = "u", "c"
+
+    monkeypatch.setattr(srv.ServicioCredenciales, "xubio", lambda self: Cred())
+    cliente = next(iter(cliente_demo.get("/api/clientes").json()))["nombre"]
+    r = cliente_demo.post("/api/convertir-aux/xubio", json={
+        "cliente": cliente, "operacion": "Compras",
+        "zip": base64.b64encode(_zip(f"{PREFIJO_CSV} Compras - X.csv")).decode(),
+    })
+    assert r.status_code == 200, r.text
+    assert r.json()["frenado"] is True and r.json()["importado"] is None
+    assert "apretá «Importar»" in r.json()["mensaje"]
+
+
 # --- El Excel del Conversor, por «Importar > Desde Excel» -----------------------
 
 
@@ -89,9 +134,15 @@ class _Clientes:
 
 
 def _bot_falso(monkeypatch, llamadas):
+    monkeypatch.setattr(srv, "VENTANA_ABIERTA_S", 0)
+
+    class Pagina:
+        def wait_for_event(self, *a, **k):
+            pass
+
     class SesionFalsa:
         def __init__(self, usuario, clave, log=print, visible=None):
-            self._page = None
+            self._page = Pagina()
 
         def __enter__(self):
             return self
@@ -102,10 +153,17 @@ def _bot_falso(monkeypatch, llamadas):
         def cambiar_empresa(self, nombre):
             llamadas.append(("empresa", nombre))
 
-        def importar_excel(self, operacion, ruta):
+        def _anotar(self, que, operacion, ruta):
             with open(ruta, "rb") as f:
-                llamadas.append(("xls", operacion, ruta.rsplit("\\", 1)[-1].rsplit("/", 1)[-1], f.read()[:4]))
+                llamadas.append((que, operacion, ruta.rsplit("\\", 1)[-1].rsplit("/", 1)[-1], f.read()[:4]))
+
+        def importar_excel(self, operacion, ruta):
+            self._anotar("importar", operacion, ruta)
             return {"archivo_cargado": True, "boton_importar_habilitado": True, "importado": True, "mensaje": "Importación correcta"}
+
+        def preparar_importacion_excel(self, operacion, ruta):
+            self._anotar("cargar", operacion, ruta)
+            return {"archivo_cargado": True, "boton_importar_habilitado": True}
 
     class Cred:
         usuario, clave = "u", "c"
@@ -115,13 +173,25 @@ def _bot_falso(monkeypatch, llamadas):
     monkeypatch.setattr(srv.ejecuciones_srv, "activa", lambda: None)
 
 
-def test_subir_excel_importa_en_la_operacion(monkeypatch):
+XLS = bytes.fromhex("D0CF11E0") + b"resto"
+
+
+def test_subir_excel_por_defecto_frena_antes_de_importar(monkeypatch):
+    monkeypatch.delenv("MODULONUEVO_XUBIO_IMPORTAR", raising=False)
     llamadas = []
     _bot_falso(monkeypatch, llamadas)
-    xls = bytes.fromhex("D0CF11E0") + b"resto"
-    r = srv.subir_excel("Acme", "Ventas", "Factura A.xls", xls, _Clientes(), None)
+    r = srv.subir_excel("Acme", "Ventas", "Factura A.xls", XLS, _Clientes(), None)
+    assert r["frenado"] is True and r["importado"] is None and "apretá «Importar»" in r["mensaje"]
+    assert llamadas == [("empresa", "Acme"), ("cargar", "Ventas", "Factura A.xls", XLS[:4])]
+
+
+def test_subir_excel_importa_con_la_variable(monkeypatch):
+    monkeypatch.setenv("MODULONUEVO_XUBIO_IMPORTAR", "1")
+    llamadas = []
+    _bot_falso(monkeypatch, llamadas)
+    r = srv.subir_excel("Acme", "Compras", "Factura A.xls", XLS, _Clientes(), None)
     assert r["importado"] is True and r["mensaje"] == "Importación correcta"
-    assert llamadas == [("empresa", "Acme"), ("xls", "Ventas", "Factura A.xls", bytes.fromhex("D0CF11E0"))]
+    assert llamadas == [("empresa", "Acme"), ("importar", "Compras", "Factura A.xls", XLS[:4])]
 
 
 def test_subir_excel_pide_el_formato_2003(monkeypatch):
@@ -129,7 +199,7 @@ def test_subir_excel_pide_el_formato_2003(monkeypatch):
     with pytest.raises(srv.ErrorImportacion, match="formato 2003"):
         srv.subir_excel("Acme", "Compras", "x.xlsx", b"PK\x03\x04", _Clientes(), None)
     with pytest.raises(srv.ErrorImportacion, match="no está en Clientes"):
-        srv.subir_excel("Otra", "Compras", "x.xls", bytes.fromhex("D0CF11E0"), _Clientes(), None)
+        srv.subir_excel("Otra", "Compras", "x.xls", XLS, _Clientes(), None)
 
 
 def test_lee_la_lista_de_productos_de_xubio():

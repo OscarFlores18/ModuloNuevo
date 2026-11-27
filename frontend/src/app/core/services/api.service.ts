@@ -104,6 +104,15 @@ export class ApiService {
   }
 
   /** Abre Xubio, carga el .zip en «Importar desde Mis Comprobantes (ARCA)», aprieta «Importar» y devuelve lo que dijo Xubio. */
+  /** «Subir a Xubio» desde un control: el CSV que bajó ARCA, solo con las partidas faltantes (sin reescribirlas). */
+  csvXubio(id: string, indice: number, operacion: 'Ventas' | 'Compras', excluir: string[]): Promise<{ resultados: ResultadoConversion[] }> {
+    return firstValueFrom(
+      this.http
+        .post<{ resultados: ResultadoConversion[] }>(`${this.url}/ejecuciones/${id}/clientes/${indice}/csv-xubio`, { operacion, excluir })
+        .pipe(errorLegible('No se pudo armar el archivo con el CSV de ARCA.')),
+    );
+  }
+
   cargarEnXubio(cliente: string, operacion: 'Ventas' | 'Compras', zip: string): Promise<ResultadoCargaXubio> {
     return firstValueFrom(
       this.http.post<ResultadoCargaXubio>(`${this.url}/convertir-aux/xubio`, { cliente, operacion, zip }).pipe(errorLegible('No se pudo subir a Xubio.')),
@@ -268,6 +277,8 @@ export interface ResultadoCargaXubio {
   boton_importar_habilitado: boolean;
   /** true: Xubio dijo que importó · false: no importó · null: no se reconoció la respuesta (mirar en Xubio). */
   importado: boolean | null;
+  /** true: el bot cargó el archivo y frenó antes de «Importar» (lo aprieta la persona). */
+  frenado?: boolean;
   /** Lo que mostró Xubio después de «Importar». */
   mensaje: string;
   log: string[];

@@ -614,6 +614,12 @@ class SesionXubio:
             raise RuntimeError("La sesión de Xubio no está abierta.")
         return productos_de_xubio(self._page, operacion)
 
+    def preparar_importacion_excel(self, operacion: str, ruta_xls: str) -> dict:
+        """En la empresa activa: abre «Importar > Desde Excel» y carga el .xls, sin importar."""
+        if self._page is None:
+            raise RuntimeError("La sesión de Xubio no está abierta.")
+        return abrir_importacion_excel(self._page, operacion, ruta_xls, log=self.log)
+
     def importar_excel(self, operacion: str, ruta_xls: str) -> dict:
         """En la empresa activa: «Importar > Desde Excel» con el .xls, aprieta «Importar»."""
         if self._page is None:

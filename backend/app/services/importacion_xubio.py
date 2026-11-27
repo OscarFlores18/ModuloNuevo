@@ -2,18 +2,19 @@
 
 Abre Xubio en la PC del backend, entra a la empresa del cliente y, en
 Compras/Ventas > Comprobantes > Acciones > Importar > Desde Mis Comprobantes
-(ARCA), carga el .zip con el CSV de esa operación, **aprieta «Importar»** y lee
-lo que contesta Xubio. La confirmación la da la persona antes, en la app.
+(ARCA), carga el .zip con el CSV de esa operación y **frena antes de «Importar»**:
+la ventana queda abierta para que la persona revise y apriete «Importar» ella
+(se cierra cuando la cierra o a los 15 minutos).
 
-- Si Xubio dice que importó, Chrome se cierra solo.
-- Si da error o no se reconoce la respuesta, la ventana queda abierta para que
-  la persona mire (se cierra cuando la cierra ella o a los 15 minutos).
+Con ``MODULONUEVO_XUBIO_IMPORTAR=1`` el bot además aprieta «Importar» y lee lo que
+contesta Xubio (si dice que importó, Chrome se cierra solo).
 """
 
 from __future__ import annotations
 
 import io
 import logging
+import os
 import tempfile
 import threading
 import zipfile
@@ -31,6 +32,11 @@ logger = logging.getLogger(__name__)
 ESPERA_RESULTADO_S = 360
 VENTANA_ABIERTA_S = 15 * 60
 _en_curso = threading.Lock()
+
+
+def importa_solo() -> bool:
+    """¿El bot aprieta «Importar»? Apagado por defecto: frena con el archivo cargado."""
+    return os.getenv("MODULONUEVO_XUBIO_IMPORTAR", "").strip().lower() in ("1", "true", "si", "sí", "yes")
 
 
 class ErrorImportacion(Exception):
@@ -87,8 +93,8 @@ def subir_excel(
     log=logger.info,
 ) -> dict:
     """El .xls del Conversor (modelo de Xubio) en Compras o Ventas > Importar >
-    Desde Excel, en la empresa del cliente. Aprieta «Importar» (la persona ya
-    confirmó en la app)."""
+    Desde Excel, en la empresa del cliente. Como la carga de ARCA: frena antes de
+    «Importar» salvo con MODULONUEVO_XUBIO_IMPORTAR=1."""
     _validar(cliente, operacion, clientes)
     if not xls.startswith(bytes.fromhex("D0CF11E0")):
         raise ErrorImportacion("Xubio pide el Excel en formato 2003 (.xls): generalo de nuevo desde el Conversor.")
@@ -134,15 +140,28 @@ def _correr(
         registro.append(m)
         log(m)
 
+    importar = importa_solo()
+
     def trabajar() -> None:
         try:
             # A la vista: la persona ve lo que hace el bot.
             with SesionXubio(cred.usuario, cred.clave, log=anotar, visible=True) as sesion:
                 sesion.cambiar_empresa(cliente)
-                salida.update(getattr(sesion, accion)(operacion, str(ruta_zip)))
+                if importar:
+                    salida.update(getattr(sesion, accion)(operacion, str(ruta_zip)))
+                else:
+                    # Freno: el archivo queda cargado y «Importar» lo aprieta la persona.
+                    preparar_accion = {"importar_arca": "preparar_importacion_arca", "importar_excel": "preparar_importacion_excel"}[accion]
+                    salida.update(getattr(sesion, preparar_accion)(operacion, str(ruta_zip)))
+                    salida.update(importado=None, frenado=True, mensaje=(
+                        "Archivo cargado en Xubio. Revisalo en la ventana de Chrome y apretá «Importar»."
+                        if salida.get("boton_importar_habilitado")
+                        else "Xubio no habilitó «Importar» con este archivo: revisalo en la ventana de Chrome."
+                    ))
+                    anotar(f"      [INFO]: {salida['mensaje']}")
                 listo.set()
                 if salida.get("importado") is not True:
-                    # Error o respuesta dudosa: la ventana queda para que la persona mire.
+                    # Freno, error o respuesta dudosa: la ventana queda para que la persona mire.
                     try:
                         sesion._page.wait_for_event("close", timeout=VENTANA_ABIERTA_S * 1000)
                     except Exception:
@@ -171,6 +190,8 @@ def _correr(
         "boton_importar_habilitado": bool(salida.get("boton_importar_habilitado")),
         # True: Xubio dijo que importó · False: no importó · None: no se sabe (mirar en Xubio).
         "importado": salida.get("importado"),
+        # True: el bot cargó el archivo y frenó antes de «Importar».
+        "frenado": bool(salida.get("frenado")),
         "mensaje": salida.get("mensaje") or "",
         "log": registro[-8:],
     }
