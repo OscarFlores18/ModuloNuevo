@@ -151,8 +151,8 @@ def _json_de(texto: str) -> dict:
 # respaldo, la app sigue leyendo aunque el primero se haya quedado sin cupo.
 RESPALDOS = (
     "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
-    "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.5-flash-lite",
-)
+    "gemini-3.1-flash-lite",
+)  # Los 2.5 ya no se habilitan a cuentas nuevas (404).
 # El que antes contesta: con plazo (hay OCR local para seguir) se prueba primero.
 RAPIDO = "gemini-3.1-flash-lite"
 PAUSAS_S = (2,)
