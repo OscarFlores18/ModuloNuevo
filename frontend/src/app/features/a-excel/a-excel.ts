@@ -113,6 +113,8 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
     .ax-campos label { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--ax-tenue); }
     .ax-renglon { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 12px; font-size: .86rem; }
     .ax-renglon + .ax-renglon { border-top: 1px solid #f1f5f9; }
+    .ax-renglon.ax-nuevo-grupo { border-top: 1px solid var(--ax-borde); }
+    .ax-renglon .num { font-variant-numeric: tabular-nums; }
     .ax-renglon .ax-in { flex: 0 1 180px; }
     .ax-fila-imp { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(90px, 1fr) minmax(90px, 1fr) 30px; gap: 2px 8px; align-items: center; padding: 5px 12px; }
     .ax-fila-imp + .ax-fila-imp { border-top: 1px solid #f1f5f9; }
@@ -412,8 +414,10 @@ const OBLIGATORIOS = new Set(['emisor', 'emisor_cuit', 'tipo', 'numero', 'fecha'
 
                 <section class="ax-bloque" aria-labelledby="ax-cuadre-t">
                   <header><h3 id="ax-cuadre-t">Total</h3></header>
-                  @for (p of cuadre().partes; track p.nombre) {
-                    <div class="ax-renglon"><span>{{ p.nombre }}</span><span class="num">{{ texto(p.valor) }}</span></div>
+                  @for (p of cuadre().partes; track $index; let i = $index) {
+                    <div class="ax-renglon" [class.ax-nuevo-grupo]="i > 0 && cuadre().partes[i - 1].grupo !== p.grupo">
+                      <span>{{ p.nombre }}</span><span class="num">{{ texto(p.valor) }}</span>
+                    </div>
                   }
                   <label class="ax-total">Total de la factura
                     <input class="ax-in num" [class]="nivel('total')" [attr.title]="explicar('total', estadoCampo('total', l.totales['total']))" [value]="texto(l.totales['total'])" (change)="cambiarTotal('total', $any($event.target).value)" />
@@ -547,12 +551,20 @@ export class PasarAExcel implements OnDestroy {
     const l = this.actual();
     const tot = l?.totales ?? {};
     const num = (v: unknown) => (typeof v === 'number' ? v : null);
+    // Cada importe por separado, en el orden de la factura: bases, IVA de cada alícuota y cada tributo.
+    const iva = this.desglose().length
+      ? this.desglose().map((d) => ({ nombre: nombreAlicuota(d.alicuota), valor: d.importe, grupo: 'iva' }))
+      : [{ nombre: 'IVA', valor: num(tot['iva']), grupo: 'iva' }];
+    const filas = l?.tributos ?? [];
+    const tributos = filas.length
+      ? filas.map((t, i) => ({ nombre: t.descripcion || `Tributo ${i + 1}`, valor: t.importe, grupo: 'trib' }))
+      : TRIBUTOS.map((c) => ({ nombre: COLUMNA_TRIBUTO[c], valor: num(tot[c]), grupo: 'trib' }));
     const partes = [
-      { nombre: 'Neto gravado', valor: num(tot['neto_gravado']) },
-      { nombre: 'No gravado', valor: num(tot['no_gravado']) },
-      { nombre: 'Exento', valor: num(tot['exento']) },
-      { nombre: 'IVA', valor: num(tot['iva']) },
-      { nombre: 'Otros tributos', valor: this.totalTributos() },
+      { nombre: 'Neto gravado', valor: num(tot['neto_gravado']), grupo: 'base' },
+      { nombre: 'No gravado', valor: num(tot['no_gravado']), grupo: 'base' },
+      { nombre: 'Exento', valor: num(tot['exento']), grupo: 'base' },
+      ...iva,
+      ...tributos,
     ].filter((p) => p.valor);
     const suma = redondear2(partes.reduce((s, p) => s + (p.valor ?? 0), 0));
     const total = num(tot['total']);
